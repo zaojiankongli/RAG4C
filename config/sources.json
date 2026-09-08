@@ -1,0 +1,122 @@
+{
+  "$comment": [
+    "文档源清单。每条 source 对应一个知识库（dataset_id 默认取 name）。",
+    "改这个文件不需要动代码；新增一种源类型才需要写插件（见 sources/plugins.py）。",
+    "include/exclude 是 glob（** 跨目录、* 不跨目录），相对仓库根；",
+    "strip_prefix 只影响落盘与 rel_path 的可读性，不影响筛选。",
+    "路径是 2026-08 用 GitHub trees API 实测的，上游改版会失效——",
+    "同步时若报「未匹配到任何文档文件」，先去仓库看目录是不是搬家了。"
+  ],
+  "sources": [
+    {
+      "name": "springboot",
+      "type": "github_repo",
+      "enabled": true,
+      "metadata": {
+        "project": "Spring Boot",
+        "lang": "en",
+        "doc_kind": "official-reference"
+      },
+      "params": {
+        "repo": "spring-projects/spring-boot",
+        "ref": "main",
+        "include": [
+          "documentation/spring-boot-docs/src/docs/antora/modules/**",
+          "documentation/spring-boot-actuator-docs/src/docs/antora/modules/**"
+        ],
+        "exclude": [
+          "**/partials/**",
+          "**/nav.adoc"
+        ],
+        "extensions": [".adoc", ".md"],
+        "strip_prefix": "documentation/"
+      }
+    },
+    {
+      "name": "langchain",
+      "type": "github_repo",
+      "enabled": true,
+      "metadata": {
+        "project": "LangChain",
+        "lang": "en",
+        "doc_kind": "official-guide",
+        "$note": "官方文档已从 langchain-ai/langchain 迁到独立仓库 langchain-ai/docs"
+      },
+      "params": {
+        "repo": "langchain-ai/docs",
+        "ref": "main",
+        "include": [
+          "src/oss/langchain/**",
+          "src/oss/concepts/**",
+          "src/oss/python/*.mdx",
+          "src/oss/*.mdx"
+        ],
+        "exclude": [
+          "src/oss/python/integrations/**",
+          "src/oss/javascript/**",
+          "src/snippets/**"
+        ],
+        "extensions": [".mdx", ".md"],
+        "strip_prefix": "src/oss/"
+      }
+    },
+    {
+      "name": "langgraph",
+      "type": "github_repo",
+      "enabled": true,
+      "metadata": {
+        "project": "LangGraph",
+        "lang": "en",
+        "doc_kind": "official-guide"
+      },
+      "params": {
+        "repo": "langchain-ai/docs",
+        "ref": "main",
+        "include": ["src/oss/langgraph/**"],
+        "extensions": [".mdx", ".md"],
+        "strip_prefix": "src/oss/"
+      }
+    },
+    {
+      "name": "milvus",
+      "type": "github_repo",
+      "enabled": true,
+      "metadata": {
+        "project": "Milvus",
+        "lang": "zh-CN",
+        "doc_kind": "official-guide",
+        "$note": "取中文站点：本项目的检索链路以中文为主，BM25 也配的是 jieba 分词"
+      },
+      "params": {
+        "repo": "milvus-io/milvus-docs",
+        "ref": "master",
+        "include": ["site/zh-CN/**"],
+        "exclude": ["site/zh-CN/fragments/**"],
+        "extensions": [".md"],
+        "strip_prefix": "site/"
+      }
+    },
+    {
+      "name": "redis-stack",
+      "type": "github_repo",
+      "enabled": true,
+      "metadata": {
+        "project": "Redis Stack",
+        "lang": "en",
+        "doc_kind": "official-guide",
+        "$note": "redis/docs 全仓 6000+ 篇，绝大部分是 Redis Enterprise/Cloud 运维文档；这里只取 OSS & Stack 与开发指南"
+      },
+      "params": {
+        "repo": "redis/docs",
+        "ref": "main",
+        "include": [
+          "content/operate/oss_and_stack/**",
+          "content/develop/data-types/**"
+        ],
+        "exclude": ["**/_index.md"],
+        "extensions": [".md"],
+        "strip_prefix": "content/"
+      }
+    }
+  ]
+}

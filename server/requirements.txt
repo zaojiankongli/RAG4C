@@ -1,0 +1,3 @@
+# RAG4C 桥服务依赖（前端问答控制台的 HTTP 入口）
+fastapi>=0.115
+uvicorn[standard]>=0.32

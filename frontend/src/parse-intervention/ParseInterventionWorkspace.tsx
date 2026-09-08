@@ -1,0 +1,27 @@
+import { useEffect, useRef, useState } from "react";
+import { Alert, Button, Loading, Tag } from "tdesign-react";
+import { ArrowLeftIcon, GitBranchIcon, CheckCircleIcon, FileSearchIcon, TimeIcon } from "tdesign-icons-react";
+import type { DocumentItem } from "../types/rag";
+import type { ParseScope } from "./model/parseInterventionModel";
+import { sanitizeSourceFact } from "./model/parseInterventionModel";
+import { useParseIntervention } from "./hooks/useParseIntervention";
+import ParsedContextPane from "./components/ParsedContextPane";
+import ChunkListPane from "./components/ChunkListPane";
+import ChunkEditorPane from "./components/ChunkEditorPane";
+import ProjectionReceipt from "./components/ProjectionReceipt";
+import "./parse-intervention.css";
+type PaneKey="context"|"chunks"|"editor";const PANES:PaneKey[]=["context","chunks","editor"];
+function label(k:PaneKey){return k==="context"?"上下文":k==="chunks"?"切片":"编辑";}
+function useMobile(){const q="(max-width: 720px)";const [m,setM]=useState(()=>matchMedia(q).matches);useEffect(()=>{const x=matchMedia(q),f=()=>setM(x.matches);x.addEventListener?.("change",f);return()=>x.removeEventListener?.("change",f)},[]);return m;}
+export default function ParseInterventionWorkspace(props:{scope:ParseScope|null;document?:DocumentItem|null;online:boolean|null;onReturn:()=>void;onNavigateOperator:(t:"consistency"|"monitor")=>void;onChanged?:()=>void;onDirtyChange?:(d:boolean)=>void}){
+ const state=useParseIntervention(props.scope,props.online,(props.document??null) as never);const onDirtyChange=props.onDirtyChange;const mobile=useMobile(),[pane,setPane]=useState<PaneKey>("context"),tabRefs=useRef<Record<string,HTMLButtonElement|null>>({});
+ useEffect(()=>onDirtyChange?.(state.dirty),[onDirtyChange,state.dirty]);const doc=state.document??props.document;
+ if(state.status==="loading")return <div className="parse-workspace-state"><Loading text="正在加载权威 ChunkHead…"/></div>;
+ if(state.status==="scope-error")return <div className="parse-workspace-state"><Alert theme="error" title="工作区范围校验失败" message="需要有效的签名 Actor、tenant、dataset 和 document 范围。"/></div>;
+ if(state.status==="offline")return <div className="parse-workspace-state"><Alert theme="warning" title="解析干预不可离线演示" message="连接权威后端后才能访问。"/></div>;
+ if(state.authorityMode==="off")return <div className="parse-workspace-state"><Alert theme="warning" title="当前是 off 模式" message="解析干预工作区需要 SQL ChunkHead 权威；请先迁移到 shadow 或 active 模式。"/><Button onClick={props.onReturn}>返回文档</Button></div>;
+ if(state.status==="error"||!doc)return <div className="parse-workspace-state"><Alert theme="error" title="无法加载解析工作区" message={state.error||"文档或切片请求失败"}/><Button onClick={()=>void state.reload()}>重试</Button></div>;
+ const panes={context:<ParsedContextPane document={doc} chunks={state.chunks}/>,chunks:<ChunkListPane chunks={state.chunks} total={state.total} selectedId={state.selectedId} query={state.query} filters={state.filters} knownParents={state.knownParents} missingParents={state.missingParents} hasMore={state.hasMore} loadingMore={state.loadingMore} onQueryChange={state.setQuery} onFiltersChange={state.setFilters} onSelect={id=>{state.selectChunk(id);if(mobile)setPane("editor")}} onLoadMore={()=>void state.loadMore()}/>,editor:<ChunkEditorPane state={state} onChanged={props.onChanged}/>};
+ const selectPane=(next:PaneKey)=>{setPane(next);requestAnimationFrame(()=>tabRefs.current[next]?.focus())};
+ return <div className="parse-workspace"><header className="parse-workspace-header"><Button variant="text" icon={<ArrowLeftIcon/>} onClick={props.onReturn}>返回文档</Button><div className="parse-workspace-identity"><span>PARSE INTERVENTION</span><h1>{doc.name}</h1><p>{doc.id}</p></div><ol className="parse-lifeline" aria-label="Knowledge Lifeline"><li><FileSearchIcon/><span>来源</span><b>{sanitizeSourceFact(doc.source_uri||doc.source_id||doc.name)}</b></li><li><GitBranchIcon/><span>文档 Revision</span><b>{doc.mutation_generation??"?"}</b></li><li><CheckCircleIcon/><span>ChunkHead</span><b>R{state.selected?.content_revision??"?"}</b></li><li><TimeIcon/><span>派生投影</span><b>{state.selectedProjection?.label??"未选择"}</b></li></ol><div className="parse-workspace-submit"><Tag theme={state.authorityMode==="active"?"success":"warning"}>Authority {state.authorityMode}</Tag><Button tag="button" aria-label="提交修改" theme="primary" loading={state.mutating} disabled={!state.dirty||!state.reason.trim()||state.selected?.enabled===false} onClick={()=>void state.submit().then(ok=>{if(ok)props.onChanged?.()})}>提交修改</Button></div></header>{state.receipt?<ProjectionReceipt receipt={state.receipt} onDismiss={state.dismissReceipt} onNavigate={props.onNavigateOperator}/>:null}{mobile?<div className="parse-mobile-tabs"><div role="tablist" aria-label="解析干预工作区面板" className="parse-mobile-tablist" onKeyDown={e=>{const i=PANES.indexOf(pane);if(e.key==="ArrowRight")selectPane(PANES[(i+1)%3]);else if(e.key==="ArrowLeft")selectPane(PANES[(i+2)%3]);else if(e.key==="Home")selectPane(PANES[0]);else if(e.key==="End")selectPane(PANES[2]);}}>{PANES.map(k=><Button key={k} ref={el=>{tabRefs.current[k]=el as HTMLButtonElement|null}} id={`parse-tab-${k}`} role="tab" tabIndex={pane===k?0:-1} aria-selected={pane===k} aria-controls={`parse-panel-${k}`} variant={pane===k?"base":"text"} onClick={()=>setPane(k)}>{label(k)}</Button>)}</div><div id={`parse-panel-${pane}`} role="tabpanel" aria-labelledby={`parse-tab-${pane}`}>{panes[pane]}</div></div>:<div className="parse-workspace-grid">{panes.context}{panes.chunks}{panes.editor}</div>}</div>;
+}

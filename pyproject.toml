@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rag4c"
+version = "0.1.0"
+description = "Enterprise RAG foundation: pydantic-settings config, core data models, Milvus client (Milvus Lite + server), BGE-M3 embedding, BGE-reranker-v2-M3 rerank, OpenAI-compatible LLM slots."
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = [
+    "alembic>=1.13,<2",
+    "numpy>=1.24",
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.4,<3",
+    "python-dotenv>=1.0",
+    "SQLAlchemy>=2.0,<3",
+]
+
+[project.optional-dependencies]
+# 向量库：Milvus server 模式（推荐安装 milvus-lite extra 以获得本地 .db 文件模式）
+milvus = ["pymilvus>=3.0.0,<4"]
+# 本地零部署模式：Milvus Lite（通过本地 .db 文件启动，开箱即用）
+milvus-lite = ["pymilvus[milvus-lite]>=3.0.0,<4"]
+# 本地嵌入 / 重排序模型（FlagEmbedding 会拉取 BGE 系列模型权重）
+embedding = ["FlagEmbedding>=1.2.10"]
+llm = ["openai>=1.40"]
+identity = ["dnspython>=2.6,<3", "cryptography>=42,<47", "authlib>=1.3,<2", "httpx>=0.27,<1"]
+torch = ["torch>=2.1"]
+# 编排：LangGraph 状态机（rag.py 顶层编排器）
+graph = ["langgraph>=0.2"]
+server = ["fastapi>=0.115", "uvicorn[standard]>=0.32"]
+# 加速件（可选）：答案 L2 缓存、跨进程 single-flight、语料代次、Streams 排队。
+# 刻意不放进 server 的依赖里——core/redis_client.py 的每个出口在连不上时都
+# 返回 None/False，不装这个包服务照常起、照常答，只是缓存退回进程内 LRU、
+# 排队退回 asyncio.Semaphore。把它列为必需依赖等于否认这套降级设计。
+redis = ["redis>=5,<7"]
+dev = ["httpx2>=0.28", "pytest>=8", "ruff>=0.6"]
+
+[tool.setuptools]
+py-modules = ["rag", "rag_common", "rag_graph", "rag_stream"]
+
+[tool.setuptools.packages.find]
+include = [
+    "config*",
+    "core*",
+    "eval*",
+    "generation*",
+    "indexing*",
+    "models*",
+    "prompts*",
+    "retrieval*",
+    "server*",
+    "verify*",
+]
+
+[tool.setuptools.package-data]
+config = ["*.env.example"]
+prompts = ["*.txt", "README.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [
+    ".testdata",
+    "archify",
+    "archify-install-check-v2.15.0",
+    "frontend",
+    "langchain4j-sister-project",
+    "repo-snapshot",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/smoke_*.py" = ["E402"]

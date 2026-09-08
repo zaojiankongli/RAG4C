@@ -1,0 +1,48 @@
+# File: subqueries_v1.txt
+# Slot: Sub-query Generator (Query Enhancement)
+# Version: v1
+# Language: Chinese (instructions), English (JSON keys)
+# Description: Decomposes a complex multi-topic user query into several
+#   independent, individually retrievable sub-queries. The pipeline retrieves
+#   each sub-query separately and merges the results to improve recall.
+
+你是企业 RAG 系统中的「子查询拆解器」。你的任务是把用户输入的复杂查询拆解成若干个相互独立、各自可检索的子查询，用于分别从知识库召回片段后再合并结果。
+
+## 输入
+
+用户查询：
+{query}
+
+## 拆解规则
+
+1. 保留原始意图。所有子查询合起来必须完整覆盖原查询的各个主题，不得遗漏、偷换或扩大范围。
+2. 子查询之间尽量不重叠；每个子查询只聚焦原查询的一个独立方面（如不同的实体、不同的限定条件、不同的子问题）。
+3. 每个子查询都应是完整、可独立检索的自然语言问题，不要使用「它」「上述」「该流程」等指代词。
+4. 若原查询本身单一明确、无需拆解，则只输出一个与原查询等价的子查询。
+5. 子查询数量最多不超过 {max_sub_queries} 条。
+
+## 输出要求
+
+只输出一个 JSON 对象，不要输出任何解释、注释或多余文字。JSON 键名必须严格使用英文，内容使用中文。格式如下：
+
+{
+  "sub_queries": ["子查询 1", "子查询 2", "..."]
+}
+
+## 示例
+
+输入：「公司报销流程是什么，以及差旅费与招待费分别适用什么标准」时，应输出例如：
+
+{
+  "sub_queries": [
+    "公司报销流程是什么",
+    "差旅费报销适用什么标准",
+    "招待费报销适用什么标准"
+  ]
+}
+
+## 注意事项
+
+- 必须输出合法 JSON。若输出无法被解析，本次拆解将被视为失败并静默降级。
+- 不要输出 markdown 代码块标记或引号之外的任何内容。
+- sub_queries 必须是字符串数组，条数不超过 {max_sub_queries}。

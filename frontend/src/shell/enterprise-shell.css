@@ -1,0 +1,49 @@
+.enterprise-shell-header {
+  flex: 0 0 auto;
+  padding: 10px 16px 0;
+  background: var(--color-bg);
+}
+
+.enterprise-shell-header .enterprise-workspace-scope {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .enterprise-shell-header {
+    padding: 8px 10px 0 52px;
+  }
+}
+
+@media (max-width: 520px) {
+  .enterprise-shell-header {
+    padding-left: 48px;
+  }
+}
+
+@media (max-width: 319px) {
+  html,
+  body {
+    width: 100%;
+    min-width: 0 !important;
+    max-width: 100%;
+    overflow-x: auto !important;
+  }
+
+  .app-layout,
+  .app-content {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .app-content {
+    overflow-x: auto;
+  }
+
+  .enterprise-shell-header {
+    min-width: 0;
+    max-width: 100%;
+    padding: 6px 4px 0 42px;
+  }
+}

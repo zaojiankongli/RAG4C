@@ -1,0 +1,329 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "RAG4C 数据入库处理流程",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1300,
+      720
+    ]
+  },
+  "stages": [
+    {
+      "label": "入口"
+    },
+    {
+      "label": "路由"
+    },
+    {
+      "label": "解析"
+    },
+    {
+      "label": "清洗切分"
+    },
+    {
+      "label": "元数据加工"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "documents",
+      "type": "frontend",
+      "label": "文档文件",
+      "sublabel": "PDF / Office / 扫描件",
+      "stage": 0,
+      "row": 0,
+      "tag": "本地路径"
+    },
+    {
+      "id": "registry",
+      "type": "database",
+      "label": "登记 + 状态机",
+      "sublabel": "catalog · waiting 起步",
+      "stage": 0,
+      "row": 2,
+      "tag": "SQLite"
+    },
+    {
+      "id": "router",
+      "type": "backend",
+      "label": "DeepDoc 路由",
+      "sublabel": "pdf-inspector 采样分类",
+      "stage": 1,
+      "row": 1,
+      "tag": "10-50ms"
+    },
+    {
+      "id": "fast",
+      "type": "backend",
+      "label": "Fast 引擎",
+      "sublabel": "提取 + Markdown 化",
+      "stage": 2,
+      "row": 0,
+      "tag": "文本型 ~3ms"
+    },
+    {
+      "id": "vision",
+      "type": "external",
+      "label": "MinerU Vision",
+      "sublabel": "OCR · 版面识别",
+      "stage": 2,
+      "row": 2,
+      "tag": "扫描件"
+    },
+    {
+      "id": "layout",
+      "type": "backend",
+      "label": "版面组件",
+      "sublabel": "10 种块：标题/表格/图/公式…",
+      "stage": 2,
+      "row": 1,
+      "tag": "layout"
+    },
+    {
+      "id": "cleaner",
+      "type": "backend",
+      "label": "文本清洗",
+      "sublabel": "cleaner（可选组件）",
+      "stage": 3,
+      "row": 0,
+      "tag": "clean"
+    },
+    {
+      "id": "strategy",
+      "type": "backend",
+      "label": "策略预切分",
+      "sublabel": "按 doc_type 产出 segments",
+      "stage": 3,
+      "row": 1,
+      "tag": "分段级进度"
+    },
+    {
+      "id": "chunker",
+      "type": "backend",
+      "label": "结构化切分",
+      "sublabel": "chunk / child（parent 链）",
+      "stage": 3,
+      "row": 2,
+      "tag": "text_hash"
+    },
+    {
+      "id": "tsr",
+      "type": "backend",
+      "label": "TSR 表格识别",
+      "sublabel": "5 标签 · 跨单元格",
+      "stage": 4,
+      "row": 0,
+      "tag": "开关"
+    },
+    {
+      "id": "tagger",
+      "type": "external",
+      "label": "自动打标签",
+      "sublabel": "LLM 分类（通道 B）",
+      "stage": 4,
+      "row": 1,
+      "tag": "开关"
+    },
+    {
+      "id": "contextual",
+      "type": "external",
+      "label": "上下文增强",
+      "sublabel": "Contextual Retrieval",
+      "stage": 4,
+      "row": 2,
+      "tag": "开关"
+    },
+    {
+      "id": "chunks",
+      "type": "database",
+      "label": "Chunk 集合",
+      "sublabel": "未嵌入 · 交索引管道",
+      "stage": 4,
+      "row": 3,
+      "tag": "产出"
+    }
+  ],
+  "flows": [
+    {
+      "id": "f1",
+      "from": "documents",
+      "to": "router",
+      "label": "文件",
+      "classification": "主路径",
+      "variant": "emphasis"
+    },
+    {
+      "id": "f2",
+      "from": "documents",
+      "to": "registry",
+      "label": "登记",
+      "classification": "状态机",
+      "variant": "dashed"
+    },
+    {
+      "id": "f3",
+      "from": "router",
+      "to": "fast",
+      "label": "text_based",
+      "classification": "主路径",
+      "variant": "emphasis"
+    },
+    {
+      "id": "f4",
+      "from": "router",
+      "to": "vision",
+      "label": "scanned",
+      "classification": "旁支",
+      "variant": "dashed"
+    },
+    {
+      "id": "f5",
+      "from": "fast",
+      "to": "layout",
+      "label": "Markdown",
+      "classification": "主路径"
+    },
+    {
+      "id": "f6",
+      "from": "vision",
+      "to": "layout",
+      "label": "OCR 结果",
+      "classification": "旁支",
+      "variant": "dashed"
+    },
+    {
+      "id": "f7",
+      "from": "layout",
+      "to": "cleaner",
+      "label": "全文 + 版面块",
+      "classification": "主路径",
+      "variant": "emphasis"
+    },
+    {
+      "id": "f8",
+      "from": "cleaner",
+      "to": "strategy",
+      "label": "清洗文本",
+      "classification": "主路径"
+    },
+    {
+      "id": "f9",
+      "from": "strategy",
+      "to": "chunker",
+      "label": "segments",
+      "classification": "主路径"
+    },
+    {
+      "id": "f10",
+      "from": "chunker",
+      "to": "tsr",
+      "label": "表格块",
+      "classification": "增强",
+      "labelDx": 30,
+      "labelDy": -14
+    },
+    {
+      "id": "f11",
+      "from": "chunker",
+      "to": "tagger",
+      "label": "chunk 文本",
+      "classification": "增强",
+      "labelDx": -40
+    },
+    {
+      "id": "f12",
+      "from": "chunker",
+      "to": "contextual",
+      "label": "chunks",
+      "classification": "增强",
+      "labelDy": 36,
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight"
+    },
+    {
+      "id": "f13",
+      "from": "tsr",
+      "to": "chunks",
+      "label": "tsr 结构",
+      "classification": "元数据",
+      "fromSide": "right",
+      "toSide": "right",
+      "via": [
+        [
+          1038,
+          157
+        ],
+        [
+          1038,
+          528
+        ],
+        [
+          1016,
+          528
+        ]
+      ],
+      "labelDx": -70
+    },
+    {
+      "id": "f14",
+      "from": "tagger",
+      "to": "chunks",
+      "label": "标签",
+      "classification": "元数据",
+      "fromSide": "right",
+      "toSide": "right",
+      "via": [
+        [
+          1065,
+          271
+        ],
+        [
+          1065,
+          528
+        ],
+        [
+          1016,
+          528
+        ]
+      ]
+    },
+    {
+      "id": "f15",
+      "from": "contextual",
+      "to": "chunks",
+      "label": "context",
+      "classification": "元数据",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "双引擎解析",
+      "items": [
+        "采样分类 10-50ms，文本型走 Fast 引擎零 OCR 成本",
+        "扫描件走 MinerU OCR，版面识别输出 10 种组件块"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "清洗与切分",
+      "items": [
+        "策略预切分产出 segments，分段级进度可追踪",
+        "chunk_id 内容确定性生成，text_hash 支撑差量重索引"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "元数据加工",
+      "items": [
+        "三个可选增强默认关闭：TSR / 自动打标签 / 上下文",
+        "状态机全程落 SQLite，失败可断点续跑"
+      ]
+    }
+  ]
+}

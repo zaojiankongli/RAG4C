@@ -1,0 +1,149 @@
+# ============================================================
+# Milvus v3.0.0 + 业务服务 统一部署（最终修复版）
+# 修复清单：
+#   1. ETCD_AUTH_ENABLED=false  —— v3.0.0 默认 etcd 认证与无认证 etcd 冲突
+#   2. 统一 zjkl 网络 + 固定 IP —— etcd/minio 固定到 172.20.0.10/11
+#   3. extra_hosts 绕过 DNS    —— 内网无外网 DNS，解析 etcd/minio 卡死
+# 应用：替换原文件后 docker compose down && docker compose up -d
+# 注意：down 会短暂停止业务容器（mysql/rabbitmq/redis），数据在卷中不丢
+# ============================================================
+version: '3.5'
+
+services:
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.25
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - /usr/local/service/milvus/etcd:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    restart: always
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      zjkl:
+        ipv4_address: 172.20.0.10
+
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    ports:
+      - "9001:9001"
+      - "9000:9000"
+    volumes:
+      - /usr/local/service/milvus/minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    restart: always
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      zjkl:
+        ipv4_address: 172.20.0.11
+
+  standalone:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v3.0.0
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      MINIO_REGION: us-east-1
+      ETCD_ENDPOINTS: etcd:2379
+      ETCD_AUTH_ENABLED: "false"
+      MINIO_ADDRESS: minio:9000
+    extra_hosts:                          # ★ 绕过 DNS（内网无外网，主机名解析会卡死）
+      - "etcd:172.20.0.10"
+      - "minio:172.20.0.11"
+    volumes:
+      - /usr/local/service/milvus/milvus:/var/lib/milvus
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      - "etcd"
+      - "minio"
+    networks:
+      - zjkl
+
+  mysql:
+    image: mysql:8.4.7
+    container_name: mysql
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root1234
+    volumes:
+      - /usr/local/service/mysql/data:/var/lib/mysql
+      - /usr/local/service/mysql/conf:/etc/mysql/conf.d
+      - /usr/local/service/mysql/init:/docker-entrypoint-initdb.d
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "mysqladmin" ,"ping", "-h", "localhost" ]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    networks:
+      - zjkl
+
+  rabbitmq:
+    image: rabbitmq:4.3.0-management
+    container_name: rabbitmq
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: root
+      RABBITMQ_DEFAULT_PASS: root1234
+    volumes:
+      - /usr/local/service/rabbitmq/data:/var/lib/rabbitmq
+      - /usr/local/service/rabbitmq/logs:/var/log/rabbitmq
+    restart: unless-stopped
+    networks:
+      - zjkl
+
+  redis:
+    image: redis:8.6.3
+    container_name: redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - /usr/local/service/redis/conf:/usr/local/etc/redis
+      - /usr/local/service/redis/data:/data
+    restart: unless-stopped
+    networks:
+      - zjkl
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 60s
+    command: redis-server /usr/local/etc/redis/redis.conf
+
+networks:
+  zjkl:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+          gateway: 172.20.0.1

@@ -1,0 +1,91 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+!config/.env.example
+
+# Python environments and caches
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Runtime data and logs
+*.log
+*.pid
+*.db
+*.db/
+data/metrics-history.jsonl
+eval/results.json
+volumes/
+
+# Editors and local tooling
+.idea/
+.vscode/
+.omo/
+.workbuddy/
+
+# AI / agent tool caches (not part of the product source)
+.claude/
+.codebuddy/
+.qoder/
+.trae/
+.zcode/
+.lingma/
+.codex/
+.cursor/
+.windsurf/
+.augment/
+agents/
+skills/
+
+# Agent working notes
+task_plan.md
+findings.md
+progress.md
+
+# Local QA, generated artifacts, research mirrors
+.planning/
+.playwright-cli/
+.pytest-*/
+.testdata/
+.rag4c_cache/
+.agents/
+output/
+backups/
+repo-snapshot/
+langchain4j-sister-project/
+langchain4j-sister-project.zip
+archify/
+archify-install-check-*/
+*.zip
+frontend/vite-dev*.log
+frontend/vite-dev.pid
+server-run*.log
+skills-lock.json
+*.sqlite3
+*.sqlite3-*
+*.sqlite
+*.wal
+*.shm
+docs/*.html
+
+docs/*.visual-check.*
+
+# Local runtime scratch
+.backend.logs
+.backend.mode
+.backend.port
+.playground-catalog-path
+.playground-catalog-url
+.tmp/
+.tmp-*
+debug-readonly*.txt
+server-live-*.log
+server-live-*.err.log

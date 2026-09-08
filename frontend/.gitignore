@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-ssr
+*.local
+src-tauri/target
+src-tauri/gen
+.shots
+test-results
+.playwright-cli
+output
+.vite-dev.pid
+vite-dev.log
+src/.backup-*

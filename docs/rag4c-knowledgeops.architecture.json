@@ -1,0 +1,357 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "RAG4C KnowledgeOps — Knowledge Lifeline",
+    "subtitle": "MySQL authority, durable operations, revision-fenced search and graph projections",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1240,
+      680
+    ],
+    "views": [
+      {
+        "id": "lifeline",
+        "label": "Knowledge Lifeline",
+        "focus": [
+          "sources",
+          "processing",
+          "mysql",
+          "ops",
+          "milvus",
+          "query",
+          "quality"
+        ],
+        "note": "Trace knowledge from source through authoritative revisions to verified answers."
+      },
+      {
+        "id": "authority",
+        "label": "Authority and audit",
+        "focus": [
+          "workspace",
+          "api",
+          "mysql",
+          "audit"
+        ],
+        "note": "MySQL owns identity, lifecycle, versions, permissions and audit."
+      },
+      {
+        "id": "consistency",
+        "label": "Projection consistency",
+        "focus": [
+          "mysql",
+          "ops",
+          "milvus",
+          "graph",
+          "consistency"
+        ],
+        "note": "Durable revision-fenced operations keep derived projections repairable."
+      }
+    ]
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [
+      54,
+      112
+    ],
+    "cols": 4,
+    "gapX": 54,
+    "gapY": 48,
+    "cellW": 245,
+    "cellH": 86
+  },
+  "components": [
+    {
+      "id": "workspace",
+      "type": "frontend",
+      "label": "Knowledge Workspace",
+      "sublabel": "Content · governance · sources",
+      "row": 0,
+      "col": 0,
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Control API",
+      "sublabel": "Tenant · role · revision guards",
+      "row": 0,
+      "col": 1,
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "mysql",
+      "type": "database",
+      "label": "MySQL Authority",
+      "sublabel": "Identity · versions · ops",
+      "row": 0,
+      "col": 2,
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "audit",
+      "type": "security",
+      "label": "Audit and RBAC",
+      "sublabel": "Actor · scope · before/after",
+      "row": 0,
+      "col": 3,
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "sources",
+      "type": "backend",
+      "label": "Source Plane",
+      "sublabel": "Connectors · cursors · runs",
+      "row": 1,
+      "col": 0,
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "processing",
+      "type": "backend",
+      "label": "Processing",
+      "sublabel": "Parse · clean · split · enhance",
+      "row": 1,
+      "col": 1,
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "ops",
+      "type": "messagebus",
+      "label": "Index Operations",
+      "sublabel": "Fence · retry · dead letter",
+      "row": 1,
+      "col": 2,
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "consistency",
+      "type": "frontend",
+      "label": "Consistency Console",
+      "sublabel": "Drift · repair · backfill",
+      "row": 1,
+      "col": 3,
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "retrieval",
+      "type": "frontend",
+      "label": "Retrieval Lab",
+      "sublabel": "Strategy A/B · judgments",
+      "row": 2,
+      "col": 0,
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "query",
+      "type": "backend",
+      "label": "Trusted RAG",
+      "sublabel": "Hybrid · rerank · verify",
+      "row": 2,
+      "col": 1,
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "milvus",
+      "type": "database",
+      "label": "Milvus Projection",
+      "sublabel": "Dense + BM25 · revision tagged",
+      "row": 2,
+      "col": 2,
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "graph",
+      "type": "database",
+      "label": "Graph Projection",
+      "sublabel": "Entities · relations · passages",
+      "row": 2,
+      "col": 3,
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "quality",
+      "type": "frontend",
+      "label": "Trusted Answer Ops",
+      "sublabel": "Evidence · citations · eval",
+      "row": 3,
+      "col": 1,
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis State",
+      "sublabel": "Queue · cache · locks",
+      "row": 3,
+      "col": 2,
+      "size": [
+        190,
+        72
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "KnowledgeOps control plane",
+      "wraps": [
+        "workspace",
+        "api",
+        "sources",
+        "processing",
+        "retrieval",
+        "query",
+        "quality"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Authoritative plane",
+      "wraps": [
+        "mysql",
+        "audit"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Derived and transient plane",
+      "wraps": [
+        "ops",
+        "consistency",
+        "milvus",
+        "graph",
+        "redis"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "workspace-api",
+      "from": "workspace",
+      "to": "api",
+      "label": "govern",
+      "labelDy": -24
+    },
+    {
+      "id": "api-mysql",
+      "from": "api",
+      "to": "mysql",
+      "label": "authoritative command",
+      "variant": "emphasis",
+      "labelDy": -24
+    },
+    {
+      "id": "mysql-audit",
+      "from": "mysql",
+      "to": "audit",
+      "label": "audit facts",
+      "variant": "security",
+      "labelDy": -24
+    },
+    {
+      "id": "sources-processing",
+      "from": "sources",
+      "to": "processing",
+      "label": "documents",
+      "labelDy": -24
+    },
+    {
+      "id": "processing-ops",
+      "from": "processing",
+      "to": "ops",
+      "label": "desired revision",
+      "variant": "emphasis",
+      "labelDy": -24
+    },
+    {
+      "id": "ops-consistency",
+      "from": "ops",
+      "to": "consistency",
+      "label": "status and repair",
+      "labelDy": -24
+    },
+    {
+      "id": "retrieval-query",
+      "from": "retrieval",
+      "to": "query",
+      "label": "experiment",
+      "labelDy": -24
+    },
+    {
+      "id": "query-milvus",
+      "from": "query",
+      "to": "milvus",
+      "label": "hybrid search",
+      "labelDy": -24
+    },
+    {
+      "id": "query-quality",
+      "from": "query",
+      "to": "quality",
+      "variant": "emphasis"
+    },
+    {
+      "id": "mysql-ops",
+      "from": "mysql",
+      "to": "ops",
+      "variant": "emphasis"
+    },
+    {
+      "id": "ops-milvus",
+      "from": "ops",
+      "to": "milvus"
+    },
+    {
+      "id": "ops-graph",
+      "from": "ops",
+      "to": "graph"
+    },
+    {
+      "id": "query-redis",
+      "from": "query",
+      "to": "redis",
+      "label": "bounded state"
+    }
+  ]
+}

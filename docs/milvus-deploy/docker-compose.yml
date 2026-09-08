@@ -1,0 +1,93 @@
+# ============================================================
+# Milvus v3.0.0 standalone 部署（修复版 · 具体路径版）
+# 修复：关闭 Milvus 侧 etcd 认证（v3.0.0 默认 auth.enabled=true，
+#       与无认证 etcd 冲突 → 启动即崩 "authentication is not enabled"）
+# 卷路径：/usr/local/service/milvus/{etcd,minio,milvus}
+# 用法：docker compose up -d
+# ============================================================
+version: '3.5'
+
+services:
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.25
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - /usr/local/service/milvus/etcd:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    restart: always
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    ports:
+      - "9001:9001"
+      - "9000:9000"
+    volumes:
+      - /usr/local/service/milvus/minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    restart: always
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  standalone:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v3.0.0
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      MINIO_REGION: us-east-1
+      ETCD_ENDPOINTS: etcd:2379
+      ETCD_AUTH_ENABLED: "false"      # ★ 修复点
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - /usr/local/service/milvus/milvus:/var/lib/milvus
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      - "etcd"
+      - "minio"
+
+networks:
+  default:
+    name: milvus
+
+# ============================================================
+# 备用方案 2：若仍报 "etcdserver: authentication is not enabled"
+# （环境变量未覆盖到配置），执行：
+#
+#   docker run --rm --entrypoint cat milvusdb/milvus:v3.0.0 \
+#     /milvus/configs/milvus.yaml > /usr/local/service/milvus/milvus.yaml
+#   sed -i '/^  auth:/,/^  requestTimeout:/ s/enabled: true/enabled: false/' \
+#     /usr/local/service/milvus/milvus.yaml
+#   # compose standalone.volumes 追加：- /usr/local/service/milvus/milvus.yaml:/milvus/configs/milvus.yaml
+#   docker compose up -d
+#
+# 权限提示（CentOS）：
+#   sudo chcon -Rt svirt_sandbox_file_t /usr/local/service/milvus   # SELinux
+#   sudo chown -R 1000:1000 /usr/local/service/milvus/milvus
+# ============================================================

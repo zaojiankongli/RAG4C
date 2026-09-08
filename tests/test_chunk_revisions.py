@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+import importlib
+from pathlib import Path
+from types import ModuleType
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from models.orm import Dataset, Document, Tenant
+
+
+def chunk_module() -> ModuleType:
+    try:
+        return importlib.import_module("core.chunk_catalog")
+    except ModuleNotFoundError:
+        pytest.fail("core.chunk_catalog is missing")
+
+
+def create_catalog(tmp_path: Path):
+    from core.catalog_schema import upgrade_catalog
+
+    url = f"sqlite:///{(tmp_path / 'catalog.db').as_posix()}"
+    upgrade_catalog(url)
+    engine = create_engine(url)
+    with Session(engine) as session:
+        session.add(Tenant(id="tenant-1", name="Tenant"))
+        session.add(Dataset(id="dataset-1", tenant_id="tenant-1", name="KB"))
+        session.add(
+            Document(
+                id="doc-1",
+                tenant_id="tenant-1",
+                dataset_id="dataset-1",
+                name="Document",
+                content_revision=1,
+                desired_index_revision=1,
+            )
+        )
+        session.commit()
+    return engine, chunk_module().ChunkCatalog(engine)
+
+
+def create_head(
+    catalog,
+    chunk_id: str,
+    *,
+    role: str = "child",
+    enabled: bool = True,
+    chunk_index: int = 0,
+):
+    return catalog.upsert_head(
+        chunk_id=chunk_id,
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        document_id="doc-1",
+        parent_chunk_id="parent-1" if role == "child" else None,
+        chunk_index=chunk_index,
+        chunk_role=role,
+        document_revision=1,
+        source_content="original text",
+        content="original text",
+        content_hash="hash-original",
+        enabled=enabled,
+        metadata={"section": "intro"},
+    )
+
+
+def test_chunk_edit_is_optimistic_and_preserves_superseded_revision(tmp_path: Path) -> None:
+    engine, catalog = create_catalog(tmp_path)
+    create_head(catalog, "chunk-1")
+
+    edited = catalog.edit_chunk(
+        "chunk-1",
+        expected_revision=0,
+        content="edited text",
+        editor_id="user-1",
+        edit_source="user",
+    )
+
+    assert edited.content_revision == 1
+    assert edited.content == "edited text"
+    revisions = catalog.list_revisions("chunk-1")
+    assert [(item.revision, item.content) for item in revisions] == [(0, "original text")]
+    with pytest.raises(chunk_module().ChunkRevisionConflict, match="revision conflict"):
+        catalog.edit_chunk(
+            "chunk-1",
+            expected_revision=0,
+            content="stale write",
+            editor_id="user-2",
+        )
+    engine.dispose()
+
+
+def test_revert_creates_a_new_head_revision_instead_of_rewinding(tmp_path: Path) -> None:
+    engine, catalog = create_catalog(tmp_path)
+    create_head(catalog, "chunk-1")
+    catalog.edit_chunk(
+        "chunk-1", expected_revision=0, content="edited text", editor_id="user-1"
+    )
+
+    reverted = catalog.revert_chunk(
+        "chunk-1",
+        target_revision=0,
+        expected_revision=1,
+        editor_id="user-2",
+    )
+
+    assert reverted.content_revision == 2
+    assert reverted.content == "original text"
+    assert [(item.revision, item.content) for item in catalog.list_revisions("chunk-1")] == [
+        (0, "original text"),
+        (1, "edited text"),
+    ]
+    engine.dispose()
+
+
+def test_projection_candidates_exclude_parent_and_disabled_chunks(tmp_path: Path) -> None:
+    engine, catalog = create_catalog(tmp_path)
+    create_head(catalog, "parent", role="parent", chunk_index=0)
+    create_head(catalog, "child", role="child", chunk_index=1)
+    create_head(catalog, "disabled", role="flat", enabled=False, chunk_index=2)
+
+    candidates = catalog.list_projection_candidates("doc-1", document_revision=1)
+
+    assert [item.id for item in candidates] == ["child"]
+    engine.dispose()
+
+
+def test_stale_enrichment_cannot_overwrite_newer_chunk_revision(tmp_path: Path) -> None:
+    engine, catalog = create_catalog(tmp_path)
+    create_head(catalog, "chunk-1")
+    assert catalog.update_context_header(
+        "chunk-1", input_revision=0, context_header="context v0"
+    )
+    catalog.edit_chunk(
+        "chunk-1", expected_revision=0, content="edited text", editor_id="user-1"
+    )
+
+    accepted = catalog.update_context_header(
+        "chunk-1", input_revision=0, context_header="stale context"
+    )
+    current = catalog.get_head("chunk-1")
+
+    assert accepted is False
+    assert current.context_header == "context v0"
+    engine.dispose()

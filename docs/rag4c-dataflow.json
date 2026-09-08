@@ -1,0 +1,264 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "RAG4C 数据管道",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1440,
+      620
+    ]
+  },
+  "stages": [
+    {
+      "label": "Sources 来源"
+    },
+    {
+      "label": "Ingest 入库"
+    },
+    {
+      "label": "Index 索引"
+    },
+    {
+      "label": "Query 查询"
+    },
+    {
+      "label": "Output 输出"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "documents",
+      "type": "frontend",
+      "label": "文档文件",
+      "sublabel": "PDF / Office / 扫描件",
+      "stage": 0,
+      "row": 1,
+      "tag": "本地路径"
+    },
+    {
+      "id": "router",
+      "type": "backend",
+      "label": "DeepDoc 路由",
+      "sublabel": "pdf-inspector 分类",
+      "stage": 1,
+      "row": 0,
+      "tag": "10-50ms"
+    },
+    {
+      "id": "vision",
+      "type": "external",
+      "label": "MinerU Vision",
+      "sublabel": "OCR · 版面识别",
+      "stage": 1,
+      "row": 2,
+      "tag": "扫描件"
+    },
+    {
+      "id": "chunker",
+      "type": "backend",
+      "label": "切分 + 状态机",
+      "sublabel": "segments→chunks · 双粒度进度",
+      "stage": 1,
+      "row": 1,
+      "tag": "text_hash"
+    },
+    {
+      "id": "milvus",
+      "type": "database",
+      "label": "Milvus",
+      "sublabel": "chunks · 实体 · 关系",
+      "stage": 2,
+      "row": 1,
+      "tag": "dense+BM25"
+    },
+    {
+      "id": "catalog",
+      "type": "database",
+      "label": "Catalog SQLite",
+      "sublabel": "租户 · 状态机 · schema",
+      "stage": 2,
+      "row": 2,
+      "tag": "rag4c.db"
+    },
+    {
+      "id": "console",
+      "type": "frontend",
+      "label": "问答控制台",
+      "sublabel": "Tauri 控制台",
+      "stage": 4,
+      "row": 1,
+      "tag": "流式渲染"
+    },
+    {
+      "id": "bridge",
+      "type": "backend",
+      "label": "Bridge API",
+      "sublabel": "SSE · 限流 · 缓存",
+      "stage": 3,
+      "row": 0,
+      "tag": "FastAPI"
+    },
+    {
+      "id": "retrieval",
+      "type": "backend",
+      "label": "检索管线",
+      "sublabel": "门控→改写→路由→混合→重排",
+      "stage": 3,
+      "row": 1,
+      "tag": "tenant+ACL 过滤"
+    },
+    {
+      "id": "genverify",
+      "type": "backend",
+      "label": "生成 + 验证",
+      "sublabel": "三层验证 · 双阈值弃权",
+      "stage": 3,
+      "row": 2,
+      "tag": "[N] 引用"
+    }
+  ],
+  "flows": [
+    {
+      "id": "f1",
+      "from": "documents",
+      "to": "router",
+      "label": "文件",
+      "classification": "写入管道",
+      "variant": "emphasis",
+      "labelAt": [
+        150,
+        160
+      ]
+    },
+    {
+      "id": "f2",
+      "from": "router",
+      "to": "vision",
+      "label": "scanned",
+      "classification": "路由分支",
+      "variant": "dashed",
+      "route": "vertical-channel",
+      "channelX": 220,
+      "labelDy": -23,
+      "labelAt": [
+        280,
+        314
+      ]
+    },
+    {
+      "id": "f3",
+      "from": "router",
+      "to": "chunker",
+      "label": "text + layout",
+      "classification": "文本型",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "f4",
+      "from": "vision",
+      "to": "chunker",
+      "label": "OCR Markdown",
+      "classification": "扫描件",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDx": 40
+    },
+    {
+      "id": "f5",
+      "from": "chunker",
+      "to": "milvus",
+      "label": "chunks + vectors",
+      "classification": "写入",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelDy": -30
+    },
+    {
+      "id": "f6",
+      "from": "chunker",
+      "to": "catalog",
+      "label": "状态 / 进度",
+      "classification": "状态机",
+      "variant": "dashed",
+      "labelDy": 28
+    },
+    {
+      "id": "f7",
+      "from": "milvus",
+      "to": "retrieval",
+      "label": "hybrid search",
+      "classification": "RRF 融合",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelDy": -30
+    },
+    {
+      "id": "f8",
+      "from": "catalog",
+      "to": "retrieval",
+      "label": "schema 白名单",
+      "classification": "过滤校验",
+      "variant": "dashed",
+      "labelDy": 28
+    },
+    {
+      "id": "f9",
+      "from": "console",
+      "to": "bridge",
+      "label": "query（SSE）",
+      "classification": "查询入口",
+      "variant": "emphasis"
+    },
+    {
+      "id": "f10",
+      "from": "bridge",
+      "to": "retrieval",
+      "label": "query + acl",
+      "classification": "限流 / 缓存后"
+    },
+    {
+      "id": "f11",
+      "from": "retrieval",
+      "to": "genverify",
+      "label": "top-k chunks",
+      "classification": "证据"
+    },
+    {
+      "id": "f12",
+      "from": "genverify",
+      "to": "console",
+      "label": "answer + 引用",
+      "classification": "逐 token",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "写入管道",
+      "items": [
+        "pdf-inspector 分类：文本型 3ms，扫描件走 MinerU OCR",
+        "状态机双粒度进度，增量重索引按 text_hash 差量嵌入"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "查询管道",
+      "items": [
+        "混合检索 + tenant/ACL 过滤，重排后进入生成",
+        "三层验证 + 双阈值弃权，SSE 逐 token 流式"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "能力边界",
+      "items": [
+        "通道 A/B 组件就绪待装配，dataset 过滤待接入管线"
+      ]
+    }
+  ]
+}

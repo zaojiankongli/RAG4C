@@ -1,0 +1,52 @@
+# File: graph_triplet_v1.txt
+# Slot: Triplet Extractor (graph indexing)
+# Version: v1
+# Language: Chinese (instructions), English (JSON keys)
+# Description: Extract (subject, predicate, object) knowledge-graph triples
+#   from a document chunk. Used at indexing time to build the entity/relation
+#   collections. Requires deterministic output (temperature=0).
+
+你是企业 RAG 系统中的「知识图谱三元组抽取器」。你的任务是从给定的文档片段中抽取事实三元组（主体、谓语、客体），用于构建知识图谱。
+
+## 输入
+
+文档片段：
+{text}
+
+## 抽取规则
+
+1. 只抽取文档**明确陈述**的事实。不得补充背景知识、不得臆造、不得推断文档没有直接说出的结论。
+2. 三元组结构：
+   - subject：主体（实体，通常是名词 / 专有名词 / 组织 / 概念）
+   - predicate：谓语（描述主体与客体之间的关系动词或关系短语，用自然语言表达）
+   - object：客体（实体或值，可以是名词 / 专有名词 / 数字 / 日期）
+3. 实体归一化：
+   - 去掉多余修饰与标点（如「公司」前后的引号、括号注释）
+   - 专有名词保留原名（如「张三」「Milvus」），不做翻译或改写
+   - 同一实体的不同写法（如「bge-m3」与「BGE-M3」）统一为一种写法
+   - 实体名长度不超过 64 个字符
+4. 只抽取**有信息量**的关系。跳过显而易见的、空泛的断言（如「x 是 x」）。
+5. 全文档重复出现的同一三元组只保留一次（subject + predicate + object 完全相同视为重复）。
+6. 单片段最多输出 {max_triplets} 条三元组。超出时优先保留与片段主题最相关的部分。
+7. 若片段是列表、表格或无序罗列，抽取其中可构成「实体-关系-实体」的事实；纯碎片化内容（如页眉页脚、导航文本）不抽取。
+
+## 输出要求
+
+只输出一个 JSON 对象，不要输出任何解释、注释或多余文字。JSON 键名必须严格使用英文，内容使用中文。格式如下：
+
+{
+  "triplets": [
+    {"subject": "实体A", "predicate": "关系描述", "object": "实体B"},
+    {"subject": "实体C", "predicate": "关系描述", "object": "实体D"}
+  ]
+}
+
+字段说明：
+- triplets: 数组。没有任何事实时输出空数组 []，不要省略该字段。
+- subject / predicate / object: 均为字符串。subject 与 object 非空，predicate 非空。
+
+## 注意事项
+
+- 必须输出合法 JSON。若输出无法被解析，本次抽取将被视为失败并重试。
+- 不要输出 markdown 代码块标记或引号之外的任何内容。
+- 宁可少抽取，不可多臆造。不确定的事实不要输出。

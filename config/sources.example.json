@@ -1,0 +1,49 @@
+{
+  "$comment": [
+    "示例清单：展示两种内置源与各自的参数。",
+    "真正生效的是 config/sources.json（路径由 settings.sources.manifest_path 决定，",
+    "可用环境变量 RAG4C_SOURCES_MANIFEST_PATH 覆盖）。",
+    "新增一种源类型（Context7 / S3 / Confluence …）只需写一个类 + 一行注册，",
+    "见 sources/plugins.py；清单格式与本文件完全一致，不必改任何代码。"
+  ],
+  "sources": [
+    {
+      "name": "my-github-docs",
+      "type": "github_repo",
+      "dataset_id": "kb-mygithub",
+      "tenant_id": "",
+      "enabled": true,
+      "metadata": {
+        "project": "示例项目",
+        "lang": "zh-CN"
+      },
+      "params": {
+        "repo": "owner/name",
+        "ref": "main",
+        "include": ["docs/**"],
+        "exclude": ["docs/archive/**"],
+        "extensions": [".md", ".mdx"],
+        "strip_prefix": "docs/",
+        "mode": "auto",
+        "max_files": 0,
+        "timeout": 300
+      }
+    },
+    {
+      "name": "my-local-docs",
+      "type": "local_dir",
+      "dataset_id": "kb-local",
+      "enabled": false,
+      "metadata": {
+        "project": "本地资料"
+      },
+      "params": {
+        "path": "D:/some/where/docs",
+        "include": ["**/*.md"],
+        "exclude": ["**/draft/**"],
+        "extensions": [".md", ".txt"],
+        "max_files": 0
+      }
+    }
+  ]
+}

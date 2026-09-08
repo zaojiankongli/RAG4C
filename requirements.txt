@@ -1,0 +1,35 @@
+# =============================================================================
+# RAG4C 基础依赖清单
+# 安装方式（任选其一）：
+#   pip install -r requirements.txt
+#   pip install -e .                    # 仅核心依赖
+#   pip install -e ".[milvus-lite,llm]" # 核心 + Milvus Lite + LLM 客户端
+# =============================================================================
+
+# ---- 核心（配置 / 数据模型 / 基础架构）-------------------------------------
+pydantic>=2.9,<3
+pydantic-settings>=2.4,<3
+python-dotenv>=1.0
+numpy>=1.24
+SQLAlchemy>=2.0,<3
+
+# ---- 向量数据库：pymilvus v3.0.x -------------------------------------------
+# 注意：BM25 全文检索由 Milvus 内置 Function 完成，应用层不生成 sparse 向量。
+# 使用 Milvus Lite（本地 .db 文件模式）时请安装 milvus-lite extra。
+pymilvus[milvus-lite]>=3.0.0,<4
+
+# ---- 本地模型（可选，重量级依赖；不安装也能 import 本包，仅调用时会报错）----
+# BGE-M3 稠密嵌入 + BGE-reranker-v2-M3 重排序（依赖 torch / transformers）
+FlagEmbedding>=1.2.10
+torch>=2.1
+
+# ---- LLM / Embedding API（OpenAI 兼容端点，可指向 Ollama / vLLM / 任意网关）----
+openai>=1.40
+
+# ---- Redis（可选加速件）-----------------------------------------------------
+# 用途：答案 L2 缓存（跨副本共享）、跨进程 single-flight、语料代次失效、
+# Streams 准入队列。**不装也能跑**：core/redis_client.py 的每个出口在连不上
+# 时一律返回 None/False，缓存退回进程内 LRU、排队退回 asyncio.Semaphore。
+# 列在这里是因为 requirements.txt 是「全都装上」的清单；只要核心依赖的话
+# 用 pip install -e . 即可，Redis 在 pyproject 里是 [redis] extra。
+redis>=5,<7
