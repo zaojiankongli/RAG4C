@@ -589,23 +589,35 @@ def test_release_orm_registers_exact_0029_models_and_columns() -> None:
 def test_release_orm_defaults_and_compatibility_columns_match_0029() -> None:
     metadata = orm.Base.metadata
 
+    # 时间戳列**刻意不再声明 server_default**：见 docs/性能实测与升级计划.md §2 第 2 条——
+    # SQLAlchemy 会把字符串 "CURRENT_TIMESTAMP" 当字面量加引号（MySQL 8.4 报错），
+    # 统一改为 Python 侧 default 兜底；DB 侧默认值仍由 0029 迁移的 DDL 提供
+    # （`CURRENT_TIMESTAMP(6)` / SQLite `CURRENT_TIMESTAMP`）。
+    # 因此这里断言新的真实契约：ORM 无 server_default，但有可调用的 Python default。
+    timestamp_columns = (
+        ("tenant_release_channels", "created_at"),
+        ("tenant_release_channels", "updated_at"),
+        ("dataset_release_manifests", "created_at"),
+        ("dataset_release_entries", "created_at"),
+        ("dataset_release_events", "occurred_at"),
+        ("dataset_channel_releases", "created_at"),
+        ("dataset_channel_releases", "updated_at"),
+    )
+    for table_name, column_name in timestamp_columns:
+        column = metadata.tables[table_name].c[column_name]
+        assert column.server_default is None, (table_name, column_name)
+        assert column.default is not None and column.default.is_callable, (table_name, column_name)
+
     expected_defaults = {
         ("tenant_release_channels", "status"): "'active'",
         ("tenant_release_channels", "promotion_order"): "0",
         ("tenant_release_channels", "is_default_serving"): "0",
         ("tenant_release_channels", "revision"): "1",
-        ("tenant_release_channels", "created_at"): "CURRENT_TIMESTAMP",
-        ("tenant_release_channels", "updated_at"): "CURRENT_TIMESTAMP",
         ("dataset_release_manifests", "schema_version"): "1",
         ("dataset_release_manifests", "entry_count"): "0",
         ("dataset_release_manifests", "blocker_count"): "0",
-        ("dataset_release_manifests", "created_at"): "CURRENT_TIMESTAMP",
-        ("dataset_release_entries", "created_at"): "CURRENT_TIMESTAMP",
-        ("dataset_release_events", "occurred_at"): "CURRENT_TIMESTAMP",
         ("dataset_channel_releases", "status"): "'active'",
         ("dataset_channel_releases", "revision"): "1",
-        ("dataset_channel_releases", "created_at"): "CURRENT_TIMESTAMP",
-        ("dataset_channel_releases", "updated_at"): "CURRENT_TIMESTAMP",
         ("datasets", "release_revision"): "1",
         ("app_dataset_references", "release_mode"): "'follow_channel'",
     }

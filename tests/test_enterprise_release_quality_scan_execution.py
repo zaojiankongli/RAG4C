@@ -13,6 +13,7 @@ from models.orm import (
     Dataset,
     DatasetChannelRelease,
     DatasetReleaseQualityAlert,
+    DatasetReleaseQualityCertification,
     DatasetReleaseQualityObservation,
     DatasetReleaseRecertificationJob,
     TenantReleaseQualityScanRun,
@@ -73,7 +74,23 @@ def _prepare_expired_execution_authority(
         request_ip="127.0.0.1",
         idempotency_key="scan-execution-certification-key",
     )
-    execution_now = NOW + timedelta(days=7)
+    # 本 helper 的语义是「认证已失效之后」再执行扫描。原先写死 `NOW + 7 天`，
+    # 但认证的 valid_until 由 quality policy 的 max_certification_age_minutes 决定，
+    # 且 certify_release 用的是**真实时钟**（它没有 now 参数——认证是实时事实）。
+    # 于是「7 天后必然过期」这个前提并不成立：实测 valid_until ≈ real_now + 14 天，
+    # 扫描看到的仍是 healthy，告警数为 0，两条用例因此长期误挂。
+    # 改为从认证行真实的 valid_until 推导，helper 的名字与行为重新一致。
+    with Session(engine) as session:
+        valid_until = session.scalar(
+            select(DatasetReleaseQualityCertification.valid_until)
+            .where(
+                DatasetReleaseQualityCertification.tenant_id == "tenant-a",
+                DatasetReleaseQualityCertification.dataset_id == "dataset-a",
+            )
+            .order_by(DatasetReleaseQualityCertification.created_at.desc())
+        )
+    assert valid_until is not None
+    execution_now = valid_until + timedelta(minutes=1)
     with Session(engine) as session:
         dataset = session.get(Dataset, "dataset-a")
         assert dataset is not None

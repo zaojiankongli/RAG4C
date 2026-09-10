@@ -6466,19 +6466,20 @@ def _enterprise_knowledge_base_release_capability_issues(connection: Any) -> tup
                 issues.append(f"missing release approval action {table}.{action}")
     issues.extend(_release_immutable_guard_issues(connection))
     issues.extend(_release_data_authority_issues(connection))
-    registry_state, registry_issues = inspect_enterprise_knowledge_base_registry_capability(
-        connection
+    issues.extend(
+        _parent_authority_issues(
+            connection,
+            label="registry authority",
+            inspector=inspect_enterprise_knowledge_base_registry_capability,
+        )
     )
-    if registry_state != "ready":
-        issues.extend(
-            f"parent registry authority: {issue}" for issue in registry_issues or (registry_state,)
+    issues.extend(
+        _parent_authority_issues(
+            connection,
+            label="workspace authorization authority",
+            inspector=inspect_workspace_authorization_capability,
         )
-    workspace_state, workspace_issues = inspect_workspace_authorization_capability(connection)
-    if workspace_state != "ready":
-        issues.extend(
-            f"parent workspace authorization authority: {issue}"
-            for issue in workspace_issues or (workspace_state,)
-        )
+    )
     return tuple(sorted(set(issues)))
 
 
@@ -6755,11 +6756,13 @@ def _enterprise_release_quality_certification_capability_issues(
             issues.append(f"missing quality waiver approval action {table}")
     issues.extend(_release_quality_policy_data_issues(connection))
     issues.extend(_release_quality_guard_issues(connection))
-    release_state, release_issues = inspect_enterprise_knowledge_base_release_capability(connection)
-    if release_state != "ready":
-        issues.extend(
-            f"parent Release authority: {issue}" for issue in release_issues or (release_state,)
+    issues.extend(
+        _parent_authority_issues(
+            connection,
+            label="Release authority",
+            inspector=inspect_enterprise_knowledge_base_release_capability,
         )
+    )
     return tuple(sorted(set(issues)))
 
 
@@ -7128,14 +7131,13 @@ def _enterprise_release_quality_operations_capability_issues(
                 issues.append(f"missing or invalid index {table}.{name}")
     issues.extend(_release_quality_operations_guard_issues(connection))
     issues.extend(_release_quality_operations_data_issues(connection))
-    quality_state, quality_issues = inspect_enterprise_release_quality_certification_capability(
-        connection
-    )
-    if quality_state != "ready":
-        issues.extend(
-            f"parent Release quality authority: {issue}"
-            for issue in quality_issues or (quality_state,)
+    issues.extend(
+        _parent_authority_issues(
+            connection,
+            label="Release quality authority",
+            inspector=inspect_enterprise_release_quality_certification_capability,
         )
+    )
     return tuple(sorted(set(issues)))
 
 
@@ -8065,6 +8067,49 @@ def _schema_connection(bind: Any, callback):
         with bind.connect() as connection:
             return callback(connection)
     return callback(bind)
+
+
+def _catalog_revision(connection: Any) -> str | None:
+    """Return the single stamped catalog revision, or None when unstamped/ambiguous.
+
+    "无修订号"是一个**合法状态**（stamp_existing_catalog 的输入就是无章的 head 形状目录），
+    所以这里返回 None 而不是抛错；需要区分的调用方自己判断。
+    """
+
+    if "alembic_version" not in set(inspect(connection).get_table_names()):
+        return None
+    revisions = tuple(
+        str(value)
+        for value in connection.execute(text("SELECT version_num FROM alembic_version")).scalars()
+    )
+    return revisions[0] if len(revisions) == 1 else None
+
+
+def _parent_authority_issues(
+    connection: Any,
+    *,
+    label: str,
+    inspector: Any,
+) -> tuple[str, ...]:
+    """交叉校验父权威能力——**仅在目录有唯一修订号时**。
+
+    为什么需要这个守卫：父权威能力 inspector 是**带修订门禁**的（它要判断"当前修订下
+    应具备什么结构"），而这里调用它的是**结构检查器**（`*_capability_issues`）。
+    未盖章的目录会拿到 "catalog is not at a known ... revision"，若直接折叠进来，
+    就变成"结构缺陷"，把 `stamp_existing_catalog` 这条**专门用来给无章 head 目录盖章**
+    的修复路径自己挡住（tests/test_knowledge_governance_migration.py::
+    test_stamp_existing_head_schema_uses_actual_governance_head 钉死该行为）。
+
+    未盖章时跳过父权威的**修订门禁**；父权威的**结构**仍由各 *_capability_issues
+    自身的逐表逐列检查覆盖，安全边界没有被放松。
+    """
+
+    if _catalog_revision(connection) is None:
+        return ()
+    state, issues = inspector(connection)
+    if state == "ready":
+        return ()
+    return tuple(f"parent {label}: {issue}" for issue in issues or (state,))
 
 
 def _knowledge_base_registry_data_issues(connection: Any) -> tuple[str, ...]:

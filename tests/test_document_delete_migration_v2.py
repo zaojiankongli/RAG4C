@@ -63,6 +63,22 @@ def test_0011_sqlite_upgrade_downgrade_reupgrade_and_defaults(tmp_path: Path) ->
                 "('tenant-1', 'Tenant', 'free', 'active', 1000, 100000, 0, 0, CURRENT_TIMESTAMP)"
             )
         )
+        # 0016 的前置校验要求「每个 active 租户必须有 owner」才会放行 DDL
+        # （catalog_migrations/versions/0016_enterprise_membership.py::_validate_tenant_membership_preflight）。
+        # 本用例最后要 `upgrade(config, "head")` 把整条迁移链跑通，因此种子必须满足该不变量；
+        # accounts / tenant_members 自 0001 就存在，这里补上 owner 即可。
+        connection.execute(
+            text(
+                "INSERT INTO accounts (id, name, email, created_at) VALUES "
+                "('owner-1', 'Owner', 'owner-1@example.test', CURRENT_TIMESTAMP)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO tenant_members (account_id, tenant_id, role, created_at) VALUES "
+                "('owner-1', 'tenant-1', 'owner', CURRENT_TIMESTAMP)"
+            )
+        )
         connection.execute(
             text(
                 "INSERT INTO datasets (id, tenant_id, name, description, status, profile_revision, "
