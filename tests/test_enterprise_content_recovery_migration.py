@@ -9,6 +9,7 @@ from alembic import command
 from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
 
+from core import catalog_schema
 from tests.test_enterprise_knowledge_base_release_migration import (
     alembic_config,
     engine_for,
@@ -164,7 +165,7 @@ def _foreign_keys(inspector, table: str) -> dict[str, tuple[tuple[str, ...], str
 def test_0033_follows_notification_center_and_precedes_current_head() -> None:
     migration = migration_module()
     scripts = ScriptDirectory.from_config(alembic_config("sqlite://"))
-    assert scripts.get_current_head() == "0036_enterprise_knowledge_serving_reliability"
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
     assert migration.revision == REVISION
     assert migration.down_revision == DOWN_REVISION
 

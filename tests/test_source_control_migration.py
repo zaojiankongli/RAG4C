@@ -182,8 +182,7 @@ def test_0013_sqlite_upgrade_downgrade_reupgrade_and_head(tmp_path: Path) -> Non
     command.upgrade(config, "0013_source_control")
 
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_current_head() == "0029_enterprise_knowledge_base_releases"
-    assert catalog_schema.HEAD_REVISION == "0029_enterprise_knowledge_base_releases"
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
 
 
 def test_0013_mysql_offline_ddl_contains_source_run_fences() -> None:

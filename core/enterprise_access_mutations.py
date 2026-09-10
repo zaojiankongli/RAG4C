@@ -51,20 +51,26 @@ _MUTATION_SCHEMA_REVISION = "0019_dataset_acl_control"
 # Dataset ACL tables remain authoritative after later enterprise control-plane
 # migrations.  The mutation gate must validate the capability contract below,
 # not reject a healthy catalog merely because its Alembic head advanced.
-_SUPPORTED_MUTATION_SCHEMA_REVISIONS = frozenset(
-    {
-        "0019_dataset_acl_control",
-        "0020_tenant_invitation_lifecycle",
-        "0021_enterprise_identity_federation",
-        "0022_scim_provisioning_data_plane",
-        "0023_enterprise_audit_compliance",
-        "0024_oidc_sso_runtime",
-        "0025_enterprise_approval_control",
-        "0026_enterprise_workspace_control",
-        "0027_enterprise_workspace_authorization",
-        "0028_enterprise_knowledge_base_registry",
-    }
-)
+#
+# 这里曾经是一份**写死的 revision 白名单**（停在 0028），恰好违反了上一段注释：
+# 每次新增迁移（0029…0036），真实 head 就掉出白名单，于是 Dataset ACL 授权写入
+# 在健康库上被永久 503——不是"不安全时拒绝"，而是"升级后一直拒绝"。
+# tests/test_enterprise_acl_security_review.py 的
+# test_later_workspace_heads_keep_dataset_acl_mutations_available 就是钉死
+# "后续企业迁移不得停用 ACL 写入"这条不变量的。
+#
+# 改为按**迁移顺序**判断：revision 必须是已知修订，且不早于 0019。
+# 结构契约仍由下面的 _ensure_mutation_schema 逐表逐列验证（那才是真正的安全边界）。
+def _revision_order(revision: str) -> int:
+    from core import catalog_schema
+
+    return catalog_schema._REVISION_ORDER_FOR_CAPABILITY(revision)
+
+
+def _known_revisions() -> frozenset[str]:
+    from core import catalog_schema
+
+    return catalog_schema._known_catalog_revisions()
 
 _REQUIRED_MUTATION_TABLES = frozenset(
     {
@@ -269,7 +275,14 @@ def _ensure_mutation_schema(engine: Any) -> None:
             str(value)
             for value in engine.execute(text("SELECT version_num FROM alembic_version")).scalars()
         )
-        if len(revisions) != 1 or revisions[0] not in _SUPPORTED_MUTATION_SCHEMA_REVISIONS:
+        if len(revisions) != 1:
+            raise _migration_required("enterprise ACL mutation schema revision is unsupported")
+        revision = revisions[0]
+        # 未知修订（手改过 alembic_version）或早于 0019 的修订：仍拒绝。
+        # 0019 及之后的任何已知修订：放行到下面的结构契约校验。
+        if revision not in _known_revisions() or _revision_order(revision) < _revision_order(
+            _MUTATION_SCHEMA_REVISION
+        ):
             raise _migration_required("enterprise ACL mutation schema revision is unsupported")
 
         for table_name, required_columns in _REQUIRED_MUTATION_COLUMNS.items():

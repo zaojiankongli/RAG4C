@@ -35,7 +35,7 @@ server = ["fastapi>=0.115", "uvicorn[standard]>=0.32"]
 # 返回 None/False，不装这个包服务照常起、照常答，只是缓存退回进程内 LRU、
 # 排队退回 asyncio.Semaphore。把它列为必需依赖等于否认这套降级设计。
 redis = ["redis>=5,<7"]
-dev = ["httpx2>=0.28", "pytest>=8", "ruff>=0.6"]
+dev = ["httpx2>=0.28", "pytest>=8", "pytest-xdist>=3.6,<4", "ruff>=0.6"]
 
 [tool.setuptools]
 py-modules = ["rag", "rag_common", "rag_graph", "rag_stream"]
@@ -61,6 +61,16 @@ prompts = ["*.txt", "README.md"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# 刻意不把 -n auto 写进 addopts：并行是可选加速，不是必需品——没装 xdist 也必须串行跑通。
+# 需要并行时显式 `pytest -n auto` 或 `scripts/verify_all.ps1 -Parallel`。
+#
+# ⚠️ 并行与【性能预算断言】互斥：tests 里有一批断言 p95 延迟 / offer 热路径预算 /
+# 1000 事件与 100000 列表墙钟的用例（test_run_history_store、test_run_registry、
+# test_run_ops_api、test_run_observability_parity、test_source_dispatch_runtime）。
+# 并行跑时它们会被同机邻居抢 CPU 打穿，实测 -n auto 转红 12 个、-n 4 转红 10 个，
+# 而串行时全绿。所以这些用例必须在**独占机器**上串行跑。
+# （曾经这里声明过一个 `serial` marker 并声称 xdist 会把它派到专用 worker——那是错的，
+#   xdist 没有这个内建机制，留着只会误导人以为并行是安全的。已删除。）
 
 [tool.ruff]
 target-version = "py310"

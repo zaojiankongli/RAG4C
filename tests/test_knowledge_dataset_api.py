@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from config.settings import KnowledgeSecuritySettings, RunHistorySettings, TenantSettings
-from core import catalog
+from core import catalog, catalog_schema
 from models.orm import Account, Base, Dataset, KnowledgeAuditEvent, Tenant, TenantMember
 from server.knowledge_auth import issue_knowledge_actor_token
 from server.knowledge_dataset_api import router
@@ -35,14 +35,16 @@ def _engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    # 下面是 Base.metadata.create_all —— 建的是**当前 ORM = 当前 head** 的 schema，
+    # 所以盖章必须是 HEAD_REVISION。原先盖死 0028（写测试时的 head），
+    # 于是 revision 与真实结构不一致：capability 的 exact-check 比对会把
+    # 后续 stage 才加进 CHECK 的动作值判成"缺失/非法"，请求被 fail-closed 成 503。
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
         connection.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)"))
         connection.execute(
-            text(
-                "INSERT INTO alembic_version(version_num) VALUES "
-                "('0028_enterprise_knowledge_base_registry')"
-            )
+            text("INSERT INTO alembic_version(version_num) VALUES (:revision)"),
+            {"revision": catalog_schema.HEAD_REVISION},
         )
     with Session(engine) as session:
         session.add_all(

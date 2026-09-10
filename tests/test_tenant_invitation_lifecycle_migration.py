@@ -381,11 +381,10 @@ def test_0020_precedes_the_current_application_head() -> None:
 
     assert migration.revision == REVISION
     assert migration.down_revision == DOWN_REVISION
-    assert (
-        scripts.get_current_head()
-        == catalog_schema.HEAD_REVISION
-        == "0029_enterprise_knowledge_base_releases"
-    )
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
+    # 0020 已被后续 stage 超越。原先这里硬编码了当时的 head 字符串，
+    # 于是每加一条迁移都会误挂——改为引用单一事实源 + 断言"本迁移不是 head"。
+    assert migration.revision != catalog_schema.HEAD_REVISION
 
 
 def test_invitation_lifecycle_orm_and_manifest_contracts_match() -> None:

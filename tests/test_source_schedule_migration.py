@@ -206,8 +206,7 @@ def test_0014_sqlite_upgrade_downgrade_reupgrade_and_manifest(tmp_path: Path) ->
 
     command.upgrade(config, "0014_source_schedules")
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_current_head() == "0029_enterprise_knowledge_base_releases"
-    assert catalog_schema.HEAD_REVISION == "0029_enterprise_knowledge_base_releases"
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
     assert "source_schedules" in catalog_schema.HEAD_CATALOG_TABLES
 
 

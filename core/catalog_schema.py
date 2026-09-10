@@ -10684,8 +10684,19 @@ def _knowledge_serving_revision_compatible(
             revision
         ) < _REVISION_ORDER_FOR_CAPABILITY(minimum_revision):
             return None
+        # 能走到这里说明：revision 是已知修订，且**不早于**本能力的引入版本。
+        # 也就是这张 schema 本该包含该能力的表。此时一张都找不到，是
+        # 「迁移已盖章但表被删/未建」的损坏安装，必须 fail-closed。
+        #
+        # 曾经这里返回 "not_available"，后果是真实的越权：
+        # 上层（如 core/enterprise_access_control.py）把 "not_available" 当作
+        # "老库、按旧行为降级"的合法状态，于是「删除权限策略表」就能让权限检查
+        # 静默放行——tests/test_stage17_authorization_security_regressions.py
+        # 里两条测试正是钉死这个不变量的（DID NOT RAISE 即回归）。
+        # legacy 库不会走到这里：上面的 revision 比较已经 return None 交给 original。
         if not (required_tables & tables):
-            return "not_available", ()
+            missing = ", ".join(sorted(required_tables - tables))
+            return "unavailable", (f"required tables are missing: {missing}",)
         issues = (
             issue_checker(connection, revision) if revision_aware else issue_checker(connection)
         )

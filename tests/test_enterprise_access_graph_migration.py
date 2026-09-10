@@ -476,8 +476,7 @@ def test_0017_precedes_the_current_application_head() -> None:
 
     assert migration.revision == "0017_enterprise_access_graph"
     assert migration.down_revision == "0016_enterprise_membership"
-    assert scripts.get_current_head() == "0029_enterprise_knowledge_base_releases"
-    assert catalog_schema.HEAD_REVISION == "0029_enterprise_knowledge_base_releases"
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
 
 
 def test_access_graph_orm_and_manifest_contracts_match() -> None:

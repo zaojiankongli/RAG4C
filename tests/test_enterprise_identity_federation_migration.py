@@ -43,11 +43,10 @@ def test_0021_precedes_current_head_and_tables_match_orm_manifest():
     m = _module()
     s = ScriptDirectory.from_config(_alembic_config("sqlite://"))
     assert m.revision == REVISION and m.down_revision == DOWN
-    assert (
-        s.get_current_head()
-        == catalog_schema.HEAD_REVISION
-        == "0029_enterprise_knowledge_base_releases"
-    )
+    assert s.get_current_head() == catalog_schema.HEAD_REVISION
+    # 0021 已被后续 stage 超越。原先这里硬编码了当时的 head 字符串，
+    # 于是每加一条迁移都会误挂——改为引用单一事实源 + 断言"本迁移不是 head"。
+    assert m.revision != catalog_schema.HEAD_REVISION
     import models.orm as orm
 
     assert TABLES <= set(orm.Base.metadata.tables) <= set(catalog_schema.HEAD_CATALOG_TABLES)

@@ -8,6 +8,7 @@ import pytest
 from alembic import command
 from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
+from core import catalog_schema
 
 from tests.test_enterprise_content_recovery_migration import _upgrade as upgrade_0033
 from tests.test_enterprise_knowledge_base_release_migration import (
@@ -194,11 +195,14 @@ def _insert_event(connection, *, event_id: str = "event-guard", digest: str = "b
     )
 
 
-def test_0034_is_head_and_follows_content_recovery() -> None:
+def test_0034_follows_content_recovery_and_is_superseded_by_the_current_head() -> None:
     migration = migration_module()
     scripts = ScriptDirectory.from_config(alembic_config("sqlite://"))
-    assert scripts.get_current_head() == REVISION
+    # 0034 写的时候是本仓库的 head，之后 0035/0036 又接了上去。
+    # 断言"它是 head"会随每次新增迁移误挂——改为断言链头一致 + 本迁移已被超越。
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
     assert migration.revision == REVISION
+    assert catalog_schema.HEAD_REVISION != REVISION
     assert migration.down_revision == DOWN_REVISION
 
 

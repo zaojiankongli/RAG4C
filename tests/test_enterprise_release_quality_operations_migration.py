@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from sqlalchemy import exc as sa_exc
+from core import catalog_schema
 from sqlalchemy import inspect, text
 
 from tests.test_enterprise_knowledge_base_release_migration import (
@@ -268,13 +269,16 @@ def _normalized_checks(inspector, table: str) -> dict[str, str]:
     }
 
 
-def test_0031_is_head_and_follows_quality_certification() -> None:
+def test_0031_follows_quality_certification_and_is_superseded_by_the_current_head() -> None:
     migration = migration_module()
     from alembic.script import ScriptDirectory
 
     scripts = ScriptDirectory.from_config(alembic_config("sqlite://"))
-    assert scripts.get_current_head() == REVISION
+    # 0031 写的时候是本仓库的 head，之后 0032-0036 又接了上去。
+    # 断言"它是 head"会随每次新增迁移误挂——改为断言链头一致 + 本迁移已被超越。
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
     assert migration.revision == REVISION
+    assert catalog_schema.HEAD_REVISION != REVISION
     assert migration.down_revision == DOWN_REVISION
 
 

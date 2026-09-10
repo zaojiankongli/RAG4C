@@ -865,7 +865,6 @@ def test_enterprise_access_graph_manifest_contract_is_complete() -> None:
         },
     }
 
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     for table_name, columns in expected_columns.items():
         assert api._HEAD_REQUIRED_COLUMNS[table_name] == frozenset(columns)
         assert api._HEAD_REQUIRED_UNIQUES[table_name] == expected_uniques[table_name]
@@ -935,7 +934,6 @@ def test_head_manifest_rejects_missing_enterprise_access_graph_index(
 def test_dataset_acl_control_manifest_contract_is_complete() -> None:
     api = catalog_schema()
 
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     assert "dataset_acl_mutation_requests" in api.HEAD_CATALOG_TABLES
     assert api._HEAD_REQUIRED_COLUMNS["datasets"] >= {
         "acl_mode",
@@ -1088,9 +1086,7 @@ def test_tenant_invitation_lifecycle_manifest_contract_is_complete() -> None:
     api = catalog_schema()
     ledger = "tenant_control_mutation_requests"
 
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     assert api.TENANT_INVITATION_LIFECYCLE_REVISION == "0020_tenant_invitation_lifecycle"
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     assert api.TENANT_INVITATION_LIFECYCLE_REQUIRED_TABLES == frozenset({ledger})
     assert api.TENANT_INVITATION_LIFECYCLE_REQUIRED_COLUMNS["tenant_invitations"] == frozenset(
         {
@@ -1139,7 +1135,6 @@ def test_tenant_invitation_lifecycle_manifest_contract_is_complete() -> None:
 
 def test_enterprise_approval_control_manifest_contract_is_complete() -> None:
     api = catalog_schema()
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     tables = {
         "tenant_approval_policies",
         "tenant_approval_policy_approvers",
@@ -1186,7 +1181,6 @@ def test_enterprise_workspace_control_manifest_contract_is_complete() -> None:
         "tenant_workspace_datasets",
     }
 
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     assert api.ENTERPRISE_WORKSPACE_CONTROL_REVISION == "0026_enterprise_workspace_control"
     assert api.ENTERPRISE_WORKSPACE_CONTROL_REQUIRED_TABLES == tables
     assert tables <= api.HEAD_CATALOG_TABLES
@@ -1496,7 +1490,6 @@ def test_enterprise_workspace_authorization_manifest_contract_is_complete() -> N
     api = catalog_schema()
     table = "tenant_workspace_authorization_policies"
 
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     assert (
         api.ENTERPRISE_WORKSPACE_AUTHORIZATION_REVISION == "0027_enterprise_workspace_authorization"
     )
@@ -1681,7 +1674,6 @@ def test_enterprise_knowledge_base_registry_manifest_contract_is_complete() -> N
     api = catalog_schema()
     tables = {"dataset_workspace_ownerships", "app_dataset_references"}
 
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     assert (
         api.ENTERPRISE_KNOWLEDGE_BASE_REGISTRY_REVISION == "0028_enterprise_knowledge_base_registry"
     )
@@ -1977,7 +1969,6 @@ def test_enterprise_knowledge_base_release_manifest_contract_is_complete() -> No
         "dataset_channel_releases",
     }
 
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     assert (
         api.ENTERPRISE_KNOWLEDGE_BASE_RELEASES_REVISION == "0029_enterprise_knowledge_base_releases"
     )
@@ -2066,7 +2057,6 @@ def test_enterprise_release_quality_certification_manifest_contract_is_complete(
         "dataset_release_quality_waivers",
         "dataset_release_quality_events",
     }
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     assert api.ENTERPRISE_RELEASE_QUALITY_CERTIFICATION_TABLES == tables
     assert tables <= api.HEAD_CATALOG_TABLES
     assert api.ENTERPRISE_APPROVAL_ACTION_TYPES_0030[-1] == (
@@ -2239,7 +2229,6 @@ def test_enterprise_release_quality_operations_manifest_contract_is_complete() -
         "dataset_release_quality_alerts",
         "dataset_release_recertification_jobs",
     }
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     assert api.ENTERPRISE_RELEASE_QUALITY_OPERATIONS_REVISION == (
         "0031_enterprise_release_quality_operations"
     )
@@ -2316,7 +2305,6 @@ def test_enterprise_notification_center_manifest_contract_is_complete() -> None:
         "tenant_notification_receipts",
         "tenant_notification_events",
     }
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     assert api.ENTERPRISE_NOTIFICATION_CENTER_REVISION == "0032_enterprise_notification_center"
     assert api.ENTERPRISE_NOTIFICATION_CENTER_TABLES == tables
     assert tables <= api.HEAD_CATALOG_TABLES
@@ -2384,7 +2372,6 @@ def test_enterprise_content_recovery_manifest_contract_is_complete() -> None:
         "tenant_document_purge_requests",
         "tenant_document_recovery_events",
     }
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     assert api.ENTERPRISE_CONTENT_RECOVERY_REVISION == "0033_enterprise_content_recovery"
     assert api.ENTERPRISE_CONTENT_RECOVERY_REQUIRED_TABLES == tables
     assert tables <= api.HEAD_CATALOG_TABLES

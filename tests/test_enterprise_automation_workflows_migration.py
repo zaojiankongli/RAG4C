@@ -11,6 +11,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
+from core import catalog_schema
 from tests.test_enterprise_task_operations_migration import _upgrade as upgrade_0034
 from tests.test_enterprise_knowledge_base_release_migration import (
     alembic_config,
@@ -57,7 +58,7 @@ def _checks(inspector, table: str) -> dict[str, str]:
 def test_0035_is_head_and_follows_task_operations() -> None:
     migration = migration_module()
     scripts = ScriptDirectory.from_config(alembic_config("sqlite://"))
-    assert scripts.get_current_head() == "0036_enterprise_knowledge_serving_reliability"
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
     assert migration.revision == REVISION
     assert migration.down_revision == DOWN_REVISION
 

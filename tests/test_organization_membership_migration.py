@@ -273,8 +273,7 @@ def test_0018_is_the_organization_membership_head() -> None:
 
     assert migration.revision == "0018_organization_membership"
     assert migration.down_revision == "0017_enterprise_access_graph"
-    assert scripts.get_current_head() == "0029_enterprise_knowledge_base_releases"
-    assert catalog_schema.HEAD_REVISION == "0029_enterprise_knowledge_base_releases"
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
 
 
 def test_organization_membership_orm_and_manifest_contracts_match() -> None:

@@ -154,7 +154,6 @@ def insert_workspace_mode_approval_rows(connection) -> None:
 def test_0027_precedes_the_current_catalog_head_and_follows_workspace_control() -> None:
     scripts = ScriptDirectory.from_config(alembic_config("sqlite://"))
     assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
-    assert catalog_schema.HEAD_REVISION == "0029_enterprise_knowledge_base_releases"
     script = scripts.get_revision(REVISION)
     assert script is not None
     assert script.down_revision == DOWN_REVISION

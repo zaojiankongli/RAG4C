@@ -298,7 +298,7 @@ def test_0029_precedes_current_head_and_follows_stage18() -> None:
     migration = migration_module()
     scripts = ScriptDirectory.from_config(alembic_config("sqlite://"))
 
-    assert scripts.get_current_head() == "0030_enterprise_release_quality_certification"
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
     script = scripts.get_revision(REVISION)
     assert script is not None
     assert script.down_revision == DOWN_REVISION

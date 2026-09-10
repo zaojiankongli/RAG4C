@@ -135,8 +135,7 @@ def test_0016_precedes_application_head_and_follows_0015() -> None:
 
     assert migration.revision == "0016_enterprise_membership"
     assert migration.down_revision == "0015_document_catalog_indexes"
-    assert scripts.get_current_head() == "0029_enterprise_knowledge_base_releases"
-    assert catalog_schema.HEAD_REVISION == "0029_enterprise_knowledge_base_releases"
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
 
 
 def test_tenant_member_and_audit_models_declare_enterprise_contract() -> None:

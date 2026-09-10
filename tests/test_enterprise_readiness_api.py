@@ -1435,7 +1435,6 @@ def test_enterprise_release_quality_operations_capability_maps_0031_contract() -
     assert list(capabilities).index("enterprise_release_quality_operations") == (
         list(capabilities).index("enterprise_release_quality_certification") + 1
     )
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
 
 
 def test_enterprise_notification_center_capability_maps_0032_contract() -> None:
@@ -1453,7 +1452,6 @@ def test_enterprise_notification_center_capability_maps_0032_contract() -> None:
     assert list(capabilities).index("enterprise_notification_center") == (
         list(capabilities).index("enterprise_release_quality_operations") + 1
     )
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
 
 
 def test_enterprise_content_recovery_capability_maps_0033_contract() -> None:
@@ -1475,7 +1473,6 @@ def test_enterprise_content_recovery_capability_maps_0033_contract() -> None:
 
 
 def test_content_recovery_damage_is_fail_closed_and_attributed_to_0033() -> None:
-    api = readiness_api()
     client = _client(
         state=CatalogSchemaState(
             revision=HEAD_REVISION,
@@ -1492,7 +1489,6 @@ def test_content_recovery_damage_is_fail_closed_and_attributed_to_0033() -> None
         "enterprise_task_operations",
         "enterprise_automation_workflows",
     ]
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
 
 
 def test_enterprise_task_operations_capability_maps_0034_contract() -> None:
@@ -1507,7 +1503,6 @@ def test_enterprise_task_operations_capability_maps_0034_contract() -> None:
     assert list(capabilities).index("enterprise_task_operations") == (
         list(capabilities).index("enterprise_content_recovery") + 1
     )
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
 
 
 def test_enterprise_knowledge_serving_capability_maps_0036_contract() -> None:

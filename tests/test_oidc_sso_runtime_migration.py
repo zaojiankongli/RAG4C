@@ -37,10 +37,8 @@ def test_0024_precedes_current_head_and_matches_orm_manifest():
     m = mod()
     assert m.revision == REV and m.down_revision == DOWN
     assert (
-        ScriptDirectory.from_config(_alembic_config("sqlite://")).get_current_head()
-        == "0029_enterprise_knowledge_base_releases"
+        ScriptDirectory.from_config(_alembic_config("sqlite://")).get_current_head() == catalog_schema.HEAD_REVISION
     )
-    assert catalog_schema.HEAD_REVISION == "0029_enterprise_knowledge_base_releases"
     import models.orm as o
 
     assert TABLES <= set(o.Base.metadata.tables) <= set(catalog_schema.HEAD_CATALOG_TABLES)

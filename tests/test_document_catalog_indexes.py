@@ -69,8 +69,7 @@ def test_document_catalog_migration_precedes_the_current_application_head() -> N
 
     assert migration.revision == "0015_document_catalog_indexes"
     assert migration.down_revision == "0014_source_schedules"
-    assert scripts.get_current_head() == "0022_scim_provisioning_data_plane"
-    assert catalog_schema.HEAD_REVISION == "0022_scim_provisioning_data_plane"
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
 
 
 def test_document_catalog_indexes_are_declared_in_orm_and_manifest() -> None:

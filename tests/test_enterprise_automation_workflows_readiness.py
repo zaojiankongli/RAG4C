@@ -310,7 +310,6 @@ def _seed_valid_automation_graph(engine) -> None:
 
 def test_stage25_manifest_is_head_and_covers_all_six_tables() -> None:
     assert manifest.ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION == REVISION
-    assert manifest.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     assert manifest.ENTERPRISE_AUTOMATION_WORKFLOWS_REQUIRED_TABLES == TABLES
     assert TABLES <= manifest.HEAD_CATALOG_TABLES
     for table in TABLES:
@@ -392,7 +391,6 @@ def test_capability_order_places_automation_after_task_operations() -> None:
     assert capability.revision == REVISION
     assert capability.tables == TABLES
     assert capability.issue_fragments == manifest.ENTERPRISE_AUTOMATION_WORKFLOWS_ISSUE_FRAGMENTS
-    assert api.HEAD_REVISION == "0036_enterprise_knowledge_serving_reliability"
     assert keys.index("enterprise_knowledge_serving_reliability") == (
         keys.index("enterprise_automation_workflows") + 1
     )

@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.orm import Session
 
+from core import catalog_schema
 from core.enterprise_acl_idempotency import (
     EnterpriseAclIdempotencyValidationError,
     canonical_json,
@@ -144,13 +145,18 @@ def test_same_key_and_body_for_two_grant_paths_is_hash_conflict() -> None:
     "revision",
     [
         "0026_enterprise_workspace_control",
-        "0028_enterprise_knowledge_base_registry",
+        # 用当前 head 而不是写测试时的 0028：下面这支用 Base.metadata.create_all 建的是
+        # **当前 ORM = 当前 head** 的 schema，却盖 0028 的章——revision 与真实结构不一致，
+        # 于是 capability 的 exact-check 比对把新 stage 才加的 CHECK 判成"缺失/非法"，
+        # 请求被 fail-closed 成 503。盖章改成 HEAD_REVISION 后语义更强且如实：
+        # "当前 head 的目录仍必须允许 Dataset ACL 写入"。
+        catalog_schema.HEAD_REVISION,
     ],
 )
 def test_later_workspace_heads_keep_dataset_acl_mutations_available(revision: str) -> None:
     api = _security_harness()
     try:
-        if revision == "0028_enterprise_knowledge_base_registry":
+        if revision == catalog_schema.HEAD_REVISION:
             Base.metadata.create_all(api.write_engine)
         _stamp(api.write_engine, revision)
         response = api.client().post(

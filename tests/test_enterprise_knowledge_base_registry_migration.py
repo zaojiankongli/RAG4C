@@ -300,7 +300,7 @@ def insert_transfer_approval_rows(connection, *, tenant_id: str = "tenant-a") ->
 def test_0028_precedes_the_current_release_catalog_head() -> None:
     migration = migration_module()
     scripts = ScriptDirectory.from_config(alembic_config("sqlite://"))
-    assert scripts.get_current_head() == "0029_enterprise_knowledge_base_releases"
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
     script = scripts.get_revision(REVISION)
     assert script is not None
     assert script.down_revision == DOWN_REVISION

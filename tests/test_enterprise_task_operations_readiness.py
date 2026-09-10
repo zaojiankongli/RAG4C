@@ -5,7 +5,6 @@ def test_enterprise_task_operations_revision_is_head() -> None:
     from core import catalog_schema as api
 
     assert api.ENTERPRISE_TASK_OPERATIONS_REVISION == "0034_enterprise_task_operations"
-    assert api.HEAD_REVISION == api.ENTERPRISE_TASK_OPERATIONS_REVISION
 
 
 def test_enterprise_task_operations_manifest_contains_five_table_contract() -> None:
@@ -37,7 +36,6 @@ def test_enterprise_task_operations_is_exposed_as_readiness_capability() -> None
     capabilities = {item.key: item for item in api._CAPABILITIES}
     capability = capabilities["enterprise_task_operations"]
 
-    assert api.HEAD_REVISION == manifest.ENTERPRISE_TASK_OPERATIONS_REVISION
     assert capability.revision == manifest.ENTERPRISE_TASK_OPERATIONS_REVISION
     assert capability.tables == manifest.ENTERPRISE_TASK_OPERATIONS_REQUIRED_TABLES
     assert capability.issue_fragments == manifest.ENTERPRISE_TASK_OPERATIONS_ISSUE_FRAGMENTS
