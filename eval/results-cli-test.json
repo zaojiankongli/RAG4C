@@ -1,0 +1,166 @@
+{
+  "metrics": {
+    "refusal_rate": 0.35714285714285715,
+    "over_refusal_rate": 0.3333333333333333,
+    "hallucination_rate": 0.6,
+    "avg_groundedness": 0.5,
+    "avg_relevance": 0.75,
+    "citation_failure_rate": 0.0
+  },
+  "cases": [
+    {
+      "id": "milvus_index_types",
+      "question": "Milvus 支持哪些索引类型？HNSW 和 IVF 有什么区别？",
+      "unanswerable": false,
+      "abstained": false,
+      "answered": true,
+      "groundedness": 0.5,
+      "relevance": 0.75,
+      "citations_ok": true,
+      "notes": "可答：语料覆盖 Milvus 索引说明"
+    },
+    {
+      "id": "hybrid_search_rrf",
+      "question": "混合检索里的 RRF 是如何融合稠密与稀疏结果的？",
+      "unanswerable": false,
+      "abstained": true,
+      "answered": false,
+      "groundedness": null,
+      "relevance": null,
+      "citations_ok": true,
+      "notes": "可答：语料覆盖混合检索融合机制"
+    },
+    {
+      "id": "milvus_lite_deploy",
+      "question": "Milvus Lite 如何零部署使用？",
+      "unanswerable": false,
+      "abstained": false,
+      "answered": true,
+      "groundedness": 0.5,
+      "relevance": 0.75,
+      "citations_ok": true,
+      "notes": "可答：语料覆盖 Milvus Lite 部署方式"
+    },
+    {
+      "id": "policy_annual_leave",
+      "question": "云帆科技的员工年假是怎么规定的？",
+      "unanswerable": false,
+      "abstained": false,
+      "answered": true,
+      "groundedness": 0.5,
+      "relevance": 0.75,
+      "citations_ok": true,
+      "notes": "可答：语料覆盖公司年假政策"
+    },
+    {
+      "id": "policy_expense_reimburse",
+      "question": "云帆科技出差报销的时限和材料要求是什么？",
+      "unanswerable": false,
+      "abstained": true,
+      "answered": false,
+      "groundedness": null,
+      "relevance": null,
+      "citations_ok": true,
+      "notes": "可答：语料覆盖公司报销制度"
+    },
+    {
+      "id": "out_of_corpus_movie",
+      "question": "2026 年春节档电影票房的冠军是哪部影片？",
+      "unanswerable": true,
+      "abstained": false,
+      "answered": true,
+      "groundedness": 0.5,
+      "relevance": 0.75,
+      "citations_ok": true,
+      "notes": "不可答：娱乐新闻话题，不在企业知识库范围内"
+    },
+    {
+      "id": "out_of_corpus_canteen",
+      "question": "公司食堂本周的午餐菜单是什么？",
+      "unanswerable": true,
+      "abstained": false,
+      "answered": true,
+      "groundedness": 0.5,
+      "relevance": 0.75,
+      "citations_ok": true,
+      "notes": "不可答：食堂菜单从未入库，知识库无相关文档"
+    },
+    {
+      "id": "out_of_corpus_mars",
+      "question": "火星土壤样本中的主要矿物成分有哪些？",
+      "unanswerable": true,
+      "abstained": true,
+      "answered": false,
+      "groundedness": null,
+      "relevance": null,
+      "citations_ok": true,
+      "notes": "不可答：火星探测话题与企业知识库无关"
+    },
+    {
+      "id": "citation_verification",
+      "question": "RAG4C 的引用验证三层防线分别校验什么？",
+      "unanswerable": false,
+      "abstained": false,
+      "answered": true,
+      "groundedness": 0.5,
+      "relevance": 0.75,
+      "citations_ok": true,
+      "notes": "可答：语料覆盖引用验证机制（R9-A 扩充）"
+    },
+    {
+      "id": "abstention_gate",
+      "question": "RAG4C 在什么情况下会弃权不回答？",
+      "unanswerable": false,
+      "abstained": false,
+      "answered": true,
+      "groundedness": 0.5,
+      "relevance": 0.75,
+      "citations_ok": true,
+      "notes": "可答：语料覆盖弃权机制（R9-A 扩充）"
+    },
+    {
+      "id": "query_cache",
+      "question": "RAG4C 的查询结果缓存是如何工作的？",
+      "unanswerable": false,
+      "abstained": true,
+      "answered": false,
+      "groundedness": null,
+      "relevance": null,
+      "citations_ok": true,
+      "notes": "可答：语料覆盖缓存机制（R9-A 扩充）"
+    },
+    {
+      "id": "source_diversity",
+      "question": "RAG4C 的来源多样性开关有哪几种模式？",
+      "unanswerable": false,
+      "abstained": false,
+      "answered": true,
+      "groundedness": 0.5,
+      "relevance": 0.75,
+      "citations_ok": true,
+      "notes": "可答：语料覆盖来源多样性机制（R9-A 扩充）"
+    },
+    {
+      "id": "out_of_corpus_stock",
+      "question": "云帆科技今天的股价是多少？",
+      "unanswerable": true,
+      "abstained": false,
+      "answered": true,
+      "groundedness": 0.5,
+      "relevance": 0.75,
+      "citations_ok": true,
+      "notes": "不可答：实时股价数据未入库（R9-A 扩充）"
+    },
+    {
+      "id": "out_of_corpus_recipe",
+      "question": "公司食堂的红烧肉怎么做？",
+      "unanswerable": true,
+      "abstained": true,
+      "answered": false,
+      "groundedness": null,
+      "relevance": null,
+      "citations_ok": true,
+      "notes": "不可答：菜谱话题与知识库无关（R9-A 扩充）"
+    }
+  ]
+}

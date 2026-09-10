@@ -340,6 +340,26 @@ html[data-theme="dark"] .app-sider {
   background: #10141c !important;
   border-right-color: #202636;
 }
+/* 二次元主题：浅粉渐变侧栏（重复类提升特异性，压过 :root:not([data-theme="dark"]) 的 (0,3,0)） */
+html[data-theme="anime"] .app-sider.app-sider {
+  background: linear-gradient(180deg, #fff0f4 0%, #fff9fb 100%) !important;
+  border-right-color: #ffe0e8 !important;
+}
+/* 二次元主题：TDesign 品牌色变量全局粉橙化（按钮/标签/链接/选中态一改全改） */
+html[data-theme="anime"] {
+  --td-brand-color: #ff7fa5;
+  --td-brand-color-1: #fff0f4;
+  --td-brand-color-2: #ffe4ec;
+  --td-brand-color-3: #ffc2d4;
+  --td-brand-color-4: #ff9ebc;
+  --td-brand-color-5: #ff8aae;
+  --td-brand-color-6: #ff7fa5;
+  --td-brand-color-7: #f06292;
+  --td-brand-color-8: #e05a80;
+  --td-brand-color-9: #c44a6c;
+  --td-brand-color-10: #a03a58;
+  --td-brand-color: #ff7fa5;
+}
 .sider-brand {
   display: flex;
   align-items: center;
@@ -417,6 +437,23 @@ html[data-theme="dark"] .app-sider {
 /* 墨轨菜单态：默认雾白、悬停浮白、选中亮蓝渐变 + 左侧光条 */
 :root:not([data-theme="dark"]) .app-sider .t-menu__item {
   color: var(--sider-text) !important;
+}
+/* 二次元主题：深色菜单文字（浅粉侧栏上需要可读对比度） */
+/* 二次元主题：深色菜单文字（重复类提升特异性，压过 :root:not 的 (0,4,0)） */
+html[data-theme="anime"] .app-sider .t-menu__item.t-menu__item {
+  color: #5c4551 !important;
+}
+html[data-theme="anime"] .app-sider .t-menu__item.t-menu__item:hover {
+  background-color: #ffe4ec !important;
+  color: #5c4551 !important;
+}
+html[data-theme="anime"] .app-sider .t-menu__item.t-menu__item.t-is-active {
+  color: #ffffff !important;
+  background: linear-gradient(90deg, #ff9e7d 0%, #ff7fa5 100%) !important;
+  box-shadow: 0 4px 12px rgba(255, 127, 165, 0.35) !important;
+}
+html[data-theme="anime"] .app-sider .t-menu__group-title.t-menu__group-title {
+  color: #c9a8b5 !important;
 }
 :root:not([data-theme="dark"]) .app-sider .t-menu__item:hover {
   color: var(--sider-text-strong) !important;

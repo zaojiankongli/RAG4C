@@ -132,6 +132,7 @@ def _backfill_invitation_lifecycle() -> None:
 
 
 def upgrade() -> None:
+    _is_mysql = op.get_bind().dialect.name == "mysql"
     if not context.is_offline_mode():
         _validate_invitation_preflight(op.get_bind())
 
@@ -218,7 +219,7 @@ def upgrade() -> None:
             "created_at",
             _datetime6(),
             nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
+            server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.Column("completed_at", _datetime6(), nullable=True),
         sa.CheckConstraint(

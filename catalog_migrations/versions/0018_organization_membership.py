@@ -40,6 +40,7 @@ def _datetime6():
 
 
 def upgrade() -> None:
+    _is_mysql = op.get_bind().dialect.name == "mysql"
     op.create_table(
         "tenant_organization_unit_members",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -62,7 +63,7 @@ def upgrade() -> None:
             "created_at",
             _datetime6(),
             nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
+            server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.Column(
             "created_by",
@@ -74,7 +75,7 @@ def upgrade() -> None:
             "updated_at",
             _datetime6(),
             nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
+            server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.Column(
             "updated_by",

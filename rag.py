@@ -119,6 +119,7 @@ def _build_optional_components(
         "stepback": None,
         "sentence_window": None,
         "graph_retriever": None,
+        "auto_filter": None,
     }
 
     def _try(name: str, factory: Any) -> None:
@@ -188,6 +189,11 @@ def _build_optional_components(
             ),
         )
 
+    if getattr(settings.catalog, "auto_filter_on", False):
+        from retrieval.auto_filter import create_auto_filter
+
+        _try("auto_filter", lambda: create_auto_filter(settings))
+
     return components
 
 
@@ -216,6 +222,9 @@ def _build_pipeline(settings: Settings) -> dict[str, Any]:
     from core.circuit import CircuitConfig as _CircuitConfig
 
     reranker_cb = _CircuitBreaker("reranker", _CircuitConfig.from_settings(settings.circuit))
+    # 裁判（judge）熔断：L3 蕴含判定占端到端延迟 45%~50%，judge 槽位挂掉时
+    # 快速失败（不耗尽超时×重试），由验证层降级为 exists_only，链路继续。
+    judge_cb = _CircuitBreaker("judge_llm", _CircuitConfig.from_settings(settings.circuit))
     retrieval = RetrievalPipeline(
         embedder=embedder,
         milvus=milvus,
@@ -228,6 +237,7 @@ def _build_pipeline(settings: Settings) -> dict[str, Any]:
         subqueries=optional["subqueries"],
         stepback=optional["stepback"],
         sentence_window=optional["sentence_window"],
+        auto_filter=optional["auto_filter"],
         reranker_cb=reranker_cb,
     )
     generator = Generator(llm_client=create_client(settings.llm.generation))
@@ -235,7 +245,7 @@ def _build_pipeline(settings: Settings) -> dict[str, Any]:
     entailment_mode, verify_strict, verify_sample_ratio = resolve_verify_settings(settings)
     verifier = CitationVerifier(
         milvus=milvus,
-        judge_llm=create_client(settings.llm.judge),
+        judge_llm=create_client(settings.llm.judge, circuit=judge_cb),
         embedder=embedder,  # 启用事后引用指派（任务书 6.3）
         groundedness_template=None,
         entailment_mode=entailment_mode,

@@ -245,6 +245,7 @@ class RetrievalPipeline:
         subqueries: Any = None,
         stepback: Any = None,
         sentence_window: Any = None,
+        auto_filter: Any = None,
         reranker_cb: Any = None,
         serving_guard: Any = None,
     ) -> None:
@@ -260,6 +261,7 @@ class RetrievalPipeline:
         self.subqueries = subqueries
         self.stepback = stepback
         self.sentence_window = sentence_window
+        self.auto_filter = auto_filter
         self.serving_guard = serving_guard
         self.settings = settings if settings is not None else get_settings()
         # 兼容传入完整 Settings（含 .pipeline）或直接传入 PipelineSettings
@@ -437,6 +439,33 @@ class RetrievalPipeline:
         统一走这里，保证主检索与子查询 / stepback 增强检索语义一致。
         """
         return text if self.pipeline.hybrid_search_on else None
+
+    def _auto_filter_expr(
+        self,
+        query: str,
+        dataset: str,
+        traces: list[str],
+    ) -> Optional[str]:
+        """生成并校验自动元数据过滤表达式（失败降级为 None，不阻断检索）。
+
+        user_fields 来自 catalog 元数据 schema（按 dataset 读取，无 schema 时
+        为空列表）。LLM 生成或校验失败时记 trace 并返回 None——过滤是优化，
+        绝不让它阻断主链路。
+        """
+        try:
+            from core import catalog
+
+            fields = catalog.list_metadata_fields(dataset) if dataset else []
+            user_fields = [
+                {"key": str(f.get("key", "")), "value_type": str(f.get("value_type", "string"))}
+                for f in fields
+                if f.get("key")
+            ]
+            expr = self.auto_filter.generate(query, user_fields)
+            return expr
+        except Exception as exc:  # noqa: BLE001 - 降级：不过滤
+            traces.append(f"auto_filter 不可用（降级为不过滤）: {type(exc).__name__}")
+            return None
 
     def _serving_context(
         self,
@@ -685,6 +714,18 @@ class RetrievalPipeline:
             acl_filter_on=p.acl_filter_on,
             dataset_id=dataset,
         )
+
+        # 自动元数据过滤（可选增强）：LLM 按元数据 schema 生成过滤表达式，
+        # 与租户/ACL/dataset 表达式 AND 组合。任何失败（LLM 不可用、schema
+        # 读取失败、校验失败）都静默降级为不过滤——过滤是优化而非正确性约束。
+        if self.auto_filter is not None:
+            auto_expr = self._auto_filter_expr(query, dataset, traces)
+            if auto_expr:
+                if filter_expr:
+                    filter_expr = f"({filter_expr}) and ({auto_expr})"
+                else:
+                    filter_expr = auto_expr
+                traces.append(f"auto_filter: {auto_expr}")
 
         # rerank 一旦不生效，score 就退化成 RRF 融合分，弃权闸那道"知识库有没有
         # 相关内容"的检查会整个失效（见 verify.abstention 的说明）。稠密余弦是

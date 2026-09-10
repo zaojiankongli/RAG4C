@@ -158,6 +158,11 @@ def upgrade() -> None:
     if context.is_offline_mode() and _dialect_name() == "sqlite":
         raise RuntimeError("0031 SQLite offline upgrade is unsupported; use online migration")
 
+    # trigger 是 MySQL 保留字：列名用 quoted_name 反引号；CHECK 文本里的引用
+    # 也需按方言处理（SQLite 不认反引号，测试库用 SQLite 在线升级）。
+    _is_mysql = _dialect_name() == "mysql"
+    _trigger_check = "`trigger` IN ('manual','certification_warning','certification_expired','stale_evidence','alert_escalation')" if _is_mysql else "trigger IN ('manual','certification_warning','certification_expired','stale_evidence','alert_escalation')"
+
     op.create_table(
         "tenant_release_quality_slo_policies",
         sa.Column("id", sa.String(64), nullable=False, primary_key=True),
@@ -178,11 +183,11 @@ def upgrade() -> None:
         sa.Column("allow_active_waiver", sa.Boolean(), nullable=False),
         sa.Column("policy_digest", sa.String(64), nullable=False),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(64), nullable=False),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("updated_by", sa.String(64), nullable=False),
         sa.Column("disabled_at", _datetime6(), nullable=True),
@@ -264,11 +269,11 @@ def upgrade() -> None:
         sa.Column("next_run_at", _datetime6(), nullable=False),
         sa.Column("last_enqueued_at", _datetime6(), nullable=True),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(64), nullable=False),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("updated_by", sa.String(64), nullable=False),
         sa.Column("paused_at", _datetime6(), nullable=True),
@@ -359,10 +364,10 @@ def upgrade() -> None:
         sa.Column("safe_error_code", sa.String(64), nullable=True),
         sa.Column("safe_error", sa.String(512), nullable=True),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.CheckConstraint(
             "status IN ('pending','claimed','running','completed','failed','cancelled')",
@@ -602,10 +607,10 @@ def upgrade() -> None:
         sa.Column("suppressed_by", sa.String(64), nullable=True),
         sa.Column("suppressed_comment", sa.String(512), nullable=True),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.CheckConstraint(
             "revision > 0 AND occurrence_count > 0", name="ck_quality_alerts_counts"
@@ -692,7 +697,7 @@ def upgrade() -> None:
         sa.Column("policy_revision", sa.Integer(), nullable=False),
         sa.Column("slo_policy_id", sa.String(64), nullable=False),
         sa.Column("slo_policy_revision", sa.Integer(), nullable=False),
-        sa.Column("trigger", sa.String(32), nullable=False),
+        sa.Column(sa.quoted_name("trigger", True), sa.String(32), nullable=False),
         sa.Column("status", sa.String(24), nullable=False, server_default="pending"),
         sa.Column("active_job_key", sa.String(384), nullable=True),
         sa.Column("cycle_key", sa.String(64), nullable=False),
@@ -711,11 +716,11 @@ def upgrade() -> None:
         sa.Column("safe_error_code", sa.String(64), nullable=True),
         sa.Column("safe_error", sa.String(512), nullable=True),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(64), nullable=False),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("completed_at", _datetime6(), nullable=True),
         sa.Column("cancelled_at", _datetime6(), nullable=True),
@@ -727,7 +732,7 @@ def upgrade() -> None:
             name="ck_dataset_release_recertification_jobs_release_role",
         ),
         sa.CheckConstraint(
-            "trigger IN ('manual','certification_warning','certification_expired','stale_evidence','alert_escalation')",
+            _trigger_check,
             name="ck_dataset_release_recertification_jobs_trigger",
         ),
         sa.CheckConstraint(

@@ -263,6 +263,7 @@ def _guard_downgrade() -> None:
 
 
 def upgrade() -> None:
+    _is_mysql = op.get_bind().dialect.name == "mysql"
     if context.is_offline_mode() and _dialect_name() == "sqlite":
         raise RuntimeError("0033 SQLite offline upgrade is unsupported; use online migration")
 
@@ -281,11 +282,11 @@ def upgrade() -> None:
         ),
         sa.Column("revision", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(64), nullable=False),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("updated_by", sa.String(64), nullable=False),
         sa.CheckConstraint(
@@ -351,10 +352,10 @@ def upgrade() -> None:
         sa.Column("safe_snapshot_json", sa.JSON(), nullable=False),
         sa.Column("snapshot_digest", sa.String(64), nullable=False),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.CheckConstraint(
             "status IN ('recycled','restoring','restored','purge_requested','purged','failed')",
@@ -457,10 +458,10 @@ def upgrade() -> None:
         sa.Column("released_at", _datetime6(), nullable=True),
         sa.Column("released_by", sa.String(64), nullable=True),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.CheckConstraint(
             "status IN ('active','released')", name="ck_tenant_document_legal_holds_status"
@@ -549,10 +550,10 @@ def upgrade() -> None:
         sa.Column("expires_at", _datetime6(), nullable=False),
         sa.Column("executed_at", _datetime6(), nullable=True),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.CheckConstraint(
             "status IN ('pending_approval','approved','cancelled','expired','executed')",

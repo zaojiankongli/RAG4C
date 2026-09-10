@@ -294,6 +294,7 @@ def _guard_downgrade() -> None:
 
 
 def upgrade() -> None:
+    _is_mysql = op.get_bind().dialect.name == "mysql"
     if context.is_offline_mode() and _dialect_name() == "sqlite":
         raise RuntimeError("0034 SQLite offline upgrade is unsupported; use online migration")
 
@@ -330,10 +331,10 @@ def upgrade() -> None:
         sa.Column("started_at", _datetime6(), nullable=True),
         sa.Column("finished_at", _datetime6(), nullable=True),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.CheckConstraint(
             _in_check("source_kind", TASK_SOURCE_KINDS),
@@ -440,10 +441,10 @@ def upgrade() -> None:
         sa.Column("rejected_at", _datetime6(), nullable=True),
         sa.Column("expires_at", _datetime6(), nullable=True),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.CheckConstraint(
             _in_check("action_type", TASK_ACTION_TYPES),
@@ -573,11 +574,11 @@ def upgrade() -> None:
         sa.Column("filters_json", sa.JSON(), nullable=False),
         sa.Column("filter_digest", sa.String(64), nullable=False),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(64), nullable=False),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("updated_by", sa.String(64), nullable=False),
         sa.Column("archived_at", _datetime6(), nullable=True),
@@ -654,10 +655,10 @@ def upgrade() -> None:
         sa.Column("safe_error_code", sa.String(64), nullable=True),
         sa.Column("safe_error", sa.String(512), nullable=True),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.CheckConstraint(
             _in_check("status", TASK_RECONCILIATION_STATUSES),

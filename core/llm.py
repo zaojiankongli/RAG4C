@@ -182,12 +182,34 @@ def _record_cache_hit(model: str, envelope: dict) -> None:
 
 
 class LLMClient:
-    """一个可重用的 LLM 客户端（对应一个 llm 槽位）。"""
+    """一个可重用的 LLM 客户端（对应一个 llm 槽位）。
 
-    def __init__(self, config: LlmSlotSettings) -> None:
+    ``circuit`` 为可选熔断器（``core.circuit.CircuitBreaker``）：提供时，
+    ``chat`` / ``chat_json`` 在调用前检查 ``allow()``（熔断打开则快速失败，
+    不再耗尽超时×重试），调用后按结果记录 success / failure。为 None 时
+    行为与接入前完全一致（下游故障由 retry + deadline 兜底）。
+    """
+
+    def __init__(self, config: LlmSlotSettings, circuit: Any = None) -> None:
         self.config = config
+        self.circuit = circuit
         self._client: Any = None  # openai.OpenAI，惰性创建
         self._client_lock = threading.Lock()
+
+    def _circuit_guard(self) -> None:
+        """熔断前置检查：打开则快速失败（不发起下游调用）。"""
+        if self.circuit is not None and not self.circuit.allow():
+            raise LLMError(
+                f"LLM 槽位熔断打开（{getattr(self.circuit, 'name', '?')} 冷却中），快速失败"
+            )
+
+    def _circuit_ok(self) -> None:
+        if self.circuit is not None:
+            self.circuit.record_success()
+
+    def _circuit_fail(self) -> None:
+        if self.circuit is not None:
+            self.circuit.record_failure()
 
     # ------------------------------------------------------------------ #
     # 内部：惰性初始化 openai 客户端
@@ -244,6 +266,7 @@ class LLMClient:
         Raises:
             LLMError: 调用失败。
         """
+        self._circuit_guard()  # 熔断打开则快速失败
         client = self._ensure_client()
         kwargs: dict[str, Any] = {
             "model": self.config.model,
@@ -279,6 +302,7 @@ class LLMClient:
                 else:
                     raise
         except Exception as exc:  # 原有 LLMError 包装保持不变（__cause__ 契约）
+            self._circuit_fail()
             raise LLMError(f"LLM 调用失败: {exc}") from exc
 
         content = resp.choices[0].message.content if resp.choices else None
@@ -286,6 +310,7 @@ class LLMClient:
         _record_usage(self.config.model, usage, streamed=False)
         text = content or ""
         self._cache_store(digest, text, cache_ok, usage)
+        self._circuit_ok()
         return text
 
     # ------------------------------------------------------------------ #
@@ -517,8 +542,12 @@ LLM_PROVIDERS.register("openai_compatible", LLMClient)
 LLM_PROVIDERS.register("openai", LLMClient)
 
 
-def create_client(cfg: LlmSlotSettings) -> LLMClient:
+def create_client(cfg: LlmSlotSettings, circuit: Any = None) -> LLMClient:
     """工厂函数：由槽位配置创建 LLMClient。
+
+    ``circuit`` 为可选熔断器（``core.circuit.CircuitBreaker``）：提供时附加到
+    客户端，``chat`` / ``chat_json`` 在熔断打开时快速失败（不发起下游调用）。
+    None 时行为与接入前完全一致。
 
     Usage:
         from config.settings import get_settings
@@ -526,7 +555,10 @@ def create_client(cfg: LlmSlotSettings) -> LLMClient:
 
         generation = create_client(get_settings().llm.generation)
     """
-    return LLM_PROVIDERS.create(cfg.provider, cfg)
+    client = LLM_PROVIDERS.create(cfg.provider, cfg)
+    if circuit is not None:
+        client.circuit = circuit
+    return client
 
 
 __all__ = [

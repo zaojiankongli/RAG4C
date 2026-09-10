@@ -164,6 +164,7 @@ def _validate_tenant_membership_preflight(connection: Connection) -> None:
 
 
 def upgrade() -> None:
+    _is_mysql = op.get_bind().dialect.name == "mysql"
     # Offline SQL generation has no data connection to inspect. Runtime
     # upgrades always validate before the first DDL statement so an unsafe
     # legacy catalog is left structurally untouched.
@@ -192,7 +193,7 @@ def upgrade() -> None:
                 "updated_at",
                 _datetime6(),
                 nullable=False,
-                server_default=sa.text("CURRENT_TIMESTAMP"),
+                server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
             )
         )
         batch.add_column(

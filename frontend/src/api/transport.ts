@@ -15,7 +15,7 @@ import type { BackendRunEvent, QueryResponse, StreamRunEventDesync } from "../ty
 import { parseBackendRunEvent } from "./runEventValidation";
 
 /** 后端默认地址；打包成 Tauri 桌面端后同机运行，仍是这个 */
-export const DEFAULT_BASE = "http://localhost:8000";
+export const DEFAULT_BASE = "http://localhost:8010";
 
 export function getBaseUrl(): string {
   // 允许在浏览器 / Tauri 中通过 localStorage 覆盖后端地址
@@ -29,7 +29,7 @@ export function getBaseUrl(): string {
  * 缺陷记录：这个函数曾经全仓零调用方——地址只能靠手敲
  * `localStorage.setItem("rag4c.base_url", ...)` 修改。而打包后的 Tauri 窗口
  * 没有开发者工具，用户根本没有执行这行代码的地方，后端只要不在
- * localhost:8000，应用就永远连不上且无从补救。现在由设置页负责暴露。
+ * localhost:8010，应用就永远连不上且无从补救。现在由设置页负责暴露。
  */
 export function setBaseUrl(url: string): void {
   const next = url.trim();

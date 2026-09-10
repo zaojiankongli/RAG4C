@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+﻿import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BackendRunEvent } from "../types/rag";
 import { RunOpsApiError, fetchRunDetail, fetchRunEvents, fetchRunHealth, fetchRuns } from "./runs";
 
@@ -106,7 +106,7 @@ describe("Runs API", () => {
       cursor: "a+b/=",
     });
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      "http://localhost:8000/api/runs?view=errors&status=failed&status=interrupted&slow_ms=45000&started_after=2026-08-22T00%3A00%3A00Z&started_before=2026-08-23T00%3A00%3A00Z&fingerprint=fp%2Fvalue&limit=50&cursor=a%2Bb%2F%3D",
+      "http://localhost:8010/api/runs?view=errors&status=failed&status=interrupted&slow_ms=45000&started_after=2026-08-22T00%3A00%3A00Z&started_before=2026-08-23T00%3A00%3A00Z&fingerprint=fp%2Fvalue&limit=50&cursor=a%2Bb%2F%3D",
     );
     expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain("tenant");
   });
@@ -131,7 +131,7 @@ describe("Runs API", () => {
       signal: new AbortController().signal,
     });
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      "http://localhost:8000/api/runs/run%2F1/events?after_seq=8&limit=300&wait_ms=25000",
+      "http://localhost:8010/api/runs/run%2F1/events?after_seq=8&limit=300&wait_ms=25000",
     );
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });

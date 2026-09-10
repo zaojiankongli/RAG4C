@@ -100,6 +100,80 @@ SAMPLE_DATASET: list[dict] = [
         "expected_keywords": None,
         "notes": "不可答：火星探测话题与企业知识库无关",
     },
+    # ---- R9-A 扩充：覆盖 RAG4C 自身机制的可答用例 ----
+    {
+        "id": "citation_verification",
+        "question": "RAG4C 的引用验证三层防线分别校验什么？",
+        "unanswerable": False,
+        "doc_text": (
+            "RAG4C 对答案中的引用执行三层验证：L1 存在性校验引用编号是否指向"
+            "本次检索证据中的真实片段；L2 文本哈希校验被引片段自生成后是否发生"
+            "内容变更（陈旧引用会被标记）；L3 蕴含判定由裁判模型判断每条声明"
+            "是否被所引证据充分支撑。三层按成本从低到高分层执行，任一层失败"
+            "都有明确的降级语义，保证答案不会带着伪造或失效的引用交付。"
+        ),
+        "expected_keywords": ["L1", "L2", "L3", "哈希"],
+        "notes": "可答：语料覆盖引用验证机制（R9-A 扩充）",
+    },
+    {
+        "id": "abstention_gate",
+        "question": "RAG4C 在什么情况下会弃权不回答？",
+        "unanswerable": False,
+        "doc_text": (
+            "RAG4C 的弃权门（AbstentionGate）采用双阈值判定：当检索置信度"
+            "（重排后的相关性分数）低于检索阈值，或引用验证的蕴含分数低于"
+            "支撑度阈值时，系统判定资料不足并弃权——返回空答案并明确标注"
+            "弃权原因，而不是编造回答。弃权阈值可通过评估集中不可答用例的"
+            "分数分位数校准，以平衡拒答率与过度拒答率。"
+        ),
+        "expected_keywords": ["弃权", "阈值", "支撑度"],
+        "notes": "可答：语料覆盖弃权机制（R9-A 扩充）",
+    },
+    {
+        "id": "query_cache",
+        "question": "RAG4C 的查询结果缓存是如何工作的？",
+        "unanswerable": False,
+        "doc_text": (
+            "RAG4C 提供两级查询结果缓存：L1 是进程内 TTL+LRU 缓存，相同问题"
+            "在 TTL（默认 10 分钟）内直接命中，不重复检索与生成；L2 是可选"
+            "的 Redis 缓存，支持多副本共享。缓存键会拌入语料代次戳与租户信息，"
+            "语料更新后自动失效。命中缓存时前端会收到 cached 标记，且请求不"
+            "占用并发执行槽。"
+        ),
+        "expected_keywords": ["缓存", "TTL", "代次"],
+        "notes": "可答：语料覆盖缓存机制（R9-A 扩充）",
+    },
+    {
+        "id": "source_diversity",
+        "question": "RAG4C 的来源多样性开关有哪几种模式？",
+        "unanswerable": False,
+        "doc_text": (
+            "RAG4C 的来源多样性（source_diversity）提供三种模式：off 不限制"
+            "来源，检索结果按相关性原样返回；group_only 按文档分组，每组"
+            "最多保留 group_size 条片段，防止答案过度集中于单一文档；"
+            "group_mmr 在分组基础上用 MMR（最大边际相关）在相关性与多样性"
+            "之间权衡，取值越大越侧重相关性，越小越侧重多样性。"
+        ),
+        "expected_keywords": ["group_only", "group_mmr", "MMR"],
+        "notes": "可答：语料覆盖来源多样性机制（R9-A 扩充）",
+    },
+    # ---- R9-A 扩充：更多不可答用例（平衡拒答/过度拒答评测） ----
+    {
+        "id": "out_of_corpus_stock",
+        "question": "云帆科技今天的股价是多少？",
+        "unanswerable": True,
+        "doc_text": None,
+        "expected_keywords": None,
+        "notes": "不可答：实时股价数据未入库（R9-A 扩充）",
+    },
+    {
+        "id": "out_of_corpus_recipe",
+        "question": "公司食堂的红烧肉怎么做？",
+        "unanswerable": True,
+        "doc_text": None,
+        "expected_keywords": None,
+        "notes": "不可答：菜谱话题与知识库无关（R9-A 扩充）",
+    },
 ]
 
 __all__ = ["SAMPLE_DATASET"]

@@ -20,9 +20,12 @@ function syncBrowserTheme(mode: ThemeMode): void {
 
 function loadInitial(): ThemeMode {
   const stored = localStorage.getItem(STORAGE_KEY);
-  const mode: ThemeMode = stored === "light" || stored === "dark"
-    ? stored
-    : systemPrefersDark() ? "dark" : "light";
+  const mode: ThemeMode =
+    stored === "light" || stored === "dark" || stored === "anime"
+      ? stored
+      : systemPrefersDark()
+        ? "dark"
+        : "light";
   syncBrowserTheme(mode);
   return mode;
 }
@@ -36,9 +39,11 @@ export function useThemeMode() {
     localStorage.setItem(STORAGE_KEY, next);
   }, []);
 
+  // 三态循环：light -> dark -> anime -> light
   const toggle = useCallback(() => {
     setModeState((previous) => {
-      const next: ThemeMode = previous === "light" ? "dark" : "light";
+      const next: ThemeMode =
+        previous === "light" ? "dark" : previous === "dark" ? "anime" : "light";
       syncBrowserTheme(next);
       localStorage.setItem(STORAGE_KEY, next);
       return next;

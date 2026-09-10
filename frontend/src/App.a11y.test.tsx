@@ -64,9 +64,10 @@ describe("App document landmarks", () => {
     expect(screen.getByText("默认知识库")).toBeTruthy();
     expect(screen.getByText("本地连接")).toBeTruthy();
     expect(screen.getByText("未连接身份")).toBeTruthy();
-    expect(screen.getByText("知识工作台")).toBeTruthy();
-    expect(screen.getByText("知识运营")).toBeTruthy();
-    expect(screen.getByText("企业管理")).toBeTruthy();
+    expect(screen.getByText("智能问答")).toBeTruthy();
+    expect(screen.getByText("知识库")).toBeTruthy();
+    expect(screen.getByText("质量与运维")).toBeTruthy();
+    expect(screen.getByText("系统")).toBeTruthy();
 
     const search = screen.getByRole("searchbox", { name: "全局知识搜索" });
     fireEvent.change(search, { target: { value: "  员工手册  " } });

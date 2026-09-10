@@ -53,7 +53,7 @@ def upgrade() -> None:
         sa.Column("tenant_id", sa.String(length=64), nullable=False),
         sa.Column("dataset_id", sa.String(length=64), nullable=False),
         sa.Column("status", sa.String(length=24), nullable=False),
-        sa.Column("trigger", sa.String(length=24), nullable=False),
+        sa.Column(sa.quoted_name("trigger", True), sa.String(length=24), nullable=False),
         sa.Column("force_full", sa.Integer(), nullable=False),
         sa.Column("dry_run", sa.Integer(), nullable=False),
         sa.Column("cursor_before", sa.JSON(), nullable=True),

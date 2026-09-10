@@ -106,6 +106,7 @@ def _drop_decision_immutable_guards() -> None:
 
 
 def upgrade() -> None:
+    _is_mysql = op.get_bind().dialect.name == "mysql"
     op.create_table(
         "tenant_approval_policies",
         sa.Column("id", sa.String(length=64), nullable=False),
@@ -134,11 +135,11 @@ def upgrade() -> None:
         ),
         sa.Column("revision", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(length=64), nullable=False),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("updated_by", sa.String(length=64), nullable=False),
         sa.Column("disabled_at", _datetime6(), nullable=True),
@@ -214,11 +215,11 @@ def upgrade() -> None:
         ),
         sa.Column("revision", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(length=64), nullable=False),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("updated_by", sa.String(length=64), nullable=False),
         sa.PrimaryKeyConstraint("id"),
@@ -320,11 +321,11 @@ def upgrade() -> None:
         sa.Column("execution_failed_by", sa.String(length=64), nullable=True),
         sa.Column("execution_error", sa.String(length=512), nullable=True),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(length=64), nullable=False),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("updated_by", sa.String(length=64), nullable=False),
         sa.PrimaryKeyConstraint("id"),
@@ -447,7 +448,7 @@ def upgrade() -> None:
         sa.Column("decided_at", _datetime6(), nullable=False),
         sa.Column("revision", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(length=64), nullable=False),
         sa.PrimaryKeyConstraint("id"),

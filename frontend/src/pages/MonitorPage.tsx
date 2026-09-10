@@ -3,6 +3,7 @@ import { Alert, Button, Card, Col, Row, Select, Tag, Typography } from "tdesign-
 import {
   ChartBarIcon,
   ChartLineIcon,
+  CertificateIcon,
   CheckCircleIcon,
   DataBaseIcon,
   PauseCircleIcon,
@@ -552,6 +553,10 @@ export default function MonitorPage({ active = true }: { active?: boolean }) {
   const metricRecent: RecentQuery[] = snapshot?.recent_queries ?? [];
   const recent = runsCapability === "legacy" ? legacyRecent : [];
   const abstainRate = abstentionPercent(m, metricRecent);
+  // 引用验证质量（R3-B 埋点：verify.total / verify.citations.failed / verify.l3.evaluated）
+  const verifyTotal = (m["verify.total"] as MetricStat | undefined)?.count ?? 0;
+  const verifyFailed = (m["verify.citations.failed"] as MetricStat | undefined)?.count ?? 0;
+  const citationFailRate = verifyTotal > 0 ? (verifyFailed / verifyTotal) * 100 : 0;
   const circuits = snapshot?.circuits ?? {};
   const trippedCircuits = Object.entries(circuits).filter(([, c]) => c.state !== "closed");
   // 查询缓存命中率（TTL 缓存：相同问题 10 分钟内直接命中，不重复检索）
@@ -700,6 +705,25 @@ export default function MonitorPage({ active = true }: { active?: boolean }) {
               tone="warning"
               icon={<StopCircleIcon />}
               value={abstainRate.toFixed(0)}
+              unit="%"
+            />
+          </Col>
+          <Col xs={12} md={6}>
+            <StatCard
+              label="引用验证次数"
+              hint="答案经过三层引用验证（L1 存在性 / L2 文本哈希 / L3 蕴含判定）的累计次数。"
+              icon={<CertificateIcon />}
+              value={verifyTotal.toLocaleString()}
+              unit="次"
+            />
+          </Col>
+          <Col xs={12} md={6}>
+            <StatCard
+              label="引用失败率"
+              hint="验证中判定为非 ok 的引用占比（含未支撑 / 陈旧 / 仅存在）。比例高时答案可信度需关注。"
+              tone={citationFailRate > 0 ? "warning" : "success"}
+              icon={citationFailRate > 0 ? <StopCircleIcon /> : <CheckCircleIcon />}
+              value={citationFailRate.toFixed(1)}
               unit="%"
             />
           </Col>

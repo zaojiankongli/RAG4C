@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fetchConsistencyDeadLetters,
   fetchConsistencySummary,
@@ -50,8 +50,8 @@ describe("knowledge consistency client", () => {
     await fetchConsistencyDeadLetters("dataset / A", { tenantId: "tenant-a" });
 
     expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
-      "http://localhost:8000/api/knowledge-bases/dataset%20%2F%20A/consistency/summary",
-      "http://localhost:8000/api/knowledge-bases/dataset%20%2F%20A/consistency/dead-letters",
+      "http://localhost:8010/api/knowledge-bases/dataset%20%2F%20A/consistency/summary",
+      "http://localhost:8010/api/knowledge-bases/dataset%20%2F%20A/consistency/dead-letters",
     ]);
     for (const [, init] of fetchMock.mock.calls) {
       expect(init).toEqual(
@@ -86,7 +86,7 @@ describe("knowledge consistency client", () => {
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe(
-      "http://localhost:8000/api/knowledge-bases/dataset-a/consistency/dead-letters/ref-dead%20%2F%20letter/requeue",
+      "http://localhost:8010/api/knowledge-bases/dataset-a/consistency/dead-letters/ref-dead%20%2F%20letter/requeue",
     );
     expect(init).toEqual(
       expect.objectContaining({

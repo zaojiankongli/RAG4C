@@ -11,6 +11,25 @@
 4. 代码中的默认值
 
 所有配置均可在不联网、不安装模型的情况下导入。
+
+段模型依赖图（C2b 结构化，便于按段阅读与维护）：
+
+    自包含段（无内部交叉引用，可独立阅读）：
+        MilvusSettings / EmbeddingSettings / RerankerSettings / LlmProviderSettings /
+        PipelineSettings / GraphSettings / MineruSettings / RetrySettings /
+        ObservabilitySettings / CatalogSettings / SourcesSettings / CircuitSettings /
+        RedisSettings / VerifySettings / TenantSettings / KnowledgeSecuritySettings /
+        RunHistorySettings
+
+    依赖段（引用上面的自包含段）：
+        LlmSlotSettings <- LlmSlotsSettings（9+ 业务槽位，见 _RETRIEVAL_SLOTS / resolve_slot）
+        ParserEngineSettings <- DoclingEngineSettings <- ParsersSettings
+
+    根模型（聚合全部段）：
+        Settings（env_prefix=RAG4C_，自定义 Rag4cEnvSource 解析 RAG4C_<SECTION>_<KEY>）
+
+工具函数：resolve_env_file / _load_env_file / _iter_field_paths（热更新遍历用）/
+    Rag4cEnvSource / Rag4cRegistryFileSecretSource / get_settings / resolve_tenant
 """
 from __future__ import annotations
 
@@ -1408,5 +1427,11 @@ __all__ = [
     "TenantSettings",
     "KnowledgeSecuritySettings",
     "RunHistorySettings",
+    "DoclingSettings",
+    "ParsersSettings",
+    "CircuitSettings",
+    "RedisSettings",
+    "CatalogSettings",
+    "VerifySettings",
     "resolve_tenant",
 ]

@@ -75,7 +75,10 @@ MAX_EVIDENCE_CHUNKS = 12
 
 # 单条证据送进 judge 的字符上限：长尾文档会把 prompt 顶爆，
 # 而爆掉的表现是 judge 调用失败 -> 走降级 -> 完全不可见。
-_MAX_EVIDENCE_CHARS = 2000
+# 2026-09-09（真实 LLM 链路实测）：12 块 × 2000 = 最多 24k 字符的 judge prompt
+# 在 glm-5.3-flash（dsh 端点）上处理需 6~70s（verify_l3 方差大）。800/块 =
+# 最多 ~9.6k 字符，判定蕴含所需的证据足够，延迟显著下降（数据驱动调优）。
+_MAX_EVIDENCE_CHARS = 800
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -268,6 +271,32 @@ class CitationVerifier:
 
         missing_evidence = any(not claim_citations.get(c) for c in claims)
         supported = all(c.status == "ok" for c in citations)
+
+        # 验证阶段质量指标（监控页 / Prometheus 数据源）：
+        # - verify.total：验证次数（弃权率分母之一）；
+        # - verify.citations.failed：非 ok 引用数（引用失败率分子）；
+        # - verify.l3.evaluated / verify.l3.sampled：L3 实际判定数 / 抽样数。
+        # 埋点失败绝不影响验证主流程（指标是观测件）。
+        try:
+            from core.metrics import get_metrics
+
+            metrics = get_metrics()
+            metrics.incr("verify.total")
+            failed_citations = sum(1 for c in citations if c.status != "ok")
+            if failed_citations:
+                metrics.incr("verify.citations.failed", value=failed_citations)
+            if entailment_scores:
+                metrics.incr("verify.l3.evaluated", value=len(entailment_scores))
+            for note in notes:
+                if note.startswith("非严格模式，L3 仅抽样评审"):
+                    try:
+                        sampled = int(note.split("抽样评审", 1)[1].split("/", 1)[0].strip())
+                        metrics.incr("verify.l3.sampled", value=sampled)
+                    except (ValueError, IndexError):
+                        pass
+                    break
+        except Exception:  # noqa: BLE001 - 指标埋点失败不影响验证
+            pass
 
         trace = current_trace()
         if trace is not None:

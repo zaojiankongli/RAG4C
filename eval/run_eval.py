@@ -419,6 +419,22 @@ def main(argv: list[str] | None = None) -> int:
         help="真实管线导入路径（如 rag:answer_query），none 表示干跑",
     )
     parser.add_argument("--dry-run", action="store_true", help="强制离线干跑（占位管线 + 桩裁判）")
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="评测后执行 release gate（固定阈值质量墙），未达标退出码 1",
+    )
+    parser.add_argument(
+        "--baseline",
+        default="",
+        help="baseline 报告路径（JSON），提供时输出逐指标 delta（本次 - baseline）",
+    )
+    parser.add_argument(
+        "--gate-thresholds",
+        default="",
+        help="release gate 阈值 JSON 文件路径（如 {\"hallucination_rate\": [\"le\", 0.1]}），"
+        "未提供时用内置默认阈值",
+    )
     args = parser.parse_args(argv)
 
     dataset = load_dataset(args.dataset)
@@ -444,7 +460,43 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"[eval] 报告已写入 {out}")
     print_report(report)
-    return 0
+
+    # ---- R5-A：baseline 对比 + release gate（质量墙） ----
+    exit_code = 0
+    if args.baseline or args.gate:
+        current = as_v2(report, dataset_spec=args.dataset, pipeline_spec=args.pipeline)
+        if args.baseline:
+            base_path = Path(args.baseline)
+            if not base_path.is_file():
+                print(f"[eval] baseline 不存在: {args.baseline}")
+                return 1
+            diff = compare_reports(current, load_report(base_path))
+            print("\n[eval] 与 baseline 对比（delta = 本次 - baseline）:")
+            for key, delta in diff["delta"].items():
+                direction = diff["direction"].get(key, "unknown")
+                print(f"  {key}: {delta:+.4f} ({direction})")
+        if args.gate:
+            thresholds = None
+            if args.gate_thresholds:
+                th_path = Path(args.gate_thresholds)
+                if not th_path.is_file():
+                    print(f"[eval] gate 阈值文件不存在: {args.gate_thresholds}")
+                    return 1
+                thresholds = json.loads(th_path.read_text(encoding="utf-8-sig"))
+            gate_result = release_gate(current, thresholds)
+            print("\n[eval] release gate:")
+            for check in gate_result["checks"]:
+                mark = "PASS" if check["passed"] else "FAIL"
+                op = "<=" if check["action"] == "le" else ">="
+                print(
+                    f"  {mark} {check['metric']}: {check['value']} {op} {check['threshold']}"
+                )
+            if not gate_result["passed"]:
+                print(f"[eval] RELEASE GATE FAILED: {gate_result['failures']}")
+                exit_code = 1
+            else:
+                print("[eval] RELEASE GATE PASSED")
+    return exit_code
 
 
 if __name__ == "__main__":
@@ -507,9 +559,61 @@ def save_report(report: EvalReportV2, path: str | Path) -> Path:
 
 
 def load_report(path: str | Path) -> EvalReportV2:
-    """读回版本化报告快照（baseline / 历史对比用）。"""
-    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    """读回版本化报告快照（baseline / 历史对比用）。
+
+    ``utf-8-sig`` 读取：兼容 Windows 编辑器生成的带 BOM 的 JSON 文件。
+    """
+    raw = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     return EvalReportV2.model_validate(raw)
+
+
+def save_report_history(
+    report: EvalReportV2,
+    history_dir: str | Path = "eval/reports",
+) -> Path:
+    """把报告存入历史目录（带时间戳文件名），供趋势追踪与 baseline 复用。
+
+    文件名 ``report-<generated_at>-<毫秒>.json``（generated_at 去冒号/空格，
+    Windows 安全；毫秒后缀保证同秒多份不覆盖）。
+    返回写入路径。
+    """
+    directory = Path(history_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = report.generated_at.replace(":", "-").replace(" ", "T")
+    ms = datetime.now().strftime("%f")[:3]
+    out = directory / f"report-{stamp}-{ms}.json"
+    return save_report(report, out)
+
+
+def list_report_history(
+    history_dir: str | Path = "eval/reports",
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """列出历史报告（按修改时间倒序），含关键指标摘要。
+
+    Returns:
+        ``[{"path", "generated_at", "dataset_spec", "metrics": {...}}, ...]``
+    """
+    directory = Path(history_dir)
+    if not directory.is_dir():
+        return []
+    entries: list[dict[str, Any]] = []
+    for p in sorted(directory.glob("report-*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
+        try:
+            report = load_report(p)
+            entries.append(
+                {
+                    "path": str(p),
+                    "generated_at": report.generated_at,
+                    "dataset_spec": report.dataset_spec,
+                    "metrics": report.metrics,
+                }
+            )
+        except Exception:  # noqa: BLE001 - 单个损坏历史不阻塞列表
+            continue
+        if len(entries) >= limit:
+            break
+    return entries
 
 
 def compare_reports(current: EvalReportV2, baseline: EvalReportV2) -> dict[str, Any]:

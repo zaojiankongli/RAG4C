@@ -261,21 +261,29 @@ docs/         架构说明、策略矩阵、上线演练与验收记录
 ```bash
 python -m eval.run_eval --dry-run                     # 离线干跑（桩裁判 + 占位管线）
 python -m eval.run_eval --pipeline rag:answer_query   # 真实评测（需模型与向量库）
+python -m eval.run_eval --dry-run --gate              # 评测 + release gate（未达标 exit 1）
+python -m eval.run_eval --dry-run --gate --gate-thresholds gate.json   # 自定义质量墙阈值
+python -m eval.run_eval --dry-run --baseline eval/baseline.json        # 与历史 baseline 对比
 ```
 
 两个独立裁判（Groundedness / Relevance）均 evidence-only、严格 JSON 输出；
 解析失败显式返回 `score=None` 而不是静默记 0 分。指标：拒答率、过度拒答率、
 幻觉率、平均有据性、平均相关性、引用失败率。
 
-EvalReport v2 提供发布门禁能力：
+EvalReport v2 提供发布门禁与历史追踪能力：
 
 ```python
-from eval.run_eval import as_v2, save_report, load_report, compare_reports, release_gate
+from eval.run_eval import (
+    as_v2, save_report, load_report, compare_reports, release_gate,
+    save_report_history, list_report_history,
+)
 
 v2 = as_v2(report, dataset_spec="eval/dataset_sample.py:SAMPLE_DATASET", pipeline_spec="rag:answer_query")
 save_report(v2, "eval/baseline.json")
 diff = compare_reports(v2, load_report("eval/baseline.json"))   # 逐指标 delta + 方向语义
-gate = release_gate(v2)                                         # 固定阈值质量墙
+gate = release_gate(v2)                                         # 固定阈值质量墙（可自定义阈值）
+save_report_history(v2)                                         # 存入历史目录（时间戳命名）
+history = list_report_history()                                 # 列出历史（按时间倒序）
 ```
 
 ---
@@ -287,6 +295,7 @@ python scripts/run_tests.py          # 串行跑全部 smoke_*.py（--filter / -
 python -m pytest -q                  # 后端回归
 cd frontend && npm run lint && npm test && npm run build
 python scripts/export_openapi.py --check    # 契约漂移门禁
+python scripts/bench/run_full_gate.py       # 完整链路性能门禁（起服务 + 三负载压测 + 阈值判定）
 ```
 
 离线冒烟脚本不依赖网络、模型与向量库，覆盖基础、入库、检索、生成、验证、评测、
@@ -296,6 +305,11 @@ python scripts/export_openapi.py --check    # 契约漂移门禁
 契约单一事实源：`scripts/export_openapi.py` 导出 OpenAPI，前端类型由
 `openapi-typescript` 生成到 `frontend/src/types/generated/`；
 `npm run types:gen` 重新生成、`npm run check:contract` 校验漂移。
+
+完整链路性能门禁（`scripts/bench/run_full_gate.py`）：一键起 mock 上游 + 被测服务，
+对 distinct / hotspot / mixed 三种负载压测（并发 32 / 总量 96），按阈值判定
+（QPS / P95 / 成功率），任一未达标 exit 1。阈值校准历史与测量前提
+（环境空闲时运行）见脚本注释与 `docs/性能实测与升级计划.md`。
 
 ---
 

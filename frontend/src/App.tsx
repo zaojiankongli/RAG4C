@@ -22,6 +22,7 @@ import {
   TagsOutlined,
   TeamOutlined,
   SunOutlined,
+  InfoCircleOutlined,
 } from "./ui/icons";
 import ModeBanner from "./components/ModeBanner";
 import PageState from "./components/PageState";
@@ -29,6 +30,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import QueryPage from "./pages/QueryPage";
 import { useConnection } from "./context/ConnectionContext";
 import type { ThemeMode } from "./theme/tokens";
+import { OnboardingTour } from "./onboarding/OnboardingTour";
 import {
   PAGE_KEYS,
   mainNavigationKey,
@@ -36,6 +38,11 @@ import {
   parsePageLocation,
   type PageKey,
 } from "./run/appRoute";
+import {
+  safeAutomationHandoff,
+  safeKnowledgeServingHandoff,
+  safeTaskHandoff,
+} from "./run/appHandoffs";
 import {
   readKnowledgeActorToken,
   readKnowledgeDatasetIdFromLocation,
@@ -59,18 +66,12 @@ import type {
 } from "./enterprise-notification-center/model/notificationModel";
 import { notificationHandoffTarget } from "./enterprise-notification-center/notificationNavigation";
 import {
-  knowledgeBaseEvidenceNavigationUrl,
   knowledgeBaseResourceDatasetIdFromLocation,
   knowledgeBaseResourceNavigationUrl,
   knowledgeBaseResourcePageKey,
   knowledgeBaseResourceSectionFromLocation,
-  type KnowledgeBaseResourceLocationLike,
   type KnowledgeBaseResourceSection,
 } from "./enterprise-knowledge-base-shell/knowledgeBaseResourceRoute";
-import {
-  projectServingHandoff,
-  type ServingEvidenceKind,
-} from "./enterprise-knowledge-serving/model/servingModel";
 
 const KnowledgeOverviewPage = lazy(() => import("./pages/KnowledgeOverviewPage"));
 const DocumentsPage = lazy(() => import("./pages/DocumentsPage"));
@@ -116,166 +117,46 @@ const PRIMARY_NAV_ID = "primary-navigation";
 const MENU_ITEMS: MenuProps["items"] = [
   {
     type: "group",
-    label: "知识工作台",
+    label: "智能问答",
+    children: [
+      { key: "query", icon: <MessageOutlined />, label: "知识问答" },
+      { key: "visualize", icon: <ApartmentOutlined />, label: "回答过程" },
+      { key: "retrieval-lab", icon: <FileSearchOutlined />, label: "检索调试" },
+    ],
+  },
+  {
+    type: "group",
+    label: "知识库",
     children: [
       { key: "overview", icon: <DatabaseOutlined />, label: "知识概览" },
       { key: "documents", icon: <FolderOpenOutlined />, label: "文档管理" },
-      { key: "recycle-bin", icon: <DeleteOutlined />, label: "回收站" },
       { key: "taxonomy", icon: <TagsOutlined />, label: "知识组织" },
       { key: "sources", icon: <CloudServerOutlined />, label: "数据来源" },
-      { key: "query", icon: <MessageOutlined />, label: "知识问答" },
+      { key: "knowledge-bases", icon: <ApartmentOutlined />, label: "知识库注册表" },
+      { key: "recycle-bin", icon: <DeleteOutlined />, label: "回收站" },
     ],
   },
   {
     type: "group",
-    label: "知识运营",
+    label: "质量与运维",
     children: [
-      { key: "retrieval-lab", icon: <FileSearchOutlined />, label: "检索调试" },
-      { key: "visualize", icon: <ApartmentOutlined />, label: "回答过程" },
       { key: "eval", icon: <SafetyCertificateOutlined />, label: "质量评测" },
-      { key: "tasks", icon: <CloudServerOutlined />, label: "任务中心" },
-      { key: "automations", icon: <BranchesOutlined />, label: "自动化中心" },
       { key: "monitor", icon: <LineChartOutlined />, label: "运行监控" },
       { key: "consistency", icon: <BranchesOutlined />, label: "一致性控制台" },
       { key: "governance", icon: <DeploymentUnitOutlined />, label: "内容治理" },
+      { key: "tasks", icon: <CloudServerOutlined />, label: "任务中心" },
+      { key: "automations", icon: <BranchesOutlined />, label: "自动化中心" },
     ],
   },
   {
     type: "group",
-    label: "企业管理",
+    label: "系统",
     children: [
       { key: "enterprise", icon: <TeamOutlined />, label: "组织与权限" },
-      { key: "knowledge-bases", icon: <DatabaseOutlined />, label: "知识库注册表" },
       { key: "config", icon: <SettingOutlined />, label: "系统设置" },
     ],
   },
 ];
-
-const TASK_HANDOFF_ROUTES: Record<
-  TaskRoute["path"],
-  { page: PageKey; queryKeys: readonly string[] }
-> = {
-  "/documents": { page: "documents", queryKeys: ["document"] },
-  "/sources": { page: "sources", queryKeys: ["source"] },
-  "/enterprise": { page: "enterprise", queryKeys: ["section", "export", "run"] },
-  "/enterprise/knowledge-base": {
-    page: "knowledge-base-workspace",
-    queryKeys: ["dataset", "operation"],
-  },
-};
-const TASK_HANDOFF_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/;
-
-function safeTaskHandoff(route: TaskRoute): { page: PageKey; url: string } | null {
-  const target = TASK_HANDOFF_ROUTES[route.path];
-  if (!target) return null;
-  const allowed = new Set(target.queryKeys);
-  const entries = Object.entries(route.query);
-  if (entries.some(([key, value]) => !allowed.has(key) || !TASK_HANDOFF_VALUE.test(value)))
-    return null;
-  const keys = entries
-    .map(([key]) => key)
-    .sort()
-    .join("|");
-  const exactRoute =
-    (route.path === "/sources" && route.code === "source_control" && keys === "source") ||
-    (route.path === "/documents" &&
-      (route.code === "document_operations" || route.code === "document_deletion") &&
-      keys === "document") ||
-    (route.path === "/enterprise/knowledge-base" &&
-      route.code === "index_operations" &&
-      keys === "dataset|operation") ||
-    (route.path === "/enterprise" &&
-      route.code === "audit_compliance" &&
-      route.query.section === "audit" &&
-      keys === "export|section") ||
-    (route.path === "/enterprise" &&
-      route.code === "release_quality" &&
-      route.query.section === "quality" &&
-      keys === "run|section");
-  if (!exactRoute) return null;
-  const query = new URLSearchParams(entries).toString();
-  return { page: target.page, url: `${route.path}?${query}` };
-}
-
-const AUTOMATION_HANDOFF = {
-  enterprise_tasks: { path: "/enterprise/tasks", page: "tasks", keys: ["task"] },
-  knowledge_sources: { path: "/sources", page: "sources", keys: ["source"] },
-  release_quality: {
-    path: "/enterprise/knowledge-base",
-    page: "knowledge-base-workspace",
-    keys: ["section"],
-  },
-  enterprise_approvals: { path: "/enterprise/approvals", page: "enterprise", keys: ["request"] },
-} as const;
-
-const KNOWLEDGE_SERVING_SECTION_BY_KIND: Readonly<
-  Partial<Record<ServingEvidenceKind, KnowledgeBaseResourceSection>>
-> = {
-  source: "sources",
-  source_sync_run: "sources",
-  document: "documents",
-  ingest_attempt: "documents",
-  chunk_head: "documents",
-  release: "releases",
-  certification: "releases",
-};
-
-function safeKnowledgeServingHandoff(
-  route: unknown,
-  datasetId: string,
-  location: KnowledgeBaseResourceLocationLike,
-): { page: PageKey; url: string; mode: "history" | "hash" } | null {
-  const normalizedDatasetId = datasetId.trim();
-  if (!normalizedDatasetId) return null;
-
-  try {
-    const handoff = projectServingHandoff(route, {
-      tenantId: "application-shell",
-      datasetId: normalizedDatasetId,
-    });
-    if (typeof handoff.resource_id !== "string") return null;
-    const intent = knowledgeBaseEvidenceNavigationUrl(location, {
-      evidenceKind: handoff.evidence_kind,
-      routeCode: handoff.route_code,
-      resourceId: handoff.resource_id,
-    });
-    const [path, query = ""] = intent.url.split("?", 2);
-    if (path === "/enterprise/tasks") {
-      return { page: "tasks", url: intent.url, mode: intent.mode };
-    }
-    if (path !== "/enterprise/knowledge-base") return null;
-    const section = KNOWLEDGE_SERVING_SECTION_BY_KIND[handoff.evidence_kind];
-    if (!section) return null;
-    const canonicalQuery = new URLSearchParams(query);
-    const entries: [string, string][] = [
-      ["dataset", normalizedDatasetId],
-      ["section", section],
-      ...Array.from(canonicalQuery.entries()),
-    ];
-    return {
-      page: "knowledge-base-workspace",
-      url: `${path}?${new URLSearchParams(entries).toString()}`,
-      mode: intent.mode,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function safeAutomationHandoff(route: AutomationRoute): { page: PageKey; url: string } | null {
-  const target = AUTOMATION_HANDOFF[route.code as keyof typeof AUTOMATION_HANDOFF];
-  if (!target || route.path !== target.path) return null;
-  const entries = Object.entries(route.query);
-  if (
-    entries.some(
-      ([key, value]) => !target.keys.includes(key as never) || !TASK_HANDOFF_VALUE.test(value),
-    )
-  )
-    return null;
-  if (route.code === "release_quality" && route.query.section !== "quality") return null;
-  const query = new URLSearchParams(entries).toString();
-  return { page: target.page as PageKey, url: query ? `${target.path}?${query}` : target.path };
-}
 
 interface Props {
   themeMode: ThemeMode;
@@ -288,6 +169,8 @@ export default function App({ themeMode, onToggleTheme }: Props) {
   const workspaceSyncRef = useRef<string>("");
   const [page, setPage] = useState<PageKey>(() => parsePageLocation(window.location) ?? "query");
   const [collapsed, setCollapsed] = useState(false);
+  // 手动重开新手引导（侧边栏底部按钮触发）
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [acl, setAcl] = useState<string[]>([]);
@@ -861,7 +744,13 @@ export default function App({ themeMode, onToggleTheme }: Props) {
   };
 
   return (
-    <Layout className="app-layout">
+    <>
+      <OnboardingTour
+        onNavigate={(p) => navigate(p as PageKey)}
+        defaultOpen={onboardingOpen}
+        onClose={() => setOnboardingOpen(false)}
+      />
+      <Layout className="app-layout">
       <a
         className="skip-link"
         href="#main-content"
@@ -962,6 +851,15 @@ export default function App({ themeMode, onToggleTheme }: Props) {
                 onClick={onToggleTheme}
               />
             </Tooltip>
+            <Tooltip title={siderCollapsed ? "新手引导" : "重看新手引导"} placement="right">
+              <Button
+                type="text"
+                size="small"
+                aria-label="重看新手引导"
+                icon={<InfoCircleOutlined />}
+                onClick={() => setOnboardingOpen(true)}
+              />
+            </Tooltip>
           </div>
         </div>
       </Sider>
@@ -1060,5 +958,6 @@ export default function App({ themeMode, onToggleTheme }: Props) {
         </Suspense>
       ) : null}
     </Layout>
+    </>
   );
 }

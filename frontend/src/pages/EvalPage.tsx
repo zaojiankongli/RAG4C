@@ -573,7 +573,11 @@ export default function EvalPage() {
                       <Card size="small" className="eval-metric-card">
                         <Statistic
                           title={<TooltipLabel label={definition.label} hint={definition.hint} />}
-                          value={value === undefined ? "—" : value * 100}
+                          value={
+                            value === undefined
+                              ? "—"
+                              : Number(((value * 100) as number).toFixed(1))
+                          }
                           precision={value === undefined ? undefined : 1}
                           suffix={value === undefined ? undefined : "%"}
                           valueStyle={{

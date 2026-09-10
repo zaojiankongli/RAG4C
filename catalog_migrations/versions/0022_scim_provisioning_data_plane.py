@@ -21,6 +21,7 @@ def dt6():
 
 
 def upgrade():
+    _is_mysql = op.get_bind().dialect.name == "mysql"
     with op.batch_alter_table("tenant_scim_tokens") as b:
         b.add_column(sa.Column("last_used_ip_hash", sa.String(64), nullable=True))
         b.add_column(
@@ -50,10 +51,10 @@ def upgrade():
             sa.Column("last_provisioned_at", dt6(), nullable=False),
             sa.Column("source_token_id", sa.String(64), nullable=False),
             sa.Column(
-                "created_at", dt6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+                "created_at", dt6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
             ),
             sa.Column(
-                "updated_at", dt6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+                "updated_at", dt6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
             ),
             sa.PrimaryKeyConstraint("id"),
             sa.UniqueConstraint("tenant_id", "external_id", name=f"uq_{name}_external_id"),

@@ -6,12 +6,12 @@ import { describe, expect, it } from "vitest";
 const source = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
 
 describe("Consistency Console route registration", () => {
-  it("lazy-loads the page and places consistency under Knowledge Operations", () => {
+  it("lazy-loads the page and places consistency under Quality & Ops", () => {
     expect(source).toMatch(
       /const ConsistencyPage = lazy\(\(\) => import\("\.\/pages\/ConsistencyPage"\)\)/,
     );
     const operationsGroup = source.match(
-      /label: "知识运营",[\s\S]*?children: \[([\s\S]*?)\n\s*\],/,
+      /label: "质量与运维",[\s\S]*?children: \[([\s\S]*?)\n\s*\],/,
     );
     expect(operationsGroup?.[1]).toContain('key: "consistency"');
     expect(operationsGroup?.[1]).toContain('label: "一致性控制台"');

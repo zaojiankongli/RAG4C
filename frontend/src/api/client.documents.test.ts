@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   DocumentCatalogSummaryResponse,
   DocumentPageResponse,
@@ -169,7 +169,7 @@ describe("document chunk authority client", () => {
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe(
-      "http://localhost:8000/api/knowledge-bases/dataset%20%2F%20A/documents" +
+      "http://localhost:8010/api/knowledge-bases/dataset%20%2F%20A/documents" +
         "?offset=20&limit=20&q=%E5%91%98%E5%B7%A5+%E6%89%8B%E5%86%8C" +
         "&status=processing&doc_type=pdf&engine=vision" +
         "&folder=%E5%88%B6%E5%BA%A6%2F%E4%BA%BA%E5%8A%9B&folder_mode=subtree" +
@@ -212,7 +212,7 @@ describe("document chunk authority client", () => {
     );
 
     expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:8000/api/knowledge-bases/dataset-a/documents?offset=0&limit=20",
+      "http://localhost:8010/api/knowledge-bases/dataset-a/documents?offset=0&limit=20",
     );
   });
 
@@ -231,7 +231,7 @@ describe("document chunk authority client", () => {
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe(
-      "http://localhost:8000/api/knowledge-bases/dataset%20%2F%20A/documents/summary",
+      "http://localhost:8010/api/knowledge-bases/dataset%20%2F%20A/documents/summary",
     );
     expect(init).toEqual(
       expect.objectContaining({
@@ -303,7 +303,7 @@ describe("document chunk authority client", () => {
     );
 
     expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:8000/api/knowledge-bases/dataset-a/documents" +
+      "http://localhost:8010/api/knowledge-bases/dataset-a/documents" +
         "?offset=0&limit=20&cursor=opaque-next-cursor",
     );
   });

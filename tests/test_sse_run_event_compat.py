@@ -367,7 +367,7 @@ def test_queue_rejection_has_one_cancelled_terminal_and_existing_429(
     captured_runs: list[MemoryRunEventSink],
 ) -> None:
     monkeypatch.setattr(server_app, "_cache_peek", lambda _key: None)
-    monkeypatch.setattr(server_app, "_inc_pending", lambda: False)
+    monkeypatch.setattr(server_app, "_inc_pending", lambda _tenant=None: False)
 
     async def scenario() -> None:
         with pytest.raises(HTTPException) as exc_info:

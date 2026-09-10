@@ -274,6 +274,7 @@ def _guard_downgrade(connection: Connection) -> None:
 
 
 def upgrade() -> None:
+    _is_mysql = op.get_bind().dialect.name == "mysql"
     if not context.is_offline_mode():
         _validate_registry_preflight(op.get_bind())
 
@@ -288,11 +289,11 @@ def upgrade() -> None:
         sa.Column("workspace_id", sa.String(length=128), nullable=False),
         sa.Column("revision", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(length=64), nullable=False),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("updated_by", sa.String(length=64), nullable=False),
         sa.Column("last_transfer_at", _datetime6(), nullable=True),
@@ -343,11 +344,11 @@ def upgrade() -> None:
         sa.Column("active_slot", sa.String(length=16), nullable=True),
         sa.Column("revision", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(length=64), nullable=False),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("updated_by", sa.String(length=64), nullable=False),
         sa.Column("removed_at", _datetime6(), nullable=True),

@@ -74,6 +74,7 @@ def _backfill_dataset_acl_control() -> None:
 
 
 def upgrade() -> None:
+    _is_mysql = op.get_bind().dialect.name == "mysql"
     with op.batch_alter_table("datasets") as batch:
         batch.add_column(
             sa.Column(
@@ -126,7 +127,7 @@ def upgrade() -> None:
             "created_at",
             _datetime6(),
             nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
+            server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.Column("completed_at", _datetime6(), nullable=True),
         sa.CheckConstraint(

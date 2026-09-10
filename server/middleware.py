@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from collections.abc import Mapping
 from typing import Any, get_args, get_origin
@@ -31,6 +32,46 @@ SLOW_REQUEST_MS = 10_000.0
 
 #: 访问日志是否输出结构化 JSON 单行（默认关，保持人类可读单行）。
 _ACCESS_LOG_JSON = os.environ.get("RAG4C_ACCESS_LOG_JSON", "").strip() in {"1", "true", "yes"}
+
+#: 按客户端 IP 的请求速率限制（固定窗口）。0 = 不限（默认，行为与旧版一致）。
+#: 窗口内同一 IP 超过上限即 429——护栏，防止单 IP 打爆服务（配合全局并发准入）。
+_RATE_LIMIT_PER_IP = int(os.environ.get("RAG4C_RATE_LIMIT_PER_IP", "0"))
+_RATE_LIMIT_WINDOW_S = 60.0
+_RATE_WINDOW_LOCK = threading.Lock()
+#: ip -> (窗口起始时间, 窗口内计数)。进程内单副本限流；多副本由反向代理承担。
+_RATE_WINDOWS: dict[str, tuple[float, int]] = {}
+
+
+def _rate_limit_check(ip: str) -> bool:
+    """固定窗口限流判定：返回 False 表示应拒绝（超限）。"""
+    if _RATE_LIMIT_PER_IP <= 0:
+        return True
+    now = time.monotonic()
+    with _RATE_WINDOW_LOCK:
+        start, count = _RATE_WINDOWS.get(ip, (now, 0))
+        if now - start >= _RATE_LIMIT_WINDOW_S:
+            start, count = now, 0
+        if count >= _RATE_LIMIT_PER_IP:
+            return False
+        _RATE_WINDOWS[ip] = (start, count + 1)
+        return True
+
+
+async def rate_limit_by_ip(request: Request, call_next):
+    """按客户端 IP 固定窗口限流（配置 ``RAG4C_RATE_LIMIT_PER_IP``，0=不限）。
+
+    只对可解析的直连 IP 生效（不信任代理头，防伪造）；loopback 与测试客户端
+    一律放行（本地开发/测试不应被误伤）。
+    """
+    if _RATE_LIMIT_PER_IP > 0:
+        client = request.client
+        ip = str(client.host) if client is not None else ""
+        if ip and ip not in {"127.0.0.1", "::1", "testclient"} and not _rate_limit_check(ip):
+            return JSONResponse(
+                status_code=429,
+                content={"error": {"code": "rate_limited", "message": "请求过于频繁，请稍后重试"}},
+            )
+    return await call_next(request)
 
 #: 请求体大小上限（字节）。1 MiB 对本服务的所有 JSON 接口都绰绰有余——
 #: 最大的 query 字段本身才限 2000 字符——但足以挡住"发个几百 MB 的 body

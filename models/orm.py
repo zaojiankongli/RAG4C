@@ -2041,14 +2041,13 @@ class DatasetWorkspaceOwnership(Base):
     workspace_id: Mapped[str] = mapped_column(String(128))
     revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
     updated_by: Mapped[str] = mapped_column(String(64))
     last_transfer_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
@@ -2177,14 +2176,13 @@ class AppDatasetReference(Base):
     active_slot: Mapped[Optional[str]] = mapped_column(String(16), default=None)
     revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
     updated_by: Mapped[str] = mapped_column(String(64))
     removed_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
@@ -2289,14 +2287,13 @@ class TenantReleaseChannel(Base):
     active_default_slot: Mapped[Optional[str]] = mapped_column(String(16), default=None)
     revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
     updated_by: Mapped[str] = mapped_column(String(64))
     archived_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
@@ -2417,7 +2414,7 @@ class DatasetReleaseManifest(Base):
     blocker_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     readiness_blockers_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
     reason: Mapped[str] = mapped_column(String(512))
@@ -2504,7 +2501,7 @@ class DatasetReleaseEntry(Base):
     content_digest: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     safe_facts_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, default=None)
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
 
 
@@ -2579,7 +2576,7 @@ class DatasetReleaseEvent(Base):
     reason: Mapped[str] = mapped_column(String(512))
     request_id: Mapped[str] = mapped_column(String(128))
     occurred_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     previous_binding_revision: Mapped[Optional[int]] = mapped_column(Integer, default=None)
     current_binding_revision: Mapped[Optional[int]] = mapped_column(Integer, default=None)
@@ -2676,13 +2673,12 @@ class DatasetChannelRelease(Base):
     request_id: Mapped[str] = mapped_column(String(128))
     reason: Mapped[str] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
     updated_by: Mapped[str] = mapped_column(String(64))
 
@@ -3432,14 +3428,13 @@ class TenantReleaseQualitySloPolicy(Base):
     allow_active_waiver: Mapped[bool] = mapped_column(Boolean)
     policy_digest: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
     updated_by: Mapped[str] = mapped_column(String(64))
     disabled_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
@@ -3518,14 +3513,13 @@ class TenantReleaseQualityScanSchedule(Base):
     next_run_at: Mapped[datetime] = mapped_column(_datetime6())
     last_enqueued_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
     updated_by: Mapped[str] = mapped_column(String(64))
     paused_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
@@ -3640,13 +3634,12 @@ class TenantReleaseQualityScanRun(Base):
     safe_error_code: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     safe_error: Mapped[Optional[str]] = mapped_column(String(512), default=None)
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
 
 
@@ -3896,13 +3889,12 @@ class DatasetReleaseQualityAlert(Base):
     suppressed_by: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     suppressed_comment: Mapped[Optional[str]] = mapped_column(String(512), default=None)
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
 
 
@@ -4063,14 +4055,13 @@ class DatasetReleaseRecertificationJob(Base):
     safe_error_code: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     safe_error: Mapped[Optional[str]] = mapped_column(String(512), default=None)
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
     completed_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
@@ -4160,14 +4151,13 @@ class TenantNotificationSubscription(Base):
     )
     muted_until: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
     updated_by: Mapped[str] = mapped_column(String(64))
     archived_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
@@ -4271,7 +4261,7 @@ class TenantNotification(Base):
     target_route_params_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     occurred_at: Mapped[datetime] = mapped_column(_datetime6())
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
 
@@ -4396,7 +4386,6 @@ class TenantNotificationReceipt(Base):
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
 
 
@@ -5097,13 +5086,12 @@ class TenantTaskProjection(Base):
     started_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
     finished_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
 
 
@@ -5197,13 +5185,12 @@ class TenantTaskOperatorAction(Base):
     rejected_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
     expires_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
 
 
@@ -5350,14 +5337,13 @@ class TenantTaskSavedView(Base):
     filters_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     filter_digest: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
     updated_by: Mapped[str] = mapped_column(String(64))
     archived_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
@@ -5424,13 +5410,12 @@ class TenantTaskReconciliationRun(Base):
     safe_error_code: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     safe_error: Mapped[Optional[str]] = mapped_column(String(512), default=None)
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
 
 
@@ -5498,14 +5483,13 @@ class TenantAutomationRule(Base):
     dataset_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     priority: Mapped[int] = mapped_column(Integer, default=100, server_default="100")
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
     updated_by: Mapped[str] = mapped_column(String(64))
     archived_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
@@ -5578,7 +5562,7 @@ class TenantAutomationRuleRevision(Base):
     action_plan_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     definition_digest: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
 
@@ -5651,7 +5635,6 @@ class TenantAutomationSourceCursor(Base):
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
 
 
@@ -5733,13 +5716,12 @@ class TenantAutomationRun(Base):
     safe_error_code: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     safe_error: Mapped[Optional[str]] = mapped_column(String(512), default=None)
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
 
 
@@ -5853,13 +5835,12 @@ class TenantAutomationActionRequest(Base):
     rejected_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
     expires_at: Mapped[datetime] = mapped_column(_datetime6())
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
 
 
@@ -7700,14 +7681,13 @@ class TenantKnowledgeServingProfile(Base):
     current_policy_revision_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     current_snapshot_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         _datetime6(),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default="CURRENT_TIMESTAMP",
     )
     updated_by: Mapped[str] = mapped_column(String(64))
     archived_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
@@ -7774,7 +7754,7 @@ class TenantKnowledgeServingPolicyRevision(Base):
     require_passing_certification: Mapped[bool] = mapped_column(Boolean)
     policy_digest: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
 
@@ -7875,7 +7855,7 @@ class TenantKnowledgeServingSnapshot(Base):
     snapshot_digest: Mapped[str] = mapped_column(String(64))
     as_of: Mapped[datetime] = mapped_column(_datetime6())
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
     created_by: Mapped[str] = mapped_column(String(64))
 
@@ -8062,7 +8042,7 @@ class TenantKnowledgeServingEvidenceLink(Base):
     safe_label: Mapped[str] = mapped_column(String(256))
     evidence_digest: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
-        _datetime6(), default=datetime.utcnow, server_default="CURRENT_TIMESTAMP"
+        _datetime6(), default=datetime.utcnow
     )
 
 

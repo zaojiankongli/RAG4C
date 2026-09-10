@@ -367,6 +367,7 @@ def _guard_downgrade(connection: Connection) -> None:
 
 
 def upgrade() -> None:
+    _is_mysql = op.get_bind().dialect.name == "mysql"
     if context.is_offline_mode() and _dialect_name() == "sqlite":
         raise RuntimeError(
             "0029 SQLite offline upgrade is unsupported; use an online batch migration after read-only preflight"
@@ -387,11 +388,11 @@ def upgrade() -> None:
         sa.Column("active_default_slot", sa.String(length=16), nullable=True),
         sa.Column("revision", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(length=64), nullable=False),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("updated_by", sa.String(length=64), nullable=False),
         sa.Column("archived_at", _datetime6(), nullable=True),
@@ -456,7 +457,7 @@ def upgrade() -> None:
         sa.Column("blocker_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("readiness_blockers_json", sa.JSON(), nullable=False),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(length=64), nullable=False),
         sa.Column("reason", sa.String(length=512), nullable=False),
@@ -542,7 +543,7 @@ def upgrade() -> None:
         sa.Column("content_digest", sa.String(length=64), nullable=True),
         sa.Column("safe_facts_json", sa.JSON(), nullable=True),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("tenant_id", "id", name="uq_dataset_release_entries_scope_id"),
@@ -607,7 +608,7 @@ def upgrade() -> None:
         sa.Column("reason", sa.String(length=512), nullable=False),
         sa.Column("request_id", sa.String(length=128), nullable=False),
         sa.Column(
-            "occurred_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "occurred_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("previous_binding_revision", sa.Integer(), nullable=True),
         sa.Column("current_binding_revision", sa.Integer(), nullable=True),
@@ -672,10 +673,10 @@ def upgrade() -> None:
         sa.Column("request_id", sa.String(length=128), nullable=False),
         sa.Column("reason", sa.String(length=512), nullable=False),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("updated_by", sa.String(length=64), nullable=False),
         sa.PrimaryKeyConstraint("id"),

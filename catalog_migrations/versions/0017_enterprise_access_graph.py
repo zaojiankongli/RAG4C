@@ -82,6 +82,7 @@ def _create_indexes(table_name: str) -> None:
 
 
 def upgrade() -> None:
+    _is_mysql = op.get_bind().dialect.name == "mysql"
     op.create_table(
         "tenant_organization_units",
         sa.Column("id", sa.String(length=64), nullable=False),
@@ -111,7 +112,7 @@ def upgrade() -> None:
             "created_at",
             _datetime6(),
             nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
+            server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.Column(
             "created_by",
@@ -123,7 +124,7 @@ def upgrade() -> None:
             "updated_at",
             _datetime6(),
             nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
+            server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.Column(
             "updated_by",
@@ -181,8 +182,9 @@ def upgrade() -> None:
         sa.Column(
             "description",
             sa.Text(),
+            # MySQL 8.4 不允许 TEXT 列有 server_default（1101），但 TEXT NOT NULL
+            # 无默认值合法（插入时必须提供值）。与 head 契约（NOT NULL）一致。
             nullable=False,
-            server_default=sa.text("''"),
         ),
         sa.Column(
             "status",
@@ -200,13 +202,13 @@ def upgrade() -> None:
             "created_at",
             _datetime6(),
             nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
+            server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.Column(
             "updated_at",
             _datetime6(),
             nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
+            server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.CheckConstraint(
             "status IN ('active', 'archived')",
@@ -247,7 +249,7 @@ def upgrade() -> None:
             "created_at",
             _datetime6(),
             nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
+            server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.Column(
             "created_by",
@@ -303,13 +305,13 @@ def upgrade() -> None:
             "created_at",
             _datetime6(),
             nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
+            server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.Column(
             "updated_at",
             _datetime6(),
             nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
+            server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.CheckConstraint(
             "subject_type IN ('account', 'group', 'organization_unit')",
@@ -371,13 +373,13 @@ def upgrade() -> None:
             "created_at",
             _datetime6(),
             nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
+            server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.Column(
             "updated_at",
             _datetime6(),
             nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
+            server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.CheckConstraint(
             "role IN ('owner', 'admin', 'editor', 'member')",

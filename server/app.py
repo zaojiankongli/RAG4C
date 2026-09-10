@@ -136,6 +136,7 @@ from server.middleware import (  # noqa: E402
     access_log,
     http_exception_handler,
     limit_body_size,
+    rate_limit_by_ip,
     unhandled_exception_handler,
     validation_exception_handler,
 )
@@ -181,6 +182,11 @@ QUERY_MAX_CONCURRENT = int(os.environ.get("RAG4C_QUERY_MAX_CONCURRENT", "32"))
 # 排到第 129 位的请求即使最终被执行，客户端也早就超时走了，那种「排队成功
 # 但没人要结果」的活是纯浪费，不如早点 429 让调用方重试或降级。
 QUERY_QUEUE_MAX = int(os.environ.get("RAG4C_QUERY_QUEUE_MAX", "128"))
+# 每租户并发上限（多租户护栏）：单个租户同时执行的问答请求数上限，
+# 防止一个活跃租户占满全局并发槽。0 = 不限（默认，行为与旧版一致）。
+QUERY_MAX_CONCURRENT_PER_TENANT = int(
+    os.environ.get("RAG4C_QUERY_MAX_CONCURRENT_PER_TENANT", "0")
+)
 # 单次查询服务端超时（秒）：远程 embedding/rerank（SiliconFlow）可达 50s+，
 # 总闸放宽到 240s 让慢查询有机会完成（否则 120s 常被远程拖超时弃权）
 QUERY_TIMEOUT_S = float(os.environ.get("RAG4C_QUERY_TIMEOUT_S", "240"))
@@ -376,6 +382,7 @@ _query_slots = asyncio.Semaphore(QUERY_MAX_CONCURRENT)
 _query_executor_lock = threading.RLock()
 _query_executor: ThreadPoolExecutor | None = None
 _pending = 0  # 执行中 + 排队（async 单线程上下文内更新，无需额外锁）
+_pending_per_tenant: dict[str, int] = {}  # 每租户在途计数（按租户限流，0=不限时保持空）
 _pending_lock = threading.Lock()
 
 # 事件循环层的在途登记表：cache_key -> 正在算这个 key 的 future。
@@ -416,19 +423,53 @@ def _shutdown_query_executor(*, wait: bool = True) -> None:
             executor.shutdown(wait=wait, cancel_futures=True)
 
 
-def _inc_pending() -> bool:
+def _inc_pending(tenant_id: str | None = None) -> bool:
     global _pending
     with _pending_lock:
         if _pending >= QUERY_QUEUE_MAX:
             return False
+        # 按租户并发上限（0 = 不限）。防止单租户占满全局槽。
+        if QUERY_MAX_CONCURRENT_PER_TENANT > 0 and tenant_id:
+            per_tenant = _pending_per_tenant.get(tenant_id, 0)
+            if per_tenant >= QUERY_MAX_CONCURRENT_PER_TENANT:
+                return False
+            _pending_per_tenant[tenant_id] = per_tenant + 1
         _pending += 1
         return True
 
 
-def _dec_pending() -> None:
+def _dec_pending(tenant_id: str | None = None) -> None:
     global _pending
     with _pending_lock:
         _pending = max(0, _pending - 1)
+        if tenant_id:
+            per_tenant = _pending_per_tenant.get(tenant_id, 0)
+            if per_tenant > 0:
+                if per_tenant == 1:
+                    _pending_per_tenant.pop(tenant_id, None)
+                else:
+                    _pending_per_tenant[tenant_id] = per_tenant - 1
+
+
+def _release_query_slot(
+    slots: asyncio.Semaphore,
+    tenant_id: str | None,
+    *,
+    flights: dict[str, asyncio.Future] | None = None,
+    cache_key: str | None = None,
+    worker: asyncio.Future | None = None,
+) -> None:
+    """worker 完成回调：释放执行槽 + 归还租户在途计数 + 摘合并登记。
+
+    query 与 stream 两条路径共用（此前两处 `_release_slot` 闭包重复实现）。
+    摘登记要核对身份：worker 完成时可能已有下一轮同 key 请求登记了新的
+    future，直接 pop 会把别人的登记删掉，让那一轮失去合并能力。
+    """
+    slots.release()
+    _dec_pending(tenant_id)
+    if flights is not None and cache_key is not None and worker is not None:
+        if flights.get(cache_key) is worker:
+            flights.pop(cache_key, None)
 
 
 def _queue_stats() -> dict[str, Any]:
@@ -665,14 +706,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 请求体大小闸门 + 管理端点远程准入 + 访问日志。
+# 请求体大小闸门 + 管理端点远程准入 + 按 IP 限流 + 访问日志。
 #
 # 注册顺序有讲究：Starlette 的 http 中间件是**后注册者更靠外**（实测确认，
-# 不是凭印象）。access_log 要能记录到被 413/403 拒掉的请求，就必须包在闸门
-# 外面，因此它得**后**注册。反过来写的话，超大请求会被闸门直接短路返回，
+# 不是凭印象）。access_log 要能记录到被 413/403/429 拒掉的请求，就必须包在
+# 闸门外面，因此它得**后**注册。反过来写的话，超大请求会被闸门直接短路返回，
 # 一行日志都不留——正好在被攻击时最需要日志的时候，日志是空的。
 app.middleware("http")(limit_body_size)
 app.middleware("http")(admin_access_middleware())
+app.middleware("http")(rate_limit_by_ip)
 app.middleware("http")(access_log)
 
 # 全局异常 JSON 错误契约
@@ -1248,7 +1290,8 @@ async def query(req: QueryRequest) -> dict[str, Any]:
             pass
 
     # --- 3. 真要干活：登记在途 -> 排队 -> 取槽 ---
-    if not _inc_pending():
+    query_tenant = resolve_tenant(req.tenant_id, get_settings())
+    if not _inc_pending(query_tenant):
         get_metrics().incr("http.query.rejected")
         raise HTTPException(status_code=429, detail="查询请求过多，请稍后重试")
     loop = asyncio.get_running_loop()
@@ -1256,11 +1299,11 @@ async def query(req: QueryRequest) -> dict[str, Any]:
     try:
         await asyncio.wait_for(_query_slots.acquire(), timeout=QUERY_TIMEOUT_S)
     except asyncio.TimeoutError:
-        _dec_pending()
+        _dec_pending(query_tenant)
         get_metrics().incr("http.query.timeout")
         raise HTTPException(status_code=503, detail="查询排队超时") from None
     except BaseException:
-        _dec_pending()
+        _dec_pending(query_tenant)
         raise
 
     slots = _query_slots
@@ -1276,15 +1319,11 @@ async def query(req: QueryRequest) -> dict[str, Any]:
     # 晚于登记（合并上来），不存在两者都错过的窗口。
     _aio_flights[cache_key] = worker
 
-    def _release_slot(_: Any) -> None:
-        slots.release()
-        _dec_pending()
-        # 摘登记要核对身份：worker 完成时可能已有下一轮同 key 请求登记了新的
-        # future，直接 pop 会把别人的登记删掉，让那一轮失去合并能力。
-        if _aio_flights.get(cache_key) is worker:
-            _aio_flights.pop(cache_key, None)
-
-    worker.add_done_callback(_release_slot)
+    worker.add_done_callback(
+        lambda _: _release_query_slot(
+            slots, query_tenant, flights=_aio_flights, cache_key=cache_key, worker=worker
+        )
+    )
     try:
         remaining = max(0.0, deadline - loop.time())
         return await asyncio.wait_for(asyncio.shield(worker), timeout=remaining)
@@ -1863,7 +1902,7 @@ async def query_stream(req: QueryRequest, request: Request) -> StreamingResponse
             )
 
     # --- 3. 真要干活：排队 -> 取槽 ---
-    if not _inc_pending():
+    if not _inc_pending(resolved_tenant):
         metrics.incr("http.query.rejected")
         metrics.incr("query.rejected")
         http_run.note(queue_admitted=False)
@@ -1875,7 +1914,7 @@ async def query_stream(req: QueryRequest, request: Request) -> StreamingResponse
     try:
         await asyncio.wait_for(_query_slots.acquire(), timeout=QUERY_TIMEOUT_S)
     except asyncio.TimeoutError:
-        _dec_pending()
+        _dec_pending(resolved_tenant)
         metrics.incr("http.query.timeout")
         metrics.incr("query.timeouts")
         http_run.note(queue_admitted=True)
@@ -1887,7 +1926,7 @@ async def query_stream(req: QueryRequest, request: Request) -> StreamingResponse
         )
         raise HTTPException(status_code=503, detail="查询排队超时") from None
     except BaseException:
-        _dec_pending()
+        _dec_pending(resolved_tenant)
         http_run.activate(mode="sequential_stream", path="queue_cancelled")
         finish_cancelled("client_cancelled")
         raise
@@ -2055,11 +2094,7 @@ async def query_stream(req: QueryRequest, request: Request) -> StreamingResponse
 
     loop.call_later(0.05, check_abandoned)
 
-    def _release_slot(_: Any) -> None:
-        slots.release()
-        _dec_pending()
-
-    worker.add_done_callback(_release_slot)
+    worker.add_done_callback(lambda _: _release_query_slot(slots, resolved_tenant))
 
     async def wait_for_producer_cleanup() -> None:
         while not producer_cleanup_done.is_set():

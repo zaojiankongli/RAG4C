@@ -155,6 +155,7 @@ def _guard_downgrade() -> None:
 
 
 def upgrade() -> None:
+    _is_mysql = op.get_bind().dialect.name == "mysql"
     if context.is_offline_mode() and _dialect_name() == "sqlite":
         raise RuntimeError("0030 SQLite offline upgrade is unsupported; use online migration")
     op.create_table(
@@ -181,11 +182,11 @@ def upgrade() -> None:
         sa.Column("max_certification_age_minutes", sa.Integer(), nullable=False),
         sa.Column("policy_digest", sa.String(length=64), nullable=False),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(length=64), nullable=False),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("updated_by", sa.String(length=64), nullable=False),
         sa.Column("disabled_at", _datetime6(), nullable=True),
@@ -260,7 +261,7 @@ def upgrade() -> None:
         sa.Column("query_count", sa.Integer(), nullable=False),
         sa.Column("baseline_digest", sa.String(length=64), nullable=False),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(length=64), nullable=False),
         sa.Column("reason", sa.String(length=512), nullable=False),
@@ -327,7 +328,7 @@ def upgrade() -> None:
         sa.Column("evidence_digest", sa.String(length=64), nullable=False),
         sa.Column("judgment_digest", sa.String(length=64), nullable=False),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.CheckConstraint(
             "experiment_sequence > 0 AND experiment_serving_generation >= 0",
@@ -416,7 +417,7 @@ def upgrade() -> None:
         sa.Column("certification_digest", sa.String(length=64), nullable=False),
         sa.Column("valid_until", _datetime6(), nullable=False),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(length=64), nullable=False),
         sa.Column("reason", sa.String(length=512), nullable=False),
@@ -527,7 +528,7 @@ def upgrade() -> None:
         sa.Column("judgment_digest", sa.String(length=64), nullable=False),
         sa.Column("safe_facts_json", sa.JSON(), nullable=False),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.CheckConstraint(
             "exact_agreement_bps IS NULL OR exact_agreement_bps BETWEEN 0 AND 10000",
@@ -621,7 +622,7 @@ def upgrade() -> None:
         sa.Column("expires_at", _datetime6(), nullable=False),
         sa.Column("waiver_digest", sa.String(length=64), nullable=False),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(length=64), nullable=False),
         sa.Column("request_id", sa.String(length=128), nullable=False),
@@ -707,7 +708,7 @@ def upgrade() -> None:
         sa.Column("safe_snapshot_json", sa.JSON(), nullable=False),
         sa.Column("request_id", sa.String(length=128), nullable=False),
         sa.Column(
-            "occurred_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "occurred_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.CheckConstraint(
             "length(event_digest)=64 AND lower(event_digest)=event_digest",

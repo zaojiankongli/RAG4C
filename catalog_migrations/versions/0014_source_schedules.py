@@ -114,7 +114,7 @@ def upgrade() -> None:
     # schedule intent under the new all-or-none metadata constraint.
     source_sync_runs = sa.table(
         "source_sync_runs",
-        sa.column("trigger", sa.String(length=24)),
+        sa.column(sa.quoted_name("trigger", True), sa.String(length=24)),
     )
     op.execute(
         source_sync_runs.update()
@@ -122,7 +122,7 @@ def upgrade() -> None:
         .values(trigger="manual")
     )
 
-    trigger_column = sa.column("trigger", sa.String(length=24))
+    trigger_column = sa.column(sa.quoted_name("trigger", True), sa.String(length=24))
     schedule_id_column = sa.column("schedule_id", sa.String(length=64))
     schedule_revision_column = sa.column("schedule_revision", sa.Integer())
     planned_at_column = sa.column("planned_at", _datetime6())

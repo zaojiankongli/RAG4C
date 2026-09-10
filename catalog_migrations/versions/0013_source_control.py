@@ -99,7 +99,7 @@ def upgrade() -> None:
             "ck_source_sync_runs_retry_not_self",
             "retry_of_run_id IS NULL OR retry_of_run_id <> id",
         )
-        trigger_column = sa.column("trigger", sa.String(length=16))
+        trigger_column = sa.column(sa.quoted_name("trigger", True), sa.String(length=16))
         retry_of_column = sa.column("retry_of_run_id", sa.String(length=64))
         batch.create_check_constraint(
             "ck_source_sync_runs_retry_trigger",
@@ -169,7 +169,7 @@ def downgrade() -> None:
     source_sync_runs = sa.table(
         "source_sync_runs",
         sa.column("status", sa.String(length=24)),
-        sa.column("trigger", sa.String(length=16)),
+        sa.column(sa.quoted_name("trigger", True), sa.String(length=16)),
         sa.column("retry_of_run_id", sa.String(length=64)),
         sa.column("finished_at", sa.DateTime()),
         sa.column("fetch_error", sa.Text()),

@@ -307,6 +307,31 @@ def test_context_returns_real_tenant_actor_counts_permissions_and_capabilities()
                 "state": "ready",
                 "reason": None,
             },
+            "enterprise_notification_center": {
+                "label": "企业通知中心",
+                "state": "unavailable",
+                "reason": "0032 企业通知中心数据库升级尚未就绪：catalog is not at a known pre-0032, 0032 or 0033 revision",
+            },
+            "enterprise_content_recovery": {
+                "label": "企业内容恢复",
+                "state": "unavailable",
+                "reason": "0033 企业内容恢复数据库升级尚未就绪：catalog is not at a known pre-0033, 0033 or 0034 revision",
+            },
+            "enterprise_task_operations": {
+                "label": "企业任务运营",
+                "state": "unavailable",
+                "reason": "0034 企业任务运营数据库升级尚未就绪：catalog is not at a known pre-0034, 0034 or 0035 revision",
+            },
+            "enterprise_automation_workflows": {
+                "label": "企业自动化",
+                "state": "unavailable",
+                "reason": "0035 企业自动化数据库升级尚未就绪：catalog revision is missing",
+            },
+            "enterprise_knowledge_serving_reliability": {
+                "label": "知识服务可靠性",
+                "state": "unavailable",
+                "reason": "0036 知识服务可靠性数据库升级尚未就绪：catalog is not at a known pre-0036 or 0036 revision",
+            },
         },
     }
 

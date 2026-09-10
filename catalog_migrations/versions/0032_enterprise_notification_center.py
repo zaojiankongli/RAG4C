@@ -179,6 +179,7 @@ def _guard_downgrade() -> None:
 
 
 def upgrade() -> None:
+    _is_mysql = op.get_bind().dialect.name == "mysql"
     if context.is_offline_mode() and _dialect_name() == "sqlite":
         raise RuntimeError("0032 SQLite offline upgrade is unsupported; use online migration")
 
@@ -200,11 +201,11 @@ def upgrade() -> None:
         sa.Column("minimum_severity", sa.String(16), nullable=False, server_default="warning"),
         sa.Column("muted_until", _datetime6(), nullable=True),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(64), nullable=False),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("updated_by", sa.String(64), nullable=False),
         sa.Column("archived_at", _datetime6(), nullable=True),
@@ -275,7 +276,7 @@ def upgrade() -> None:
         sa.Column("target_route_params_json", sa.JSON(), nullable=False),
         sa.Column("occurred_at", _datetime6(), nullable=False),
         sa.Column(
-            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "created_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.Column("created_by", sa.String(64), nullable=False),
         sa.CheckConstraint(
@@ -392,7 +393,7 @@ def upgrade() -> None:
         sa.Column("read_at", _datetime6(), nullable=True),
         sa.Column("archived_at", _datetime6(), nullable=True),
         sa.Column(
-            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")
+            "updated_at", _datetime6(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP(6)") if _is_mysql else sa.text("CURRENT_TIMESTAMP")
         ),
         sa.CheckConstraint(
             "status IN ('unread','read','archived')", name="ck_notification_receipts_status"

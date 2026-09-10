@@ -4971,8 +4971,8 @@ def _enterprise_content_recovery_capability_issues(connection: Any) -> tuple[str
             if item.get("name")
         }
         for name, fragments in ENTERPRISE_CONTENT_RECOVERY_REQUIRED_CHECK_FRAGMENTS[table].items():
-            sql = _normalized_sql(actual_checks.get(name))
-            if not sql or any(_normalized_sql(fragment) not in sql for fragment in fragments):
+            sql = _parenless_sql(actual_checks.get(name))
+            if not sql or any(_parenless_sql(fragment) not in sql for fragment in fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
         actual_indexes = {
             str(item.get("name")): tuple(item.get("column_names") or ())
@@ -5000,7 +5000,7 @@ def _enterprise_content_recovery_capability_issues(connection: Any) -> tuple[str
         expected = ENTERPRISE_APPROVAL_CONTROL_REQUIRED_EXACT_CHECK_SQL_BY_REVISION[
             ENTERPRISE_CONTENT_RECOVERY_REVISION
         ][table][f"ck_{table}_action_type"]
-        if not actual or _canonical_check_sql(actual) != _canonical_check_sql(expected):
+        if not actual or _parenless_sql(actual) != _parenless_sql(expected):
             issues.append(f"missing or invalid {table} document_purge action check")
 
     issues.extend(_content_recovery_guard_issues(connection))
@@ -5433,8 +5433,8 @@ def _enterprise_task_operations_capability_issues(connection: Any) -> tuple[str,
             if item.get("name")
         }
         for name, fragments in ENTERPRISE_TASK_OPERATIONS_REQUIRED_CHECK_FRAGMENTS[table].items():
-            sql = _normalized_sql(actual_checks.get(name))
-            if not sql or any(_normalized_sql(fragment) not in sql for fragment in fragments):
+            sql = _parenless_sql(actual_checks.get(name))
+            if not sql or any(_parenless_sql(fragment) not in sql for fragment in fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
         actual_indexes = {
             str(item.get("name")): tuple(item.get("column_names") or ())
@@ -5526,7 +5526,7 @@ def _automation_guard_issues(connection: Any) -> tuple[str, ...]:
             str(name): f"{table} {timing} {event} {statement}"
             for name, table, timing, event, statement in connection.execute(
                 text(
-                    "SELECT TRIGGER_NAME,TABLE_NAME,ACTION_TIMING,EVENT_MANIPULATION,ACTION_STATEMENT "
+                    "SELECT TRIGGER_NAME,EVENT_OBJECT_TABLE,ACTION_TIMING,EVENT_MANIPULATION,ACTION_STATEMENT "
                     "FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE()"
                 )
             ).all()
@@ -6210,8 +6210,8 @@ def _enterprise_automation_workflows_capability_issues(connection: Any) -> tuple
         for name, fragments in ENTERPRISE_AUTOMATION_WORKFLOWS_REQUIRED_CHECK_FRAGMENTS[
             table
         ].items():
-            sql = _normalized_sql(checks.get(name))
-            if not sql or any(_normalized_sql(fragment) not in sql for fragment in fragments):
+            sql = _parenless_sql(checks.get(name))
+            if not sql or any(_parenless_sql(fragment) not in sql for fragment in fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
         indexes = {
             str(item.get("name")): tuple(item.get("column_names") or ())
@@ -6436,12 +6436,12 @@ def _enterprise_knowledge_base_release_capability_issues(connection: Any) -> tup
             raw_sql = actual_checks.get(name)
             expected_sql = exact_checks.get(name)
             if expected_sql is not None:
-                if not raw_sql or _canonical_check_sql(raw_sql) != _canonical_check_sql(
+                if not raw_sql or _parenless_sql(raw_sql) != _parenless_sql(
                     expected_sql
                 ):
                     issues.append(f"missing or invalid exact check {table}.{name}")
             elif not raw_sql or any(
-                _normalized_sql(fragment) not in _normalized_sql(raw_sql) for fragment in fragments
+                _parenless_sql(fragment) not in _parenless_sql(raw_sql) for fragment in fragments
             ):
                 issues.append(f"missing or invalid check {table}.{name}")
         actual_indexes = {
@@ -6730,10 +6730,10 @@ def _enterprise_release_quality_certification_capability_issues(
                 else None
             )
             if expected_sql is not None:
-                if not sql or _canonical_check_sql(sql) != _canonical_check_sql(expected_sql):
+                if not sql or _parenless_sql(sql) != _parenless_sql(expected_sql):
                     issues.append(f"missing or invalid exact check {table}.{name}")
             elif not sql or any(
-                _normalized_sql(fragment) not in _normalized_sql(sql) for fragment in fragments
+                _parenless_sql(fragment) not in _parenless_sql(sql) for fragment in fragments
             ):
                 issues.append(f"missing or invalid check {table}.{name}")
         indexes = {
@@ -7115,7 +7115,7 @@ def _enterprise_release_quality_operations_capability_issues(
         ].items():
             sql = checks.get(name, "")
             if not sql or any(
-                _normalized_sql(fragment) not in _normalized_sql(sql) for fragment in fragments
+                _parenless_sql(fragment) not in _parenless_sql(sql) for fragment in fragments
             ):
                 issues.append(f"missing or invalid check {table}.{name}")
         indexes = {
@@ -7504,7 +7504,7 @@ def _enterprise_notification_center_capability_issues(connection: Any) -> tuple[
         ].items():
             sql = checks.get(name, "")
             if not sql or any(
-                _normalized_sql(fragment) not in _normalized_sql(sql) for fragment in fragments
+                _parenless_sql(fragment) not in _parenless_sql(sql) for fragment in fragments
             ):
                 issues.append(f"missing or invalid check {table}.{name}")
         indexes = {
@@ -7631,6 +7631,24 @@ def _strip_redundant_outer_parentheses(sql: str) -> str:
             break
         sql = sql[1:-1].strip()
     return sql
+
+
+def _parenless_sql(value: str | None) -> str:
+    """去括号 + 去全部空白的 SQL 比较形态。
+
+    MySQL 8.4 反射 CHECK 约束时保留多层冗余括号（``(((a) and (b)) or ...)``），
+    且运算符两侧空格与迁移里的 fragment 写法不一致（``= 64`` vs ``=64``）。
+    去掉全部括号与全部空白后，`AND/OR/=/IN/IS NULL/length()/lower()` 的
+    语义序列不变（两侧做相同变换），同义约束即匹配。
+    仅用于**同批迁移生成的约束**的自检比对（格式一致，变换安全）。
+    """
+    sql = _normalized_sql(value)
+    # MySQL 反射把 != 规范化成 <>（同义），统一为 != 便于与 fragment 比对。
+    sql = sql.replace("<>", "!=")
+    # 去全部空白（含 = 两侧、函数调用内），再去括号——两侧同变换，
+    # 函数调用括号被去掉也不影响匹配。
+    sql = re.sub(r"\s+", "", sql)
+    return sql.replace("(", "").replace(")", "").strip()
 
 
 def _canonical_check_sql(value: str | None) -> str:
@@ -8272,12 +8290,12 @@ def _knowledge_base_registry_capability_issues(
             raw_sql = actual.get(name)
             expected_sql = exact_required.get(name)
             if expected_sql is not None:
-                if not raw_sql or _canonical_check_sql(raw_sql) != _canonical_check_sql(
+                if not raw_sql or _parenless_sql(raw_sql) != _parenless_sql(
                     expected_sql
                 ):
                     issues.append(f"missing or invalid exact check {table}.{name}")
             elif not raw_sql or any(
-                _normalized_sql(fragment) not in _normalized_sql(raw_sql) for fragment in fragments
+                _parenless_sql(fragment) not in _parenless_sql(raw_sql) for fragment in fragments
             ):
                 issues.append(f"missing or invalid check {table}.{name}")
 
@@ -8466,12 +8484,12 @@ def _workspace_authorization_capability_issues(
             raw_sql = actual.get(name)
             expected_sql = exact_required.get(name)
             if expected_sql is not None:
-                if not raw_sql or _canonical_check_sql(raw_sql) != _canonical_check_sql(
+                if not raw_sql or _parenless_sql(raw_sql) != _parenless_sql(
                     expected_sql
                 ):
                     issues.append(f"missing or invalid exact check {table}.{name}")
             elif not raw_sql or any(
-                _normalized_sql(fragment) not in _normalized_sql(raw_sql) for fragment in fragments
+                _parenless_sql(fragment) not in _parenless_sql(raw_sql) for fragment in fragments
             ):
                 issues.append(f"missing or invalid check {table}.{name}")
 
@@ -8731,14 +8749,14 @@ def _head_schema_issues(inspector: Any) -> tuple[str, ...]:
         }
         for name, fragments in required.items():
             raw_sql = actual.get(name)
-            sql = _normalized_sql(raw_sql)
+            sql = _parenless_sql(raw_sql)
             expected_sql = exact_required.get(name)
             if expected_sql is not None:
-                if not raw_sql or _canonical_check_sql(raw_sql) != _canonical_check_sql(
-                    expected_sql
-                ):
+                if not raw_sql or _parenless_sql(raw_sql) != _parenless_sql(expected_sql):
                     issues.append(f"missing or invalid exact check {table}.{name}")
-            elif not sql or any(_normalized_sql(fragment) not in sql for fragment in fragments):
+            elif not sql or any(
+                _parenless_sql(fragment) not in sql for fragment in fragments
+            ):
                 issues.append(f"missing or invalid check {table}.{name}")
     for table, required in _HEAD_REQUIRED_INDEXES.items():
         if table not in tables:
@@ -9734,9 +9752,9 @@ def _knowledge_serving_exact_allowlist_issues(
     actual_kind_route_sql = checks_by_table.get(
         "tenant_knowledge_serving_evidence_links", {}
     ).get("ck_tenant_knowledge_serving_evidence_links_kind_route")
-    if actual_kind_route_sql is None or _canonical_check_sql(
+    if actual_kind_route_sql is None or _parenless_sql(
         actual_kind_route_sql
-    ) != _canonical_check_sql(_KNOWLEDGE_SERVING_EVIDENCE_KIND_ROUTE_CHECK_SQL):
+    ) != _parenless_sql(_KNOWLEDGE_SERVING_EVIDENCE_KIND_ROUTE_CHECK_SQL):
         issues.append("invalid exact Knowledge Serving evidence kind-route allow-list")
 
     expected_stage_sql = (
@@ -9747,7 +9765,7 @@ def _knowledge_serving_exact_allowlist_issues(
     actual_stage_sql = checks_by_table.get("tenant_knowledge_serving_stage_facts", {}).get(
         "ck_tenant_knowledge_serving_stage_facts_stage"
     )
-    if actual_stage_sql is None or _canonical_check_sql(actual_stage_sql) != _canonical_check_sql(
+    if actual_stage_sql is None or _parenless_sql(actual_stage_sql) != _parenless_sql(
         expected_stage_sql
     ):
         issues.append("invalid exact Knowledge Serving stage ordering allow-list")
@@ -10442,8 +10460,8 @@ def _enterprise_knowledge_serving_reliability_capability_issues(connection: Any)
         for name, fragments in ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REQUIRED_CHECK_FRAGMENTS[
             table
         ].items():
-            sql = _normalized_sql(checks.get(name))
-            if not sql or any(_normalized_sql(fragment) not in sql for fragment in fragments):
+            sql = _parenless_sql(checks.get(name))
+            if not sql or any(_parenless_sql(fragment) not in sql for fragment in fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
 
         indexes = {
