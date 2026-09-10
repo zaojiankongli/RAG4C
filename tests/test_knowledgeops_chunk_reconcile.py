@@ -19,6 +19,7 @@ from core.ingest_ledger import IngestLedger
 from models.orm import Dataset, Document, DocumentIngestAttempt, IndexOperation, Tenant
 from models.schemas import Chunk
 import scripts.reconcile_chunk_authority as reconcile_module
+from tests.head_catalog import seed_head_authority
 from scripts.reconcile_chunk_authority import reconcile_chunk_authority as _reconcile_impl
 
 ROLLOUT_SECRET = "YXdPepaKHpWMOu6ypgNSxKNac00g6vMXcEIGc0itofU"
@@ -99,6 +100,10 @@ def _state(tmp_path: Path, *, with_attempt: bool = True):
             )
         )
         session.commit()
+    # 同 test_knowledgeops_chunk_backfill._state：迁移**之后**插入的 Tenant/Dataset 需要
+    # 补 head 期望的 workspace / release channel / dataset ownership，否则 catalog
+    # 完整性校验会把 CLI fail-closed 成 "catalog schema is incomplete"。
+    seed_head_authority(engine)
     attempt = None
     if with_attempt:
         attempt = IngestLedger(engine).start_attempt(

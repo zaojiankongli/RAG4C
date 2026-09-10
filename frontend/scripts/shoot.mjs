@@ -87,6 +87,10 @@ for (const theme of ["light", "dark"]) {
     // 系统偏好；两个都设才能确保拍到的确实是目标主题。
     await ctx.addInitScript((t) => {
       window.localStorage.setItem("rag4c.theme", t);
+      // 关掉新手引导再拍。引导是一层 fixed inset-0 z-[9999] 的全屏遮罩，
+      // 不置这个标记时每张截图拍到的都是引导弹窗而不是页面本身
+      // （实测 36/36 张全部如此，见 docs/41）。
+      window.localStorage.setItem("rag4c.onboarding_done", "1");
     }, theme);
 
     const page = await ctx.newPage();

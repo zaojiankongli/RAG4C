@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { Progress, Select, Space } from "./index";
+import { Progress, Select, Space, Typography } from "./index";
 
 afterEach(() => {
   cleanup();
@@ -68,6 +68,33 @@ describe("shared fallback DOM props", () => {
     expect(progress.getAttribute("strokecolor")).toBeNull();
     expect(progress.getAttribute("trailcolor")).toBeNull();
     expect(progress.querySelector("span")?.style.backgroundColor).toBe("rgb(1, 2, 3)");
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it("renders Typography.Text code as <code> and never leaks framework props to the DOM", () => {
+    // 真机复现的缺陷：EvalPage 用 <Text code>，fallback 把 code={true} 透传到 <span>，
+    // React 在每个页面每个视口报 "Received `true` for a non-boolean attribute `code`"
+    // （见 frontend/output/shots/r5-before 的 shoot 报告）。这里钉死两件事：
+    // 1) 不再透传布尔属性；2) code 语义译为真 <code>（等宽 + 读屏器可识别）。
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { Text } = Typography;
+
+    render(
+      <>
+        <Text code>eval-case-1</Text>
+        <Text delete>已作废</Text>
+      </>,
+    );
+
+    const codeNode = screen.getByText("eval-case-1");
+    expect(codeNode.tagName).toBe("CODE");
+    expect(codeNode.getAttribute("code")).toBeNull();
+
+    const struck = screen.getByText("已作废");
+    expect(struck.tagName).toBe("SPAN");
+    expect(struck.getAttribute("delete")).toBeNull();
+    expect(struck.style.textDecoration).toBe("line-through");
+
     expect(consoleError).not.toHaveBeenCalled();
   });
 });

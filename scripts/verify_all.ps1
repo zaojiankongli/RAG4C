@@ -65,14 +65,36 @@ $gates['backend-lint'] = @{
     Desc = 'ruff check .（后端静态检查）'
     Run  = { & $Python -m ruff check . }
 }
+# 后端全量测试分两段跑：**功能断言并行 + 性能断言独占串行**。
+#
+# 为什么必须分两段：本仓库有一批断言 p95 延迟 / offer 热路径预算 / 1000 事件与
+# 100000 列表墙钟上限的用例。它们对同机负载敏感，实测：
+#   -n auto → 12 个转红；-n 4 → 10 个转红；串行且在空闲机器上 → 全绿。
+# 也就是"并行跑全量"会让性能门禁变成**假红灯**。分两段之后：段 A 拿并行收益，
+# 段 B 是唯一需要机器安静的部分（只要 ~2 分钟）。
+$PerfBudgetFiles = @(
+    'tests/test_run_history_store.py',
+    'tests/test_run_observability_parity.py',
+    'tests/test_run_ops_api.py',
+    'tests/test_run_registry.py',
+    'tests/test_source_dispatch_runtime.py'
+)
 $gates['backend-test'] = @{
-    Desc = 'pytest tests（后端全量测试，默认串行）'
+    Desc = 'pytest 段A 功能断言(-n auto) + 段B 性能预算(串行独占)'
     Run  = {
+        $ignore = @()
+        foreach ($f in $PerfBudgetFiles) { $ignore += "--ignore=$f" }
         if ($Parallel -and $hasXdist) {
-            & $Python -m pytest tests -q -n auto
+            Write-Host '  [段A] pytest tests -q -n auto（排除 5 个性能预算文件）'
+            & $Python -m pytest tests -q @ignore -n auto
         } else {
-            & $Python -m pytest tests -q
+            Write-Host '  [段A] pytest tests -q（串行；未加 -Parallel 或未装 xdist）'
+            & $Python -m pytest tests -q @ignore
         }
+        if ($LASTEXITCODE -ne 0) { throw '段A（功能断言）未通过' }
+        Write-Host '  [段B] pytest 性能预算用例 -q（串行，须独占机器）'
+        & $Python -m pytest @PerfBudgetFiles -q
+        if ($LASTEXITCODE -ne 0) { throw '段B（性能预算）未通过——先确认机器上没有其它重负载任务' }
     }
 }
 $gates['frontend-lint'] = @{

@@ -19,6 +19,7 @@ from models.orm import ChunkHead, ChunkRevision, Dataset, Document, Tenant
 from models.schemas import Chunk
 import scripts.backfill_chunk_authority as backfill_module
 import scripts.reconcile_chunk_authority as reconcile_module
+from tests.head_catalog import seed_head_authority
 from scripts.backfill_chunk_authority import backfill_chunk_authority as _backfill_impl
 
 ROLLOUT_SECRET = "YXdPepaKHpWMOu6ypgNSxKNac00g6vMXcEIGc0itofU"
@@ -120,6 +121,11 @@ def _state(tmp_path: Path):
             ]
         )
         session.commit()
+    # head 的 catalog 完整性校验要求：每租户 1 个默认 workspace + 默认 release channels、
+    # 每个 dataset 1 条 workspace ownership。下面这些 Tenant/Dataset 是迁移**之后**插入的，
+    # 0029 的播种已空转，不补就会被 fail-closed 成 "catalog schema is incomplete"，
+    # 表现为 CLI 返回 schema unsafe 而不是业务结果。详见 tests/head_catalog.py。
+    seed_head_authority(engine)
     return engine
 
 

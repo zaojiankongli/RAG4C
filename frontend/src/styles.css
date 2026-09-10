@@ -420,6 +420,26 @@ html[data-theme="anime"] {
   background: transparent;
   border-inline-end: 0 !important;
 }
+/* TDesign 的 `.t-default-menu`（外层容器）自带不透明底色
+ * `--td-bg-color-container = #fff`。侧栏被改造成墨蓝（`.app-sider` 的深色渐变）时
+ * 只覆盖了 `.t-menu` 这一层，**漏了它外面这层**，于是白色面板盖在墨蓝上，而菜单文字
+ * 取的是 `--sider-text = rgba(226,232,250,.68)`（近白）→ 白底压近白字，
+ * 对比度 1.15，整条主导航基本不可见。
+ *
+ * 证据：`frontend/scripts/visual-quality.mjs` 在 114 个页面加载里把
+ * `span.t-menu__content` 判为最高频的对比度违规（ratio=1.15），
+ * 且修复前后对比度违规总数 1356 → 331（见 output/visual-quality/{before-final,after-final}.json）。
+ *
+ * 为什么以前没被发现：`scripts/shoot.mjs` 没关新手引导，而那是一层
+ * `fixed inset-0 z-[9999]` 全屏遮罩 —— 36/36 张截图拍到的都是引导弹窗，
+ * 真实页面从来没进过视觉评审。本轮已同时修掉 shoot.mjs 与度量脚本。 */
+.app-sider .t-default-menu,
+.app-sider .t-default-menu__inner,
+.app-sider .t-menu--scroll {
+  background-color: transparent;
+  background-image: none;
+  border-inline-end: 0 !important;
+}
 .app-sider .t-menu-group__title {
   padding: 14px 20px 6px !important;
   color: var(--color-text-tertiary) !important;
@@ -515,6 +535,23 @@ html[data-theme="anime"] .app-sider .t-menu__group-title.t-menu__group-title {
   color: var(--sider-text-strong);
   border-color: transparent;
   background: var(--sider-hover-bg);
+}
+/* 窄屏触控目标下限 44×44（WCAG 2.5.5 Target Size）。
+ *
+ * 实测（frontend/scripts/visual-quality.mjs 在 375px 视口）shell 里这类图标按钮
+ * 全部不达标：`打开导航` 32×32、`展开侧栏` / `切换主题` / `重看新手引导` 43×28。
+ * 它们出现在**每一个**页面上，所以是全局性的手指点不中，而不是某一页的排版问题。
+ *
+ * 只加"命中区"（min-width/min-height），不动图标的视觉尺寸与字号——视觉上几乎无感，
+ * 手指的落点却从 28px 高变成 44px。用 @media 收在窄屏，桌面端保持紧凑。 */
+@media (max-width: 480px) {
+  .app-topbar .rag-button,
+  .app-topbar .rag-button.is-text,
+  .app-sider .rag-button.is-text,
+  .sider-actions .rag-button.is-text {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 .status-dot {
   display: inline-block;
@@ -1288,7 +1325,11 @@ html[data-theme="dark"] .app-content {
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 .markdown-body code,
-.t-typography code {
+.t-typography code,
+/* fallback 分支的 <code>（ui/index.tsx 的 Typography.Text code 语义）不在 .t-typography
+   里，没有这条会退化成一个没有底色、没有内边距的裸等宽字——同一个 code 语义在
+   "渲染 TDesign" 和 "走 fallback" 两条路径下长得不一样。 */
+.rag-inline-code {
   padding: 1px 5px;
   font-family: var(--font-mono);
   font-size: 0.88em;

@@ -606,30 +606,74 @@ export const Tag: any = ({ color, icon, children, bordered, ...props }: any) => 
     </TTag>
   );
 };
+// TDesign Typography 的**私有** props。fallback 分支直接 `{...props}` 会把它们当 DOM
+// 属性透传，React 对布尔值报 "Received `true` for a non-boolean attribute `code`"。
+// 真机复现：`node scripts/shoot.mjs` 在 2 主题 × 3 视口下**每一张**截图都报同一条
+// （6 条去重后仍 6 条），来源是 EvalPage 的 `<Text code>`。
+// 这里统一把它们摘出来：给了 TDesign 就原样转发，走 fallback 就只在 **有语义映射** 的
+// 情况下译为原生元素（code → <code>、delete → line-through），其余丢弃。
+const TEXT_INLINE_PROPS = [
+  "code",
+  "delete",
+  "underline",
+  "mark",
+  "keyboard",
+  "italic",
+  "disabled",
+] as const;
+
+function splitInlineProps(props: any): { inline: any; dom: any } {
+  const inline: any = {};
+  const dom: any = {};
+  for (const [key, value] of Object.entries(props)) {
+    if ((TEXT_INLINE_PROPS as readonly string[]).includes(key)) inline[key] = value;
+    else dom[key] = value;
+  }
+  return { inline, dom };
+}
+
 const Text: any = ({ type, strong, style, children, ...props }: any) => {
   const mergedStyle = strong ? { ...style, fontWeight: 600 } : style;
-  return !canRenderTDesign() ? (
-    <span {...props} style={mergedStyle}>
-      {children}
-    </span>
-  ) : (
-    <TTypography.Text {...props} style={mergedStyle} theme={type === "danger" ? "error" : type}>
+  const { inline, dom } = splitInlineProps(props);
+  if (!canRenderTDesign()) {
+    // code 用真 <code>：既拿到原生等宽语义（读屏器也会念作代码），也不会透传布尔属性。
+    // 类名 rag-inline-code 让 fallback 的 <code> 与 TDesign 分支的 `.t-typography code`
+    // 共用同一条样式（styles.css 里两者并列），否则同一个 code 语义在两条分支下长得不一样。
+    const forcedClass = inline.code
+      ? ["rag-inline-code", dom.className].filter(Boolean).join(" ")
+      : dom.className;
+    const Tag: any = inline.code ? "code" : "span";
+    const fallbackStyle = inline.delete
+      ? { ...mergedStyle, textDecoration: "line-through" }
+      : mergedStyle;
+    return (
+      <Tag {...dom} className={forcedClass} style={fallbackStyle}>
+        {children}
+      </Tag>
+    );
+  }
+  return (
+    <TTypography.Text
+      {...dom}
+      {...inline}
+      style={mergedStyle}
+      theme={type === "danger" ? "error" : type}
+    >
       {children}
     </TTypography.Text>
   );
 };
-const Title: any = ({ level = 1, children, ...props }: any) =>
-  !canRenderTDesign() ? (
-    React.createElement(`h${level}`, props, children)
-  ) : (
-    <TTypography.Title {...props} level={`h${level}` as any} />
-  );
-const Paragraph: any = ({ type, ...props }: any) =>
-  !canRenderTDesign() ? (
-    <p {...props} />
-  ) : (
-    <TTypography.Paragraph {...props} theme={type === "danger" ? "error" : type} />
-  );
+const Title: any = ({ level = 1, children, ...props }: any) => {
+  if (canRenderTDesign()) return <TTypography.Title {...props} level={`h${level}` as any} />;
+  const { inline, dom } = splitInlineProps(props);
+  return React.createElement(`h${level}`, { ...dom, ...(inline.delete ? { style: { textDecoration: "line-through" } } : {}) }, children);
+};
+const Paragraph: any = ({ type, ...props }: any) => {
+  if (canRenderTDesign()) {
+    return <TTypography.Paragraph {...props} theme={type === "danger" ? "error" : type} />;
+  }
+  return <p {...splitInlineProps(props).dom} />;
+};
 export const Typography: any = { ...TTypography, Text, Title, Paragraph };
 export const Space: any = ({
   children,

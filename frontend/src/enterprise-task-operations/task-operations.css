@@ -1144,8 +1144,24 @@
     grid-template-columns: 1fr;
   }
 
+  /* 375px 下 6 个 tab 比视口宽 43px，而 TDesign 的 `t-tabs__nav-wrap`（t-is-smooth）
+   * 自己是 overflow:hidden —— 于是最后那个 tab 被**裁掉且滚不到**（实测：nav-wrap
+   * over=43px、nav-item over=43px、span "Activity" over=26px，见
+   * frontend/output/visual-quality/baseline2.json）。
+   * 只在外层 .t-tabs__nav 上设 overflow-x 不生效，因为溢出发生在更里面的 nav-wrap 上，
+   * 这里对真正的溢出元素放开滚动。 */
   .task-operations__tabs > .t-tabs__nav {
     overflow-x: auto;
+  }
+
+  .task-operations__tabs .t-tabs__nav-wrap,
+  .task-operations__tabs .t-tabs__nav-wrap.t-is-smooth {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .task-operations__tabs .t-tabs__nav-item {
+    flex: 0 0 auto;
   }
 
   .task-operations__drawer-header h2 {
