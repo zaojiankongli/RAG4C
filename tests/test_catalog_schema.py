@@ -2432,3 +2432,95 @@ def test_content_recovery_capability_requires_canonical_tables_and_event_guards(
         assert any("immutable trigger" in issue for issue in issues)
     finally:
         engine.dispose()
+
+
+def test_era_lazy_column_declaration_matches_migrations_after_0036() -> None:
+    """`ERA_LAZY_ADDED_COLUMNS` 必须覆盖 0036 之后给 tenants/datasets 加的可空列。
+
+    这条守卫的由来很贵：0038 给 tenants/datasets 各加一个可空列之后，全仓
+    "升到旧 revision 再用 head ORM 写行" 的时代夹具一次性红了 114 个用例
+    （`table tenants has no column named default_storage_backend_id`），
+    而且同一缺陷还有第二种表现——ORM **SELECT** 报 `no such column`，
+    会以"能力 unavailable"的形式伪装成产品缺陷。
+    helper 的声明表是手写的，所以"新加了列却忘了登记"必须当场转红。
+
+    0036 是主线时代夹具仍会钉住的最老链尾边界（各用例分别钉 0007…0036），
+    在这之前加的列本来就在时代库里，不该进声明表。
+    """
+    import ast
+
+    from tests.head_catalog import ERA_LAZY_ADDED_COLUMNS
+
+    versions = Path(__file__).resolve().parents[1] / "catalog_migrations" / "versions"
+    guarded_tables = {"tenants", "datasets"}
+    declared = {
+        (table, column) for table, column in ERA_LAZY_ADDED_COLUMNS.items()
+    }
+
+    added: set[tuple[str, str]] = set()
+
+    def record(table: str | None, column_node: object) -> None:
+        if table not in guarded_tables or not isinstance(column_node, ast.Call):
+            return
+        args = getattr(column_node, "args", [])
+        if not args or not isinstance(args[0], ast.Constant):
+            return
+        nullable = any(
+            keyword.arg == "nullable"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in getattr(column_node, "keywords", []) or []
+        )
+        if nullable:
+            added.add((table, str(args[0].value)))
+
+    for path in sorted(versions.glob("*.py")):
+        revision_number = path.name.split("_", 1)[0]
+        if not revision_number.isdigit() or int(revision_number) <= 36:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            # 形态一：op.add_column("tenants", sa.Column(...))
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_column"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "op"
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Constant)
+            ):
+                record(str(node.args[0].value), node.args[1])
+            # 形态二：with op.batch_alter_table("tenants") as batch: batch.add_column(...)
+            # 别名必须按**所在 with 作用域**解析 —— 同一个迁移文件里两个 with 都叫 `batch`，
+            # 建一张全局"别名 → 表"字典会把 datasets 的列算到 tenants 头上。
+            if not isinstance(node, ast.With):
+                continue
+            for item in node.items:
+                context = item.context_expr
+                if not (
+                    isinstance(context, ast.Call)
+                    and isinstance(context.func, ast.Attribute)
+                    and context.func.attr == "batch_alter_table"
+                    and context.args
+                    and isinstance(context.args[0], ast.Constant)
+                    and isinstance(item.optional_vars, ast.Name)
+                ):
+                    continue
+                alias = item.optional_vars.id
+                table = str(context.args[0].value)
+                for inner in ast.walk(node):
+                    if (
+                        isinstance(inner, ast.Call)
+                        and isinstance(inner.func, ast.Attribute)
+                        and inner.func.attr == "add_column"
+                        and isinstance(inner.func.value, ast.Name)
+                        and inner.func.value.id == alias
+                        and inner.args
+                    ):
+                        record(table, inner.args[0])
+
+    # 防空转：抽取本身必须真的抓到东西，否则这条守卫是恒真式。
+    assert added, "没有从 0036 之后的迁移里抓到任何 tenants/datasets 可空列，检查抽取逻辑"
+    assert added <= declared, f"未登记进 ERA_LAZY_ADDED_COLUMNS 的新列: {sorted(added - declared)}"
+    assert declared <= added, f"声明表里有没有任何迁移加过的列（应删）: {sorted(declared - added)}"
