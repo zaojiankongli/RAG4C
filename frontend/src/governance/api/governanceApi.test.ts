@@ -4,21 +4,31 @@ import type {
   DatasetProfile,
   DocumentVersion,
   QAAlternativeCreated,
+  QABatchResult,
+  QAImportResult,
   QAKnowledge,
   QAListResponse,
+  QANegativeQuestionCreated,
   GovernanceScope,
 } from "../model/governanceModel";
 import {
   addQAAlternative,
+  addQANegative,
   archiveDataset,
+  batchExpireQA,
+  batchRestoreQA,
+  batchReviewQA,
   createDocumentVersion,
   createQA,
   deleteQAAlternative,
+  deleteQANegative,
   disableDataset,
   expireQA,
+  exportQA,
   fetchDatasetProfile,
   fetchDocumentVersions,
   fetchQAList,
+  importQA,
   patchDatasetProfile,
   patchQA,
   restoreDataset,
@@ -26,7 +36,11 @@ import {
   reviewQA,
 } from "./governanceApi";
 
-vi.mock("../../api/client", () => ({ request: vi.fn() }));
+vi.mock("../../api/client", () => ({
+  request: vi.fn(),
+  getBaseUrl: vi.fn(() => "http://localhost:8010"),
+  ApiError: class ApiError extends Error {},
+}));
 
 const requestMock = vi.mocked(request);
 const scope: GovernanceScope = {
@@ -78,11 +92,11 @@ describe("governance API", () => {
     await fetchQAList(scope, {
       review_status: "pending",
       lifecycle_state: "expired",
-      origin: "automatic",
+      origin: "import",
       limit: 500,
     });
     expect(requestMock).toHaveBeenLastCalledWith(
-      "/api/knowledge-bases/dataset%2Fa/qa?review_status=pending&lifecycle_state=expired&origin=automatic&limit=500",
+      "/api/knowledge-bases/dataset%2Fa/qa?review_status=pending&lifecycle_state=expired&origin=import&limit=500",
       { method: "GET", headers, signal: undefined },
     );
 
@@ -126,7 +140,88 @@ describe("governance API", () => {
     }
   });
 
-  it("uses body CAS for adding alternatives and strict query CAS for deletion", async () => {
+  it("uses exact import, batch, and export contracts", async () => {
+    const importResult: QAImportResult = {
+      batch_id: "qa-import-1",
+      created: [{ id: "qa-1", revision: 1, question: "Q", content_hash: "h" }],
+      skipped_duplicate: [{ index: 0, reason: "duplicate_existing", content_hash: "h2" }],
+      failed: [{ index: 1, reason: "bad row" }],
+      counts: { created: 1, skipped_duplicate: 1, failed: 1 },
+    };
+    requestMock.mockResolvedValue(importResult);
+    await importQA(scope, {
+      origin: "import",
+      items: [
+        {
+          question: "Q",
+          answer: "A",
+          alternatives: ["Alt?"],
+          negative_questions: ["Neg?"],
+          source_uri: "",
+          metadata: {},
+        },
+      ],
+    });
+    expect(requestMock).toHaveBeenLastCalledWith("/api/knowledge-bases/dataset%2Fa/qa/import", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        origin: "import",
+        items: [
+          {
+            question: "Q",
+            answer: "A",
+            alternatives: ["Alt?"],
+            negative_questions: ["Neg?"],
+            source_uri: "",
+            metadata: {},
+          },
+        ],
+      }),
+      signal: undefined,
+    });
+
+    const batchResult: QABatchResult = {
+      action: "review",
+      succeeded: [{ qa_id: "qa-1", revision: 2, review_status: "approved", lifecycle_state: "active" }],
+      failed: [{ index: 0, qa_id: "qa-2", reason: "revision conflict", code: "ContentConflict" }],
+      counts: { succeeded: 1, failed: 1 },
+    };
+    requestMock.mockResolvedValue(batchResult);
+    await batchReviewQA(scope, [{ qa_id: "qa-1", expected_revision: 1, decision: "approved" }]);
+    expect(requestMock).toHaveBeenLastCalledWith("/api/knowledge-bases/dataset%2Fa/qa/batch/review", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ items: [{ qa_id: "qa-1", expected_revision: 1, decision: "approved" }] }),
+      signal: undefined,
+    });
+
+    await batchExpireQA(scope, [{ qa_id: "qa-1", expected_revision: 2 }]);
+    expect(requestMock).toHaveBeenLastCalledWith("/api/knowledge-bases/dataset%2Fa/qa/batch/expire", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ items: [{ qa_id: "qa-1", expected_revision: 2 }] }),
+      signal: undefined,
+    });
+
+    await batchRestoreQA(scope, [{ qa_id: "qa-2", expected_revision: 8 }]);
+    expect(requestMock).toHaveBeenLastCalledWith("/api/knowledge-bases/dataset%2Fa/qa/batch/restore", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ items: [{ qa_id: "qa-2", expected_revision: 8 }] }),
+      signal: undefined,
+    });
+
+    requestMock.mockResolvedValue({ items: [], count: 0 } as QAListResponse);
+    const exported = await exportQA(scope, { review_status: "approved", origin: "import", limit: 50 }, "json");
+    expect(requestMock).toHaveBeenLastCalledWith(
+      "/api/knowledge-bases/dataset%2Fa/qa/export?review_status=approved&origin=import&limit=50&format=json",
+      { method: "GET", headers, signal: undefined },
+    );
+    expect(JSON.parse(exported)).toEqual({ items: [], count: 0 });
+  });
+
+  it("uses body CAS for adding alternatives and negatives, and strict query CAS for deletion", async () => {
     requestMock.mockResolvedValue({} as QAAlternativeCreated);
     await addQAAlternative(scope, "qa/1", { expected_revision: 9, question: "Alternative?" });
     expect(requestMock).toHaveBeenLastCalledWith(
@@ -143,6 +238,32 @@ describe("governance API", () => {
     await deleteQAAlternative(scope, "qa/1", "alt/1", 10);
     expect(requestMock).toHaveBeenLastCalledWith(
       "/api/knowledge-bases/dataset%2Fa/qa/qa%2F1/alternatives/alt%2F1?expected_revision=10",
+      { method: "DELETE", headers, signal: undefined },
+    );
+
+    requestMock.mockResolvedValue({
+      id: "neg-1",
+      qa_id: "qa/1",
+      question: "How to bypass?",
+      created_by: "editor",
+      created_at: "2026-09-20T00:00:00Z",
+      qa_revision: 3,
+    } as QANegativeQuestionCreated);
+    await addQANegative(scope, "qa/1", { expected_revision: 3, question: "How to bypass?" });
+    expect(requestMock).toHaveBeenLastCalledWith(
+      "/api/knowledge-bases/dataset%2Fa/qa/qa%2F1/negative-questions",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ expected_revision: 3, question: "How to bypass?" }),
+        signal: undefined,
+      },
+    );
+
+    requestMock.mockResolvedValue(undefined);
+    await deleteQANegative(scope, "qa/1", "neg/1", 4);
+    expect(requestMock).toHaveBeenLastCalledWith(
+      "/api/knowledge-bases/dataset%2Fa/qa/qa%2F1/negative-questions/neg%2F1?expected_revision=4",
       { method: "DELETE", headers, signal: undefined },
     );
   });

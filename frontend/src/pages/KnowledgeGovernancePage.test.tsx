@@ -38,6 +38,8 @@ const datasetHook = {
 const qaHook = {
   status: "ready" as const, items: [qa], pageItems: [qa], page: 1, pageCount: 1, pageSize: 10, filters: {}, error: null, mutatingId: null,
   setPage: vi.fn(), setFilters: vi.fn(), refresh: vi.fn(async () => true), create: vi.fn(async () => true), update: vi.fn(async () => true), review: vi.fn(async () => true), expire: vi.fn(async () => true), restore: vi.fn(async () => true), addAlternative: vi.fn(async () => true), deleteAlternative: vi.fn(async () => true),
+  addNegative: vi.fn(async () => true), deleteNegative: vi.fn(async () => true),
+  importItems: vi.fn(async () => null), batchReview: vi.fn(async () => null), batchExpire: vi.fn(async () => null), batchRestore: vi.fn(async () => null), exportQA: vi.fn(async () => null),
 };
 const versionHook = {
   status: "ready" as const, documentId: "doc-a", versions: [version], error: null, creating: false, readOnly: false, truncated: false,

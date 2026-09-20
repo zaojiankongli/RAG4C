@@ -1,7 +1,42 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../../api/client";
-import { addQAAlternative, createQA, deleteQAAlternative, expireQA, fetchQAList, patchQA, restoreQA, reviewQA } from "../api/governanceApi";
-import { projectGovernanceError, type DatasetRevisionRequest, type DatasetStatus, type GovernanceErrorView, type GovernanceScope, type QAAlternativeCreate, type QACreate, type QAKnowledge, type QAListFilters, type QAReviewRequest, type QAUpdate } from "../model/governanceModel";
+import {
+  addQAAlternative,
+  addQANegative,
+  batchExpireQA,
+  batchRestoreQA,
+  batchReviewQA,
+  createQA,
+  deleteQAAlternative,
+  deleteQANegative,
+  expireQA,
+  exportQA,
+  fetchQAList,
+  importQA,
+  patchQA,
+  restoreQA,
+  reviewQA,
+} from "../api/governanceApi";
+import {
+  projectGovernanceError,
+  type DatasetRevisionRequest,
+  type DatasetStatus,
+  type GovernanceErrorView,
+  type GovernanceScope,
+  type QAAlternativeCreate,
+  type QABatchResult,
+  type QABatchReviewItem,
+  type QABatchRevisionItem,
+  type QACreate,
+  type QAExportFormat,
+  type QAImportRequest,
+  type QAImportResult,
+  type QAKnowledge,
+  type QAListFilters,
+  type QANegativeCreate,
+  type QAReviewRequest,
+  type QAUpdate,
+} from "../model/governanceModel";
 import type { GovernanceLoadStatus } from "./useDatasetGovernance";
 import { useStableGovernanceScope } from "./useStableGovernanceScope";
 const PAGE_SIZE=10; const aborted=(e:unknown)=>e instanceof ApiError&&e.kind==="aborted";
@@ -15,6 +50,8 @@ export function useQAGovernance(inputScope: GovernanceScope|null, online:boolean
  useEffect(()=>{loadRef.current?.abort();mutationRef.current?.abort();busyRef.current=false;setMutatingId(null);setItems([]);setItemsScopeKey("");setTruncated(false);setPageState(1);setError(null);void load();return()=>{loadRef.current?.abort();mutationRef.current?.abort();};},[key,online,readable,load]);
  const visibleItems=useMemo(()=>itemsScopeKey===key?items:[],[itemsScopeKey,key,items]); const pageCount=Math.max(1,Math.ceil(visibleItems.length/PAGE_SIZE)); useEffect(()=>setPageState(p=>Math.min(Math.max(1,p),pageCount)),[pageCount]); const pageItems=useMemo(()=>visibleItems.slice((page-1)*PAGE_SIZE,page*PAGE_SIZE),[visibleItems,page]);
  const mutate=useCallback(async(id:string,op:(s:GovernanceScope,signal:AbortSignal)=>Promise<unknown>)=>{const s=scope,k=key,e=epochRef.current;if(!s||!writable||online!==true||busyRef.current)return false;const c=new AbortController();mutationRef.current=c;busyRef.current=true;setMutatingId(id);setError(null);try{await op(s,c.signal);if(c.signal.aborted||!current(k,e))return false;return await load(false);}catch(x){if(c.signal.aborted||!current(k,e)||aborted(x))return false;const view=projectGovernanceError(x);setError(view);if(view.kind==="conflict")await load(true);return false;}finally{if(mutationRef.current===c)mutationRef.current=null;if(current(k,e)){busyRef.current=false;setMutatingId(null);}}},[current,key,load,online,scope,writable]);
+ const runBatch=useCallback(async<T,>(id:string,op:(s:GovernanceScope,signal:AbortSignal)=>Promise<T>):Promise<T|null>=>{const s=scope,k=key,e=epochRef.current;if(!s||!writable||online!==true||busyRef.current)return null;const c=new AbortController();mutationRef.current=c;busyRef.current=true;setMutatingId(id);setError(null);try{const result=await op(s,c.signal);if(c.signal.aborted||!current(k,e))return null;await load(false);return result;}catch(x){if(c.signal.aborted||!current(k,e)||aborted(x))return null;const view=projectGovernanceError(x);setError(view);if(view.kind==="conflict")await load(true);return null;}finally{if(mutationRef.current===c)mutationRef.current=null;if(current(k,e)){busyRef.current=false;setMutatingId(null);}}},[current,key,load,online,scope,writable]);
  const setFilters=useCallback((f:QAListFilters)=>{setPageState(1);setFilterState(f);},[]);
- return {status,items:visibleItems,pageItems,page,pageCount,pageSize:PAGE_SIZE,filters,error,mutatingId,truncated,readOnly:!writable,setPage:(p:number)=>setPageState(Math.max(1,p)),setFilters,refresh:()=>load(false),create:(p:QACreate)=>mutate("create",(s,signal)=>createQA(s,p,{signal})),update:(id:string,p:QAUpdate)=>mutate(id,(s,signal)=>patchQA(s,id,p,{signal})),review:(id:string,p:QAReviewRequest)=>mutate(id,(s,signal)=>reviewQA(s,id,p,{signal})),expire:(id:string,p:DatasetRevisionRequest)=>mutate(id,(s,signal)=>expireQA(s,id,p,{signal})),restore:(id:string,p:DatasetRevisionRequest)=>mutate(id,(s,signal)=>restoreQA(s,id,p,{signal})),addAlternative:(id:string,p:QAAlternativeCreate)=>mutate(id,(s,signal)=>addQAAlternative(s,id,p,{signal})),deleteAlternative:(id:string,a:string,r:number)=>mutate(id,(s,signal)=>deleteQAAlternative(s,id,a,r,{signal}))};
+ const exportFiltered=useCallback(async(format:QAExportFormat="json"):Promise<string|null>=>{const s=scope,k=key,e=epochRef.current;if(!s||!readable||online!==true)return null;try{const text=await exportQA(s,requestFilters,format);if(!current(k,e))return null;return text;}catch(x){if(aborted(x)||!current(k,e))return null;setError(projectGovernanceError(x));return null;}},[current,key,online,readable,requestFilters,scope]);
+ return {status,items:visibleItems,pageItems,page,pageCount,pageSize:PAGE_SIZE,filters,error,mutatingId,truncated,readOnly:!writable,setPage:(p:number)=>setPageState(Math.max(1,p)),setFilters,refresh:()=>load(false),create:(p:QACreate)=>mutate("create",(s,signal)=>createQA(s,p,{signal})),update:(id:string,p:QAUpdate)=>mutate(id,(s,signal)=>patchQA(s,id,p,{signal})),review:(id:string,p:QAReviewRequest)=>mutate(id,(s,signal)=>reviewQA(s,id,p,{signal})),expire:(id:string,p:DatasetRevisionRequest)=>mutate(id,(s,signal)=>expireQA(s,id,p,{signal})),restore:(id:string,p:DatasetRevisionRequest)=>mutate(id,(s,signal)=>restoreQA(s,id,p,{signal})),addAlternative:(id:string,p:QAAlternativeCreate)=>mutate(id,(s,signal)=>addQAAlternative(s,id,p,{signal})),deleteAlternative:(id:string,a:string,r:number)=>mutate(id,(s,signal)=>deleteQAAlternative(s,id,a,r,{signal})),addNegative:(id:string,p:QANegativeCreate)=>mutate(id,(s,signal)=>addQANegative(s,id,p,{signal})),deleteNegative:(id:string,negId:string,r:number)=>mutate(id,(s,signal)=>deleteQANegative(s,id,negId,r,{signal})),importItems:(payload:QAImportRequest)=>runBatch<QAImportResult>("import",(s,signal)=>importQA(s,payload,{signal})),batchReview:(items:QABatchReviewItem[])=>runBatch<QABatchResult>("batch-review",(s,signal)=>batchReviewQA(s,items,{signal})),batchExpire:(items:QABatchRevisionItem[])=>runBatch<QABatchResult>("batch-expire",(s,signal)=>batchExpireQA(s,items,{signal})),batchRestore:(items:QABatchRevisionItem[])=>runBatch<QABatchResult>("batch-restore",(s,signal)=>batchRestoreQA(s,items,{signal})),exportQA:exportFiltered};
 }

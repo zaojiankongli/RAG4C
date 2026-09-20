@@ -18,6 +18,7 @@ import RunHistorySidebar from "../components/RunHistorySidebar";
 import RunKnowledgePanel from "../components/RunKnowledgePanel";
 import RunOpsBanners from "../components/RunOpsBanners";
 import RunTimeline from "../components/RunTimeline";
+import AnswerEvidencePanel from "../answer-evidence/components/AnswerEvidencePanel";
 import { routeLabel } from "../strategy/routes";
 import { useRunMonitor } from "../run/RunMonitorContext";
 import { parseRunLocation, runViewUrl, type RunViewTab } from "../run/runViewState";
@@ -650,6 +651,9 @@ export default function VisualizePage() {
               </aside>
             ) : null}
           </div>
+          <section className="run-answer-evidence" aria-label="答案证据链区块">
+            <AnswerEvidencePanel runId={history.selectedRunId ?? undefined} />
+          </section>
           <Drawer
             className="run-inspector-drawer"
             title="节点详情"

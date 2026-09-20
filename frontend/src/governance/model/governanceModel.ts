@@ -4,7 +4,7 @@ import type { KnowledgeWorkspaceScope } from "../../knowledge/workspaceScope";
 export type JsonObject = Record<string, unknown>;
 export type DatasetStatus = "active" | "archived" | "disabled";
 export type DatasetVisibility = "private" | "tenant" | "public";
-export type QAOrigin = "manual" | "automatic";
+export type QAOrigin = "manual" | "automatic" | "import";
 export type QAReviewStatus = "pending" | "approved" | "rejected";
 export type QAReviewDecision = "approved" | "rejected";
 export type QALifecycleState =
@@ -103,6 +103,18 @@ export interface QAAlternativeCreated extends QAAlternative {
   qa_revision: number;
 }
 
+export interface QANegativeQuestion {
+  id: string;
+  qa_id: string;
+  question: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface QANegativeQuestionCreated extends QANegativeQuestion {
+  qa_revision: number;
+}
+
 export interface QAKnowledge {
   id: string;
   tenant_id: string;
@@ -118,6 +130,8 @@ export interface QAKnowledge {
   expires_at: string | null;
   source_document_id: string | null;
   source_uri: string;
+  content_hash?: string | null;
+  import_batch_id?: string | null;
   metadata: JsonObject;
   created_by: string;
   reviewed_by: string | null;
@@ -125,6 +139,7 @@ export interface QAKnowledge {
   created_at: string;
   updated_at: string;
   alternatives: QAAlternative[];
+  negative_questions?: QANegativeQuestion[];
 }
 
 export interface QAListResponse {
@@ -167,6 +182,98 @@ export interface QAReviewRequest extends DatasetRevisionRequest {
 
 export interface QAAlternativeCreate extends DatasetRevisionRequest {
   question: string;
+}
+
+export interface QANegativeCreate extends DatasetRevisionRequest {
+  question: string;
+}
+
+export interface QAImportItem {
+  question: string;
+  answer: string;
+  alternatives?: string[];
+  negative_questions?: string[];
+  source_uri?: string;
+  metadata?: JsonObject;
+}
+
+export interface QAImportRequest {
+  items: QAImportItem[];
+  origin?: QAOrigin;
+}
+
+export interface QAImportCreated {
+  id: string;
+  revision: number;
+  question: string;
+  content_hash?: string | null;
+}
+
+export interface QAImportSkipped {
+  index: number;
+  content_hash?: string | null;
+  reason: string;
+  qa_id?: string;
+}
+
+export interface QAImportFailed {
+  index: number;
+  reason: string;
+  question?: string;
+}
+
+export interface QAImportResult {
+  batch_id: string;
+  created: QAImportCreated[];
+  skipped_duplicate: QAImportSkipped[];
+  failed: QAImportFailed[];
+  counts: {
+    created: number;
+    skipped_duplicate: number;
+    failed: number;
+  };
+}
+
+export interface QABatchReviewItem {
+  qa_id: string;
+  expected_revision: number;
+  decision: QAReviewDecision;
+}
+
+export interface QABatchRevisionItem {
+  qa_id: string;
+  expected_revision: number;
+}
+
+export interface QABatchSucceeded {
+  qa_id: string;
+  revision: number;
+  review_status: QAReviewStatus;
+  lifecycle_state: QALifecycleState;
+}
+
+export interface QABatchFailed {
+  index: number;
+  qa_id: string;
+  reason: string;
+  code?: string;
+}
+
+export interface QABatchResult {
+  action: string;
+  succeeded: QABatchSucceeded[];
+  failed: QABatchFailed[];
+  counts: {
+    succeeded: number;
+    failed: number;
+  };
+}
+
+export type QAExportFormat = "json" | "csv";
+
+export interface QAImportParseResult {
+  items: QAImportItem[];
+  error?: string;
 }
 
 export interface DocumentVersion {
@@ -212,6 +319,12 @@ export const datasetStatusPresentation: Record<
   active: { label: "运行中", theme: "success" },
   archived: { label: "已归档", theme: "warning" },
   disabled: { label: "已停用", theme: "danger" },
+};
+
+export const originPresentation: Record<QAOrigin, { label: string }> = {
+  manual: { label: "人工维护" },
+  automatic: { label: "自动生成" },
+  import: { label: "导入" },
 };
 
 export const reviewStatusPresentation: Record<QAReviewStatus, { label: string; theme: string }> = {
@@ -333,6 +446,141 @@ export function validateVersionDates(effectiveFrom:string, expiresAt:string, pur
   if(purge && Number.isNaN(purgeTime)) return "清理时间格式无效。";
   if(purge && expires && purgeTime <= Date.parse(expires)) return "清理时间必须晚于过期时间。";
   return null;
+}
+
+function splitPipeList(value: string | undefined | null): string[] {
+  if (!value) return [];
+  return String(value)
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function normalizeImportRecord(raw: unknown, index: number): QAImportItem | { error: string } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { error: `第 ${index + 1} 条不是对象` };
+  }
+  const record = raw as Record<string, unknown>;
+  const question = String(record.question ?? "").trim();
+  const answer = String(record.answer ?? "").trim();
+  if (!question || !answer) {
+    return { error: `第 ${index + 1} 条缺少 question 或 answer` };
+  }
+  const rawAlternatives = record.alternatives;
+  const rawNegatives = record.negative_questions ?? record.negativeQuestions;
+  const alternatives = Array.isArray(rawAlternatives)
+    ? rawAlternatives.map((v) => String(v).trim()).filter(Boolean)
+    : splitPipeList(rawAlternatives == null ? "" : String(rawAlternatives));
+  const negativeQuestions = Array.isArray(rawNegatives)
+    ? rawNegatives.map((v) => String(v).trim()).filter(Boolean)
+    : splitPipeList(rawNegatives == null ? "" : String(rawNegatives));
+  const sourceUri =
+    record.source_uri != null
+      ? String(record.source_uri).trim()
+      : record.sourceUri != null
+        ? String(record.sourceUri).trim()
+        : "";
+  const metadata =
+    record.metadata && typeof record.metadata === "object" && !Array.isArray(record.metadata)
+      ? (record.metadata as JsonObject)
+      : {};
+  return {
+    question,
+    answer,
+    alternatives,
+    negative_questions: negativeQuestions,
+    source_uri: sourceUri,
+    metadata,
+  };
+}
+
+function parseCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          current += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      cells.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current);
+  return cells.map((cell) => cell.trim());
+}
+
+/**
+ * Parse operator paste/upload into import items.
+ * CSV: question,answer[,alternatives[,negative_questions[,source_uri]]]
+ * with pipe-separated alternatives/negative lists.
+ * JSON: array of items or `{ items: [...] }`.
+ */
+export function parseQAImportText(text: string): QAImportParseResult {
+  const trimmed = text.trim();
+  if (!trimmed) return { items: [], error: "请粘贴 CSV/JSON，或选择导入文件。" };
+
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return { items: [], error: "JSON 解析失败，请检查格式。" };
+    }
+    const list = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === "object" && Array.isArray((parsed as { items?: unknown }).items)
+        ? (parsed as { items: unknown[] }).items
+        : null;
+    if (!list) return { items: [], error: "JSON 必须是数组，或包含 items 数组的对象。" };
+    const items: QAImportItem[] = [];
+    for (let i = 0; i < list.length; i += 1) {
+      const normalized = normalizeImportRecord(list[i], i);
+      if ("error" in normalized) return { items: [], error: normalized.error };
+      items.push(normalized);
+    }
+    if (!items.length) return { items: [], error: "导入内容为空。" };
+    return { items };
+  }
+
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return { items: [], error: "导入内容为空。" };
+  let startIndex = 0;
+  const firstCells = parseCsvLine(lines[0]).map((c) => c.toLowerCase());
+  if (firstCells[0] === "question" && firstCells[1] === "answer") startIndex = 1;
+  const items: QAImportItem[] = [];
+  for (let i = startIndex; i < lines.length; i += 1) {
+    const cells = parseCsvLine(lines[i]);
+    const record = {
+      question: cells[0] ?? "",
+      answer: cells[1] ?? "",
+      alternatives: cells[2] ?? "",
+      negative_questions: cells[3] ?? "",
+      source_uri: cells[4] ?? "",
+    };
+    const normalized = normalizeImportRecord(record, i);
+    if ("error" in normalized) return { items: [], error: normalized.error };
+    items.push(normalized);
+  }
+  if (!items.length) return { items: [], error: "导入内容为空。" };
+  return { items };
 }
 
 export type GovernanceErrorKind =

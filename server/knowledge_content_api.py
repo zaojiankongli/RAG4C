@@ -18,7 +18,7 @@ from core.knowledge_content import (
     KnowledgeContentRepository,
 )
 from core.knowledge_permissions import KNOWLEDGE_MANAGE, KNOWLEDGE_READ, KNOWLEDGE_WRITE
-from models.orm import QAAlternativeQuestion, QAKnowledge
+from models.orm import QAAlternativeQuestion, QAKnowledge, QANegativeQuestion
 from server.knowledge_auth import (
     KnowledgeActor,
     require_knowledge_permission,
@@ -48,6 +48,7 @@ class StrictModel(BaseModel):
 class QAOrigin(StrEnum):
     manual = "manual"
     automatic = "automatic"
+    qa_import = "import"
 
 
 class ReviewStatus(StrEnum):
@@ -119,6 +120,39 @@ class QAAlternativeCreate(QARevisionRequest):
     question: str = Field(min_length=1, max_length=4096)
 
 
+class QAImportItem(StrictModel):
+    question: str = Field(min_length=1, max_length=4096)
+    answer: str = Field(min_length=1, max_length=65535)
+    alternatives: list[str] = Field(default_factory=list)
+    negative_questions: list[str] = Field(default_factory=list)
+    source_uri: str = Field(default="", max_length=1024)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class QAImportRequest(StrictModel):
+    items: list[QAImportItem] = Field(min_length=1, max_length=200)
+    origin: QAOrigin = QAOrigin.qa_import
+
+
+class QABatchItem(StrictModel):
+    qa_id: str = Field(min_length=1, max_length=64)
+    expected_revision: int = Field(ge=1, strict=True)
+    decision: ReviewDecision | None = None
+
+
+class QABatchReviewRequest(StrictModel):
+    items: list[QABatchItem] = Field(min_length=1, max_length=100)
+
+
+class QARevisionRequestItem(StrictModel):
+    qa_id: str = Field(min_length=1, max_length=64)
+    expected_revision: int = Field(ge=1, strict=True)
+
+
+class QABatchLifecycleRequest(StrictModel):
+    items: list[QARevisionRequestItem] = Field(min_length=1, max_length=100)
+
+
 def _repository() -> KnowledgeContentRepository:
     return KnowledgeContentRepository(catalog.get_engine())
 
@@ -171,7 +205,21 @@ def _alternative_payload(alternative: Any) -> dict[str, Any]:
     }
 
 
-def _qa_payload(qa: Any, alternatives: list[Any] | None = None) -> dict[str, Any]:
+def _negative_payload(negative: Any) -> dict[str, Any]:
+    return {
+        "id": negative.id,
+        "qa_id": negative.qa_id,
+        "question": negative.question,
+        "created_by": negative.created_by,
+        "created_at": negative.created_at,
+    }
+
+
+def _qa_payload(
+    qa: Any,
+    alternatives: list[Any] | None = None,
+    negative_questions: list[Any] | None = None,
+) -> dict[str, Any]:
     return {
         "id": qa.id,
         "tenant_id": qa.tenant_id,
@@ -187,6 +235,8 @@ def _qa_payload(qa: Any, alternatives: list[Any] | None = None) -> dict[str, Any
         "expires_at": qa.expires_at,
         "source_document_id": qa.source_document_id,
         "source_uri": qa.source_uri,
+        "content_hash": getattr(qa, "content_hash", None),
+        "import_batch_id": getattr(qa, "import_batch_id", None),
         "metadata": qa.metadata_json or {},
         "created_by": qa.created_by,
         "reviewed_by": qa.reviewed_by,
@@ -194,6 +244,7 @@ def _qa_payload(qa: Any, alternatives: list[Any] | None = None) -> dict[str, Any
         "created_at": qa.created_at,
         "updated_at": qa.updated_at,
         "alternatives": [_alternative_payload(item) for item in (alternatives or [])],
+        "negative_questions": [_negative_payload(item) for item in (negative_questions or [])],
     }
 
 
@@ -210,7 +261,18 @@ def _qa_with_alternatives(repository: KnowledgeContentRepository, qa: Any) -> di
                 .order_by(QAAlternativeQuestion.created_at, QAAlternativeQuestion.id)
             )
         )
-    return _qa_payload(qa, alternatives)
+        negatives = list(
+            session.scalars(
+                select(QANegativeQuestion)
+                .where(
+                    QANegativeQuestion.tenant_id == qa.tenant_id,
+                    QANegativeQuestion.dataset_id == qa.dataset_id,
+                    QANegativeQuestion.qa_id == qa.id,
+                )
+                .order_by(QANegativeQuestion.created_at, QANegativeQuestion.id)
+            )
+        )
+    return _qa_payload(qa, alternatives, negatives)
 
 
 @router.get("/documents/{document_id}/versions")
@@ -312,11 +374,31 @@ def list_qa(
             if qa_ids
             else []
         )
+        negatives = (
+            list(
+                session.scalars(
+                    select(QANegativeQuestion)
+                    .where(
+                        QANegativeQuestion.tenant_id == actor.tenant_id,
+                        QANegativeQuestion.dataset_id == dataset_id,
+                        QANegativeQuestion.qa_id.in_(qa_ids),
+                    )
+                    .order_by(QANegativeQuestion.created_at, QANegativeQuestion.id)
+                )
+            )
+            if qa_ids
+            else []
+        )
     grouped: dict[str, list[Any]] = {qa_id: [] for qa_id in qa_ids}
     for alternative in alternatives:
         grouped[alternative.qa_id].append(alternative)
+    grouped_negatives: dict[str, list[Any]] = {qa_id: [] for qa_id in qa_ids}
+    for negative in negatives:
+        grouped_negatives[negative.qa_id].append(negative)
     return {
-        "items": [_qa_payload(item, grouped[item.id]) for item in rows],
+        "items": [
+            _qa_payload(item, grouped[item.id], grouped_negatives[item.id]) for item in rows
+        ],
         "count": len(rows),
     }
 
@@ -334,6 +416,157 @@ def create_qa(dataset_id: DatasetId, body: QACreate, actor: WriteActor) -> dict[
     except Exception as exc:
         _raise_content(exc)
     return _qa_with_alternatives(repository, qa)
+
+
+@router.post("/qa/import")
+def import_qa(
+    dataset_id: DatasetId,
+    body: QAImportRequest,
+    actor: WriteActor,
+) -> dict[str, Any]:
+    try:
+        result = _repository().import_qa_batch(
+            actor.tenant_id,
+            dataset_id,
+            items=[item.model_dump() for item in body.items],
+            origin=body.origin.value,
+            audit=actor.to_audit_context(),
+        )
+    except Exception as exc:
+        _raise_content(exc)
+    return result
+
+
+@router.post("/qa/batch/review")
+def batch_review_qa(
+    dataset_id: DatasetId,
+    body: QABatchReviewRequest,
+    actor: WriteActor,
+) -> dict[str, Any]:
+    items = []
+    for item in body.items:
+        if item.decision is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "knowledge_content_invalid",
+                    "message": "batch review item requires decision",
+                },
+            )
+        items.append(
+            {
+                "qa_id": item.qa_id,
+                "expected_revision": item.expected_revision,
+                "decision": item.decision.value,
+            }
+        )
+    try:
+        return _repository().batch_review_qa(
+            actor.tenant_id,
+            dataset_id,
+            items=items,
+            audit=actor.to_audit_context(),
+            action="review",
+        )
+    except Exception as exc:
+        _raise_content(exc)
+
+
+@router.post("/qa/batch/expire")
+def batch_expire_qa(
+    dataset_id: DatasetId,
+    body: QABatchLifecycleRequest,
+    actor: ManageActor,
+) -> dict[str, Any]:
+    try:
+        return _repository().batch_review_qa(
+            actor.tenant_id,
+            dataset_id,
+            items=[item.model_dump() for item in body.items],
+            audit=actor.to_audit_context(),
+            action="expire",
+        )
+    except Exception as exc:
+        _raise_content(exc)
+
+
+@router.post("/qa/batch/restore")
+def batch_restore_qa(
+    dataset_id: DatasetId,
+    body: QABatchLifecycleRequest,
+    actor: ManageActor,
+) -> dict[str, Any]:
+    try:
+        return _repository().batch_review_qa(
+            actor.tenant_id,
+            dataset_id,
+            items=[item.model_dump() for item in body.items],
+            audit=actor.to_audit_context(),
+            action="restore",
+        )
+    except Exception as exc:
+        _raise_content(exc)
+
+
+@router.get("/qa/export")
+def export_qa(
+    dataset_id: DatasetId,
+    actor: ReadActor,
+    review_status: Annotated[ReviewStatus | None, Query()] = None,
+    lifecycle_state: Annotated[QALifecycle | None, Query()] = None,
+    origin: Annotated[QAOrigin | None, Query()] = None,
+    format: Annotated[str, Query(pattern=r"^(json|csv)$")] = "json",
+    limit: Annotated[int, Query(ge=1, le=500)] = 500,
+) -> Any:
+    payload = list_qa(
+        dataset_id=dataset_id,
+        actor=actor,
+        review_status=review_status,
+        lifecycle_state=lifecycle_state,
+        origin=origin,
+        limit=limit,
+    )
+    items = payload.get("items") or []
+    if format == "json":
+        return payload
+    headers = [
+        "id",
+        "revision",
+        "origin",
+        "review_status",
+        "lifecycle_state",
+        "retrieval_enabled",
+        "question",
+        "answer",
+        "source_uri",
+        "content_hash",
+        "import_batch_id",
+        "alternatives",
+        "negative_questions",
+    ]
+    lines = [",".join(headers)]
+    for item in items:
+        alts = "|".join(a.get("question") or "" for a in item.get("alternatives") or [])
+        negs = "|".join(
+            n.get("question") or "" for n in item.get("negative_questions") or []
+        )
+        row = [
+            item.get("id") or "",
+            str(item.get("revision") or ""),
+            item.get("origin") or "",
+            item.get("review_status") or "",
+            item.get("lifecycle_state") or "",
+            "1" if item.get("retrieval_enabled") else "0",
+            (item.get("question") or "").replace("\n", " ").replace(",", "，"),
+            (item.get("answer") or "").replace("\n", " ").replace(",", "，"),
+            item.get("source_uri") or "",
+            item.get("content_hash") or "",
+            item.get("import_batch_id") or "",
+            alts.replace(",", "，"),
+            negs.replace(",", "，"),
+        ]
+        lines.append(",".join(row))
+    return Response(content="\n".join(lines) + "\n", media_type="text/csv; charset=utf-8")
 
 
 @router.patch("/qa/{qa_id}")
@@ -488,6 +721,61 @@ def remove_alternative(
             dataset_id,
             qa_id,
             alternative_id,
+            expected_revision=int(expected_revision),
+            audit=actor.to_audit_context(),
+        )
+    except Exception as exc:
+        _raise_content(exc)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/qa/{qa_id}/negative-questions", status_code=status.HTTP_201_CREATED)
+def add_negative_question(
+    dataset_id: DatasetId,
+    qa_id: QAId,
+    body: QAAlternativeCreate,
+    actor: WriteActor,
+) -> dict[str, Any]:
+    try:
+        repository = _repository()
+        negative = repository.add_negative_question(
+            actor.tenant_id,
+            dataset_id,
+            qa_id,
+            expected_revision=body.expected_revision,
+            question=body.question,
+            audit=actor.to_audit_context(),
+        )
+        with Session(repository.engine) as session:
+            qa_revision = session.scalar(
+                select(QAKnowledge.revision).where(
+                    QAKnowledge.id == qa_id,
+                    QAKnowledge.tenant_id == actor.tenant_id,
+                    QAKnowledge.dataset_id == dataset_id,
+                )
+            )
+    except Exception as exc:
+        _raise_content(exc)
+    return {**_negative_payload(negative), "qa_revision": qa_revision}
+
+
+@router.delete(
+    "/qa/{qa_id}/negative-questions/{negative_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_negative_question(
+    dataset_id: DatasetId,
+    qa_id: QAId,
+    negative_id: AlternativeId,
+    actor: WriteActor,
+    expected_revision: Annotated[str, Query(min_length=1, max_length=10, pattern=r"^[1-9][0-9]*$")],
+) -> Response:
+    try:
+        _repository().remove_negative_question(
+            actor.tenant_id,
+            dataset_id,
+            qa_id,
+            negative_id,
             expected_revision=int(expected_revision),
             audit=actor.to_audit_context(),
         )

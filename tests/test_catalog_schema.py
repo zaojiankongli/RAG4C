@@ -134,6 +134,10 @@ CURRENT_CATALOG_TABLES = BASELINE_CATALOG_TABLES | {
     "tenant_knowledge_review_cases",
     "tenant_knowledge_review_events",
     "tenant_knowledge_improvement_candidates",
+    "qa_negative_questions",
+    "storage_backends",
+    "tenant_knowledge_answer_facts",
+    "tenant_knowledge_answer_evidence_refs",
 }
 
 

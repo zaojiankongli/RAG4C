@@ -22,10 +22,11 @@ from models.orm import (
     KnowledgeAuditEvent,
     QAAlternativeQuestion,
     QAKnowledge,
+    QANegativeQuestion,
 )
 
 _REVIEW_DECISIONS = frozenset({"approved", "rejected"})
-_QA_ORIGINS = frozenset({"manual", "automatic"})
+_QA_ORIGINS = frozenset({"manual", "automatic", "import"})
 _WHITESPACE = re.compile(r"\s+")
 _UNSET = object()
 
@@ -78,6 +79,12 @@ def _question_normal_form(value: str) -> tuple[str, str]:
     return display, hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def qa_content_hash(question: str, answer: str) -> str:
+    q = _WHITESPACE.sub(" ", unicodedata.normalize("NFKC", question)).strip().casefold()
+    a = _WHITESPACE.sub(" ", unicodedata.normalize("NFKC", answer)).strip().casefold()
+    return hashlib.sha256(f"{q}\n{a}".encode("utf-8")).hexdigest()
+
+
 def _validate_window(effective_from: datetime | None, expires_at: datetime | None) -> None:
     if effective_from is not None and expires_at is not None and effective_from >= expires_at:
         raise ValueError("effective_from must be before expires_at")
@@ -116,6 +123,8 @@ def _qa_snapshot(qa: QAKnowledge) -> dict[str, Any]:
         "expires_at": None if qa.expires_at is None else qa.expires_at.isoformat(),
         "source_document_id": qa.source_document_id,
         "source_uri": qa.source_uri,
+        "content_hash": qa.content_hash,
+        "import_batch_id": qa.import_batch_id,
         "metadata": qa.metadata_json,
         "reviewed_by": qa.reviewed_by,
         "reviewed_at": None if qa.reviewed_at is None else qa.reviewed_at.isoformat(),
@@ -444,7 +453,7 @@ class KnowledgeContentRepository:
         display_answer = _required_text(answer, field="answer")
         qa_origin = _clean(origin, 24, field="origin").casefold()
         if qa_origin not in _QA_ORIGINS:
-            raise ValueError("origin must be manual or automatic")
+            raise ValueError("origin must be manual, automatic, or import")
         effective = _naive_utc(effective_from)
         expiry = _naive_utc(expires_at)
         _validate_window(effective, expiry)
@@ -467,6 +476,8 @@ class KnowledgeContentRepository:
                 expires_at=expiry,
                 source_document_id=source_document_id,
                 source_uri=_clean(source_uri, 1024, field="source_uri"),
+                content_hash=qa_content_hash(display_question, display_answer),
+                import_batch_id=None,
                 metadata_json=dict(metadata or {}),
                 created_by=_clean(audit.actor_id, 64, field="actor_id"),
             )
@@ -558,10 +569,16 @@ class KnowledgeContentRepository:
             before = _qa_snapshot(qa)
             before_serving = self._qa_serving_signature(qa)
             values = self._review_reset_values()
+            next_question = qa.question
+            next_answer = qa.answer
             if question is not _UNSET:
-                values[QAKnowledge.question] = _question_normal_form(str(question))[0]
+                next_question = _question_normal_form(str(question))[0]
+                values[QAKnowledge.question] = next_question
             if answer is not _UNSET:
-                values[QAKnowledge.answer] = _required_text(str(answer), field="answer")
+                next_answer = _required_text(str(answer), field="answer")
+                values[QAKnowledge.answer] = next_answer
+            if question is not _UNSET or answer is not _UNSET:
+                values[QAKnowledge.content_hash] = qa_content_hash(next_question, next_answer)
             if source_document_id is not _UNSET:
                 if source_document_id is not None:
                     self._document(
@@ -870,6 +887,357 @@ class KnowledgeContentRepository:
             )
             self._commit(session, "QA restore failed")
             return updated
+
+    def import_qa_batch(
+        self,
+        tenant_id: str,
+        dataset_id: str,
+        *,
+        items: list[dict[str, Any]],
+        origin: str = "import",
+        audit: AuditContext,
+        batch_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create QA rows with content-hash dedup; skip existing hash matches."""
+        qa_origin = _clean(origin, 24, field="origin").casefold()
+        if qa_origin not in _QA_ORIGINS:
+            raise ValueError("origin must be manual, automatic, or import")
+        if not items:
+            raise ValueError("import items must not be empty")
+        if len(items) > 200:
+            raise ValueError("import accepts at most 200 items")
+        import_batch = batch_id or self._new_id("qa-import")
+        created: list[QAKnowledge] = []
+        skipped: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        seen_hashes: set[str] = set()
+        with Session(self.engine, expire_on_commit=False) as session:
+            self._dataset(session, tenant_id, dataset_id)
+            for index, raw in enumerate(items):
+                item = dict(raw or {})
+                try:
+                    question = _required_text(item.get("question"), field="question")
+                    answer = _required_text(item.get("answer"), field="answer")
+                    content_hash = qa_content_hash(question, answer)
+                    if content_hash in seen_hashes:
+                        skipped.append(
+                            {
+                                "index": index,
+                                "content_hash": content_hash,
+                                "reason": "duplicate_in_batch",
+                            }
+                        )
+                        continue
+                    existing = session.scalar(
+                        select(QAKnowledge.id).where(
+                            QAKnowledge.tenant_id == tenant_id,
+                            QAKnowledge.dataset_id == dataset_id,
+                            QAKnowledge.content_hash == content_hash,
+                        )
+                    )
+                    if existing is not None:
+                        seen_hashes.add(content_hash)
+                        skipped.append(
+                            {
+                                "index": index,
+                                "content_hash": content_hash,
+                                "reason": "duplicate_existing",
+                                "qa_id": existing,
+                            }
+                        )
+                        continue
+                    display_question, _ = _question_normal_form(question)
+                    with session.begin_nested():
+                        qa = QAKnowledge(
+                            id=self._new_id("qa"),
+                            tenant_id=tenant_id,
+                            dataset_id=dataset_id,
+                            revision=1,
+                            question=display_question,
+                            answer=answer,
+                            origin=qa_origin,
+                            review_status="pending",
+                            lifecycle_state="active",
+                            retrieval_enabled=False,
+                            source_uri=_clean(
+                                item.get("source_uri", ""), 1024, field="source_uri"
+                            ),
+                            content_hash=content_hash,
+                            import_batch_id=import_batch,
+                            metadata_json=dict(item.get("metadata") or {}),
+                            created_by=_clean(audit.actor_id, 64, field="actor_id"),
+                        )
+                        session.add(qa)
+                        alternatives = [
+                            _question_normal_form(str(v))[0]
+                            for v in (item.get("alternatives") or [])
+                            if str(v or "").strip()
+                        ]
+                        negatives = [
+                            _question_normal_form(str(v))
+                            for v in (item.get("negative_questions") or [])
+                            if str(v or "").strip()
+                        ]
+                        session.flush()
+                        for alt_question in alternatives:
+                            _, alt_hash = _question_normal_form(alt_question)
+                            session.add(
+                                QAAlternativeQuestion(
+                                    id=self._new_id("qa-alternative"),
+                                    tenant_id=tenant_id,
+                                    dataset_id=dataset_id,
+                                    qa_id=qa.id,
+                                    question=alt_question,
+                                    normalized_hash=alt_hash,
+                                    created_by=_clean(audit.actor_id, 64, field="actor_id"),
+                                )
+                            )
+                        for neg_display, neg_hash in negatives:
+                            session.add(
+                                QANegativeQuestion(
+                                    id=self._new_id("qa-negative"),
+                                    tenant_id=tenant_id,
+                                    dataset_id=dataset_id,
+                                    qa_id=qa.id,
+                                    question=neg_display,
+                                    normalized_hash=neg_hash,
+                                    created_by=_clean(audit.actor_id, 64, field="actor_id"),
+                                )
+                            )
+                    seen_hashes.add(content_hash)
+                    created.append(qa)
+                    self._event(
+                        session,
+                        tenant_id=tenant_id,
+                        dataset_id=dataset_id,
+                        audit=audit,
+                        action="qa.import.create",
+                        resource_type="qa_knowledge",
+                        resource_id=qa.id,
+                        after=_qa_snapshot(qa),
+                    )
+                except Exception as exc:  # noqa: BLE001 - per-item isolation
+                    failed.append(
+                        {
+                            "index": index,
+                            "reason": str(exc),
+                            "question": str(item.get("question") or "")[:120],
+                        }
+                    )
+            self._commit(session, "QA import failed")
+            return {
+                "batch_id": import_batch,
+                "created": [
+                    {
+                        "id": qa.id,
+                        "revision": qa.revision,
+                        "question": qa.question,
+                        "content_hash": qa.content_hash,
+                    }
+                    for qa in created
+                ],
+                "skipped_duplicate": skipped,
+                "failed": failed,
+                "counts": {
+                    "created": len(created),
+                    "skipped_duplicate": len(skipped),
+                    "failed": len(failed),
+                },
+            }
+
+    def batch_review_qa(
+        self,
+        tenant_id: str,
+        dataset_id: str,
+        *,
+        items: list[dict[str, Any]],
+        audit: AuditContext,
+        action: str = "review",
+    ) -> dict[str, Any]:
+        if not items:
+            raise ValueError("batch items must not be empty")
+        if len(items) > 100:
+            raise ValueError("batch accepts at most 100 items")
+        succeeded: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        for index, raw in enumerate(items):
+            item = dict(raw or {})
+            qa_id = str(item.get("qa_id") or "")
+            try:
+                expected_revision = int(item.get("expected_revision") or 0)
+                if action == "review":
+                    decision = _clean(item.get("decision"), 24, field="decision").casefold()
+                    result = self.review_qa(
+                        tenant_id,
+                        dataset_id,
+                        qa_id,
+                        expected_revision=expected_revision,
+                        decision=decision,
+                        audit=audit,
+                    )
+                elif action == "expire":
+                    result = self.expire_qa(
+                        tenant_id,
+                        dataset_id,
+                        qa_id,
+                        expected_revision=expected_revision,
+                        audit=audit,
+                    )
+                elif action == "restore":
+                    result = self.restore_qa(
+                        tenant_id,
+                        dataset_id,
+                        qa_id,
+                        expected_revision=expected_revision,
+                        audit=audit,
+                    )
+                else:
+                    raise ValueError(f"unsupported batch action: {action}")
+                succeeded.append(
+                    {
+                        "qa_id": result.id,
+                        "revision": result.revision,
+                        "review_status": result.review_status,
+                        "lifecycle_state": result.lifecycle_state,
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001 - per-item isolation
+                failed.append(
+                    {
+                        "index": index,
+                        "qa_id": qa_id,
+                        "reason": str(exc),
+                        "code": type(exc).__name__,
+                    }
+                )
+        return {
+            "action": action,
+            "succeeded": succeeded,
+            "failed": failed,
+            "counts": {"succeeded": len(succeeded), "failed": len(failed)},
+        }
+
+    def add_negative_question(
+        self,
+        tenant_id: str,
+        dataset_id: str,
+        qa_id: str,
+        *,
+        expected_revision: int,
+        question: str,
+        audit: AuditContext,
+    ) -> QANegativeQuestion:
+        display, normalized_hash = _question_normal_form(question)
+        with Session(self.engine, expire_on_commit=False) as session:
+            qa = self._qa(session, tenant_id, dataset_id, qa_id)
+            before = _qa_snapshot(qa)
+            before_serving = self._qa_serving_signature(qa)
+            updated = self._cas_qa(
+                session,
+                tenant_id=tenant_id,
+                dataset_id=dataset_id,
+                qa_id=qa_id,
+                expected_revision=expected_revision,
+                values=self._review_reset_values(),
+            )
+            existing = session.scalar(
+                select(QANegativeQuestion.id).where(
+                    QANegativeQuestion.tenant_id == tenant_id,
+                    QANegativeQuestion.dataset_id == dataset_id,
+                    QANegativeQuestion.qa_id == qa_id,
+                    QANegativeQuestion.normalized_hash == normalized_hash,
+                )
+            )
+            if existing is not None:
+                session.rollback()
+                raise ContentConflict("negative question already exists")
+            negative = QANegativeQuestion(
+                id=self._new_id("qa-negative"),
+                tenant_id=tenant_id,
+                dataset_id=dataset_id,
+                qa_id=updated.id,
+                question=display,
+                normalized_hash=normalized_hash,
+                created_by=_clean(audit.actor_id, 64, field="actor_id"),
+            )
+            session.add(negative)
+            if self._qa_serving_signature(updated) != before_serving:
+                self._bump_serving_generation(session, tenant_id, dataset_id)
+            self._event(
+                session,
+                tenant_id=tenant_id,
+                dataset_id=dataset_id,
+                audit=audit,
+                action="qa_negative.add",
+                resource_type="qa_knowledge",
+                resource_id=updated.id,
+                before=before,
+                after={
+                    **_qa_snapshot(updated),
+                    "negative_question": {
+                        "id": negative.id,
+                        "question": negative.question,
+                        "normalized_hash": negative.normalized_hash,
+                    },
+                },
+            )
+            self._commit(session, "negative question already exists")
+            return negative
+
+    def remove_negative_question(
+        self,
+        tenant_id: str,
+        dataset_id: str,
+        qa_id: str,
+        negative_id: str,
+        *,
+        expected_revision: int,
+        audit: AuditContext,
+    ) -> None:
+        with Session(self.engine, expire_on_commit=False) as session:
+            qa = self._qa(session, tenant_id, dataset_id, qa_id)
+            negative = session.scalar(
+                select(QANegativeQuestion).where(
+                    QANegativeQuestion.id == negative_id,
+                    QANegativeQuestion.tenant_id == tenant_id,
+                    QANegativeQuestion.dataset_id == dataset_id,
+                    QANegativeQuestion.qa_id == qa.id,
+                )
+            )
+            if negative is None:
+                raise ContentNotFound("negative question does not exist in QA scope")
+            before = {
+                **_qa_snapshot(qa),
+                "negative_question": {
+                    "id": negative.id,
+                    "question": negative.question,
+                    "normalized_hash": negative.normalized_hash,
+                },
+            }
+            before_serving = self._qa_serving_signature(qa)
+            updated = self._cas_qa(
+                session,
+                tenant_id=tenant_id,
+                dataset_id=dataset_id,
+                qa_id=qa_id,
+                expected_revision=expected_revision,
+                values=self._review_reset_values(),
+            )
+            session.delete(negative)
+            if self._qa_serving_signature(updated) != before_serving:
+                self._bump_serving_generation(session, tenant_id, dataset_id)
+            self._event(
+                session,
+                tenant_id=tenant_id,
+                dataset_id=dataset_id,
+                audit=audit,
+                action="qa_negative.remove",
+                resource_type="qa_knowledge",
+                resource_id=updated.id,
+                before=before,
+                after=_qa_snapshot(updated),
+            )
+            self._commit(session, "negative question removal failed")
 
     def list_effective_qa(
         self,

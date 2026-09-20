@@ -90,6 +90,94 @@ def _headers(
     }
 
 
+def test_qa_import_batch_and_negative_question_apis(api) -> None:
+    client, _, settings = api
+    imported = client.post(
+        "/api/knowledge-bases/dataset-a/qa/import",
+        headers=_headers(settings, "editor-a", request_id="req-qa-import"),
+        json={
+            "items": [
+                {
+                    "question": "How is access approved?",
+                    "answer": "Via approval workflow.",
+                    "alternatives": ["access approval"],
+                    "negative_questions": ["How is access revoked?"],
+                },
+                {
+                    "question": "How is access approved?",
+                    "answer": "Via approval workflow.",
+                },
+            ]
+        },
+    )
+    assert imported.status_code == 200
+    body = imported.json()
+    assert body["counts"]["created"] == 1
+    assert body["counts"]["skipped_duplicate"] == 1
+    qa_id = body["created"][0]["id"]
+
+    listed = client.get(
+        "/api/knowledge-bases/dataset-a/qa",
+        headers=_headers(settings, "member-a"),
+    )
+    assert listed.status_code == 200
+    item = listed.json()["items"][0]
+    assert item["origin"] == "import"
+    assert item["negative_questions"][0]["question"] == "How is access revoked?"
+    assert item["content_hash"]
+
+    batch = client.post(
+        "/api/knowledge-bases/dataset-a/qa/batch/review",
+        headers=_headers(settings, "editor-a"),
+        json={
+            "items": [
+                {"qa_id": qa_id, "expected_revision": 1, "decision": "approved"},
+                {"qa_id": "missing-qa", "expected_revision": 1, "decision": "approved"},
+            ]
+        },
+    )
+    assert batch.status_code == 200
+    batch_body = batch.json()
+    assert batch_body["counts"]["succeeded"] == 1
+    assert batch_body["counts"]["failed"] == 1
+
+    export_csv = client.get(
+        "/api/knowledge-bases/dataset-a/qa/export?format=csv",
+        headers=_headers(settings, "member-a"),
+    )
+    assert export_csv.status_code == 200
+    assert "question" in export_csv.text.splitlines()[0]
+    assert qa_id in export_csv.text
+
+    # member cannot import or batch-manage
+    denied_import = client.post(
+        "/api/knowledge-bases/dataset-a/qa/import",
+        headers=_headers(settings, "member-a"),
+        json={"items": [{"question": "Q2", "answer": "A2"}]},
+    )
+    assert denied_import.status_code == 403
+    denied_batch = client.post(
+        "/api/knowledge-bases/dataset-a/qa/batch/review",
+        headers=_headers(settings, "member-a"),
+        json={"items": [{"qa_id": qa_id, "expected_revision": 2, "decision": "rejected"}]},
+    )
+    assert denied_batch.status_code == 403
+    denied_expire = client.post(
+        "/api/knowledge-bases/dataset-a/qa/batch/expire",
+        headers=_headers(settings, "editor-a"),
+        json={"items": [{"qa_id": qa_id, "expected_revision": 2}]},
+    )
+    # editor lacks manage for batch expire
+    assert denied_expire.status_code == 403
+    owner_expire = client.post(
+        "/api/knowledge-bases/dataset-a/qa/batch/expire",
+        headers=_headers(settings, "owner-a"),
+        json={"items": [{"qa_id": qa_id, "expected_revision": 2}]},
+    )
+    assert owner_expire.status_code == 200
+    assert owner_expire.json()["counts"]["succeeded"] == 1
+
+
 def test_versions_use_read_write_permissions_and_hide_cross_tenant_resources(api) -> None:
     client, _, settings = api
     payload = {

@@ -127,6 +127,8 @@ from server import knowledge_consistency_api  # noqa: E402
 from server import knowledge_dataset_api  # noqa: E402
 from server import knowledge_governance_api  # noqa: E402
 from server import knowledge_sources_api  # noqa: E402
+from server import storage_backends_api  # noqa: E402
+from server import answer_evidence_api  # noqa: E402
 from server import oidc_runtime_api  # noqa: E402
 from server import retrieval_experiments_api  # noqa: E402
 from server import scim_api  # noqa: E402
@@ -508,6 +510,46 @@ def _record_query(payload: dict[str, Any]) -> None:
         _RECENT_QUERIES.appendleft(payload)
 
 
+def _maybe_record_answer_fact(
+    *,
+    tenant_id: str | None,
+    dataset_id: str | None,
+    run_id: str | None,
+    question: str | None,
+    answer: str | None,
+    route: str | None,
+    abstained: bool,
+    citations: Any,
+    evidence: Any,
+) -> None:
+    """Best-effort catalog answer-fact write; never fail the query path."""
+    try:
+        if not tenant_id:
+            return
+        try:
+            engine = catalog.get_engine()
+        except Exception:  # noqa: BLE001
+            return
+        if engine is None:
+            return
+        from core.answer_evidence_facts import AnswerEvidenceRepository
+
+        outcome = "abstained" if abstained else "answered"
+        AnswerEvidenceRepository(engine).record_answer_fact(
+            tenant_id=tenant_id,
+            dataset_id=dataset_id or "default",
+            run_id=run_id,
+            question=question,
+            answer=answer,
+            route=route,
+            outcome=outcome,
+            citations=list(citations or []),
+            evidence=list(evidence or []),
+        )
+    except Exception:  # noqa: BLE001 - 观测写失败不影响问答
+        _logger.warning("answer fact record skipped", exc_info=True)
+
+
 def _recent_queries() -> list[dict[str, Any]]:
     with _RECENT_LOCK:
         return list(_RECENT_QUERIES)
@@ -859,6 +901,8 @@ app.include_router(knowledge_consistency_api.router)
 app.include_router(knowledge_dataset_api.router)
 app.include_router(knowledge_governance_api.router)
 app.include_router(knowledge_sources_api.router)
+app.include_router(storage_backends_api.router)
+app.include_router(answer_evidence_api.router)
 app.include_router(retrieval_experiments_api.router)
 app.include_router(knowledge_audit_api.router)
 app.include_router(create_run_ops_router())
@@ -1215,6 +1259,22 @@ def _run_query(
                 "traces": result.traces,
                 "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
+        )
+        try:
+            fact_tenant = resolve_tenant(req.tenant_id, get_settings())
+        except Exception:  # noqa: BLE001
+            fact_tenant = req.tenant_id or ""
+        inner = payload.get("result") if isinstance(payload, dict) else None
+        _maybe_record_answer_fact(
+            tenant_id=fact_tenant,
+            dataset_id=getattr(req, "dataset_id", None),
+            run_id=None,
+            question=result.query,
+            answer=getattr(result, "answer", None),
+            route=getattr(result, "route", None),
+            abstained=bool(getattr(result, "abstained", False)),
+            citations=getattr(result, "citations", None),
+            evidence=(inner or {}).get("evidence") if isinstance(inner, dict) else None,
         )
         return payload
     finally:
@@ -2187,6 +2247,21 @@ async def query_stream(req: QueryRequest, request: Request) -> StreamingResponse
                                 "traces": inner.get("traces") or [],
                                 "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                             }
+                        )
+                        try:
+                            fact_tenant = resolve_tenant(req.tenant_id, get_settings())
+                        except Exception:  # noqa: BLE001
+                            fact_tenant = req.tenant_id or ""
+                        _maybe_record_answer_fact(
+                            tenant_id=fact_tenant,
+                            dataset_id=getattr(req, "dataset_id", None),
+                            run_id=getattr(http_run, "run_id", None),
+                            question=inner.get("query"),
+                            answer=inner.get("answer"),
+                            route=inner.get("route"),
+                            abstained=bool(inner.get("abstained")),
+                            citations=inner.get("citations"),
+                            evidence=inner.get("evidence"),
                         )
                     if not answer_future.done():
                         answer_future.set_result(payload)

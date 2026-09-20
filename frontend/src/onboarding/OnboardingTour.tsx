@@ -1,13 +1,14 @@
 /**
  * 新手引导弹窗（八奈见杏菜主题）。
  *
- * 首次使用显示 3 步引导：欢迎 / 提问 / 探索。
- * localStorage["rag4c.onboarding_done"] 控制只显示一次；可手动重开。
+ * 首次使用显示引导；完成/跳过后写入 localStorage["rag4c.onboarding.v1"]，
+ * 不再自动弹出。兼容旧键 rag4c.onboarding_done。
  */
 import { useCallback, useEffect, useState } from "react";
 import { MessageCircle, Database, BarChart3, Sparkles, X } from "lucide-react";
 
-const STORAGE_KEY = "rag4c.onboarding_done";
+const STORAGE_KEY = "rag4c.onboarding.v1";
+const LEGACY_STORAGE_KEY = "rag4c.onboarding_done";
 
 const STEPS = [
   {
@@ -32,14 +33,22 @@ const STEPS = [
   },
 ];
 
+function isOnboardingDone(): boolean {
+  return (
+    localStorage.getItem(STORAGE_KEY) === "1" ||
+    localStorage.getItem(LEGACY_STORAGE_KEY) === "1"
+  );
+}
+
 export function shouldShowOnboarding(): boolean {
   // 测试环境不自动弹引导（避免遮住被测内容）；localStorage 持久化已引导标记
   if (import.meta.env.MODE === "test") return false;
-  return localStorage.getItem(STORAGE_KEY) !== "1";
+  return !isOnboardingDone();
 }
 
 export function dismissOnboarding(): void {
   localStorage.setItem(STORAGE_KEY, "1");
+  localStorage.setItem(LEGACY_STORAGE_KEY, "1");
 }
 
 export function OnboardingTour({
@@ -111,7 +120,10 @@ export function OnboardingTour({
 
         <div
           className="w-14 h-14 rounded-[18px] flex items-center justify-center text-white mb-4"
-          style={{ background: "linear-gradient(135deg, #ff9e7d, #ff7fa5)" }}
+          style={{
+            background: "linear-gradient(135deg, #e85d7a, #d6456a)",
+            color: "var(--color-on-primary, #ffffff)",
+          }}
         >
           <Icon size={26} />
         </div>
@@ -130,7 +142,7 @@ export function OnboardingTour({
               className="h-1.5 rounded-full transition-all duration-300"
               style={{
                 width: i === step ? 20 : 8,
-                background: i === step ? "linear-gradient(90deg, #ff9e7d, #ff7fa5)" : "#ffe0e8",
+                background: i === step ? "linear-gradient(90deg, #e85d7a, #d6456a)" : "#ffe0e8",
               }}
             />
           ))}
@@ -161,6 +173,7 @@ export function OnboardingTour({
             <button
               type="button"
               onClick={close}
+              aria-label="跳过引导"
               className="px-4 py-2 text-sm text-pink-400 hover:text-pink-600 transition-colors"
             >
               跳过
@@ -168,8 +181,12 @@ export function OnboardingTour({
             <button
               type="button"
               onClick={next}
-              className="px-5 py-2 text-sm font-medium text-white rounded-full shadow-md transition-all hover:shadow-lg"
-              style={{ background: "linear-gradient(90deg, #ff9e7d, #ff7fa5)" }}
+              aria-label={isLast ? "开始使用" : "下一步"}
+              className="px-5 py-2 text-sm font-medium rounded-full shadow-md transition-all hover:shadow-lg"
+              style={{
+                background: "var(--color-primary, #3164f4)",
+                color: "var(--color-on-primary, #ffffff)",
+              }}
             >
               {isLast ? "开始使用" : "下一步"}
             </button>

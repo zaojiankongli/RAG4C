@@ -23,6 +23,7 @@ import {
   requeueConsistencyDeadLetter,
 } from "../api/client";
 import PageState from "../components/PageState";
+import AuthRecoveryHint, { isAuthError } from "../components/AuthRecoveryHint";
 import PageTopbar from "../components/PageTopbar";
 import {
   projectConsistencySummary,
@@ -33,6 +34,7 @@ import {
 } from "../consistency/consistencyModel";
 import { useConnection } from "../context/ConnectionContext";
 import { useKnowledgeWorkspace } from "../knowledge/KnowledgeWorkspaceContext";
+import { readKnowledgeActorToken } from "../knowledge/workspaceScope";
 
 const { Text } = Typography;
 const DEAD_LETTER_PAGE_SIZE = 10;
@@ -160,6 +162,17 @@ export default function ConsistencyPage() {
     const controller = new AbortController();
     setActionError(null);
     setSnapshot((current) => ({ ...current, status: "loading", error: null }));
+
+    if (!readKnowledgeActorToken().trim()) {
+      setSnapshot({
+        status: "error",
+        summary: null,
+        deadLetters: { items: [], count: 0 },
+        error: new Error("需要有效的 KnowledgeOps Actor Bearer 凭据"),
+      });
+      activeLoadRef.current = null;
+      return Promise.resolve();
+    }
 
     const promise = Promise.all([
       fetchConsistencySummary(datasetId, { tenantId, signal: controller.signal }),
@@ -518,9 +531,28 @@ export default function ConsistencyPage() {
           ) : snapshot.status === "error" ? (
             <PageState
               status="error"
-              title="一致性报告加载失败"
-              description={snapshot.error?.message ?? "暂时无法读取一致性控制面。"}
-              extra={retryButton}
+              title={
+                isAuthError(snapshot.error) ||
+                !readKnowledgeActorToken().trim()
+                  ? "一致性报告身份校验失败"
+                  : "一致性报告加载失败"
+              }
+              description={
+                isAuthError(snapshot.error) || !readKnowledgeActorToken().trim()
+                  ? "需要有效的 KnowledgeOps Actor Bearer 凭据。请完成身份接入后重试；本页不会生成演示数据。"
+                  : (snapshot.error?.message ?? "暂时无法读取一致性控制面。")
+              }
+              extra={
+                isAuthError(snapshot.error) || !readKnowledgeActorToken().trim() ? (
+                  <AuthRecoveryHint
+                    compact
+                    onRetry={() => void retry()}
+                    title="无法加载一致性报告"
+                  />
+                ) : (
+                  retryButton
+                )
+              }
             />
           ) : projection && snapshot.summary ? (
             <>

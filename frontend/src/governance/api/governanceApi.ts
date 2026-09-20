@@ -1,4 +1,4 @@
-import { request } from "../../api/client";
+import { ApiError, getBaseUrl, request } from "../../api/client";
 import type {
   DatasetProfile,
   DatasetProfilePatch,
@@ -9,10 +9,18 @@ import type {
   GovernanceScope,
   QAAlternativeCreate,
   QAAlternativeCreated,
+  QABatchResult,
+  QABatchReviewItem,
+  QABatchRevisionItem,
   QACreate,
+  QAExportFormat,
+  QAImportRequest,
+  QAImportResult,
   QAKnowledge,
   QAListFilters,
   QAListResponse,
+  QANegativeCreate,
+  QANegativeQuestionCreated,
   QAReviewRequest,
   QAUpdate,
 } from "../model/governanceModel";
@@ -45,6 +53,15 @@ function jsonRequest<T>(
     body: JSON.stringify(body),
     signal: options.signal,
   });
+}
+
+function qaFilterQuery(filters: QAListFilters): URLSearchParams {
+  const query = new URLSearchParams();
+  if (filters.review_status) query.set("review_status", filters.review_status);
+  if (filters.lifecycle_state) query.set("lifecycle_state", filters.lifecycle_state);
+  if (filters.origin) query.set("origin", filters.origin);
+  if (filters.limit !== undefined) query.set("limit", String(filters.limit));
+  return query;
 }
 
 export function fetchDatasetProfile(
@@ -104,11 +121,7 @@ export function fetchQAList(
   filters: QAListFilters = {},
   options: GovernanceRequestOptions = {},
 ): Promise<QAListResponse> {
-  const query = new URLSearchParams();
-  if (filters.review_status) query.set("review_status", filters.review_status);
-  if (filters.lifecycle_state) query.set("lifecycle_state", filters.lifecycle_state);
-  if (filters.origin) query.set("origin", filters.origin);
-  if (filters.limit !== undefined) query.set("limit", String(filters.limit));
+  const query = qaFilterQuery(filters);
   const suffix = query.size ? `?${query.toString()}` : "";
   return request<QAListResponse>(`${basePath(scope)}/qa${suffix}`, {
     method: "GET",
@@ -189,6 +202,75 @@ export function restoreQA(
   return qaLifecycle(scope, qaId, "restore", payload, options);
 }
 
+export function importQA(
+  scope: GovernanceScope,
+  payload: QAImportRequest,
+  options: GovernanceRequestOptions = {},
+): Promise<QAImportResult> {
+  return jsonRequest(scope, `${basePath(scope)}/qa/import`, "POST", payload, options);
+}
+
+export function batchReviewQA(
+  scope: GovernanceScope,
+  items: QABatchReviewItem[],
+  options: GovernanceRequestOptions = {},
+): Promise<QABatchResult> {
+  return jsonRequest(scope, `${basePath(scope)}/qa/batch/review`, "POST", { items }, options);
+}
+
+export function batchExpireQA(
+  scope: GovernanceScope,
+  items: QABatchRevisionItem[],
+  options: GovernanceRequestOptions = {},
+): Promise<QABatchResult> {
+  return jsonRequest(scope, `${basePath(scope)}/qa/batch/expire`, "POST", { items }, options);
+}
+
+export function batchRestoreQA(
+  scope: GovernanceScope,
+  items: QABatchRevisionItem[],
+  options: GovernanceRequestOptions = {},
+): Promise<QABatchResult> {
+  return jsonRequest(scope, `${basePath(scope)}/qa/batch/restore`, "POST", { items }, options);
+}
+
+async function requestText(
+  path: string,
+  init: { method: "GET"; headers: Record<string, string>; signal?: AbortSignal },
+): Promise<string> {
+  const res = await fetch(`${getBaseUrl()}${path}`, init);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new ApiError(text || `HTTP ${res.status}`, "http", res.status);
+  }
+  return res.text();
+}
+
+/** Export QA under current filters. JSON is stringified; CSV returns raw body text. */
+export async function exportQA(
+  scope: GovernanceScope,
+  filters: QAListFilters = {},
+  format: QAExportFormat = "json",
+  options: GovernanceRequestOptions = {},
+): Promise<string> {
+  const query = qaFilterQuery(filters);
+  query.set("format", format);
+  const path = `${basePath(scope)}/qa/export?${query.toString()}`;
+  if (format === "json") {
+    const payload = await request<QAListResponse>(path, {
+      method: "GET",
+      headers: headers(scope),
+      signal: options.signal,
+    });
+    return JSON.stringify(payload, null, 2);
+  }
+  return requestText(path, {
+    method: "GET",
+    headers: headers(scope),
+    signal: options.signal,
+  });
+}
+
 export function addQAAlternative(
   scope: GovernanceScope,
   qaId: string,
@@ -212,6 +294,36 @@ export function deleteQAAlternative(
   options: GovernanceRequestOptions = {},
 ): Promise<void> {
   const path = `${basePath(scope)}/qa/${encodeURIComponent(qaId)}/alternatives/${encodeURIComponent(alternativeId)}?expected_revision=${expectedRevision}`;
+  return request<void>(path, {
+    method: "DELETE",
+    headers: headers(scope),
+    signal: options.signal,
+  });
+}
+
+export function addQANegative(
+  scope: GovernanceScope,
+  qaId: string,
+  payload: QANegativeCreate,
+  options: GovernanceRequestOptions = {},
+): Promise<QANegativeQuestionCreated> {
+  return jsonRequest(
+    scope,
+    `${basePath(scope)}/qa/${encodeURIComponent(qaId)}/negative-questions`,
+    "POST",
+    payload,
+    options,
+  );
+}
+
+export function deleteQANegative(
+  scope: GovernanceScope,
+  qaId: string,
+  negativeId: string,
+  expectedRevision: number,
+  options: GovernanceRequestOptions = {},
+): Promise<void> {
+  const path = `${basePath(scope)}/qa/${encodeURIComponent(qaId)}/negative-questions/${encodeURIComponent(negativeId)}?expected_revision=${expectedRevision}`;
   return request<void>(path, {
     method: "DELETE",
     headers: headers(scope),
