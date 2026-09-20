@@ -30,6 +30,7 @@ from core.enterprise_access_control import evaluate_dataset_permissions
 from core.knowledge_permissions import KNOWLEDGE_READ
 from core.catalog_schema import _alembic_config
 import models.orm as orm
+from tests.head_catalog import align_era_columns
 from tests.test_organization_membership_migration import _seed_0017_scope
 
 
@@ -234,6 +235,14 @@ def _upgrade_to_0018_with_scope(tmp_path: Path) -> tuple[str, Any]:
     _seed_0017_scope(url)
     command.upgrade(config, DOWN_REVISION)
     _insert_dataset(url)
+    # 本文件里的权限回填/往返用例用 head ORM 读 datasets，而 0038 之后该 SELECT 会带上
+    # storage_backend_id：库停在 0018 时直接 OperationalError。上面的原始 SQL 播种保持时代形态，
+    # 只在交给用例之前补这两列。
+    engine = create_engine(url)
+    try:
+        align_era_columns(engine)
+    finally:
+        engine.dispose()
     return url, config
 
 

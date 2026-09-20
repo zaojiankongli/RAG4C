@@ -2248,12 +2248,11 @@ async def query_stream(req: QueryRequest, request: Request) -> StreamingResponse
                                 "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                             }
                         )
-                        try:
-                            fact_tenant = resolve_tenant(req.tenant_id, get_settings())
-                        except Exception:  # noqa: BLE001
-                            fact_tenant = req.tenant_id or ""
+                        # 复用入口处已解析的 tenant：一次请求只解析一次是本路径的不变量
+                        # （tests/test_run_registry_integration 钉住），再解析一次既多一次
+                        # 目录访问，也可能在设置变更后把证据记到另一个租户下。
                         _maybe_record_answer_fact(
-                            tenant_id=fact_tenant,
+                            tenant_id=resolved_tenant,
                             dataset_id=getattr(req, "dataset_id", None),
                             run_id=getattr(http_run, "run_id", None),
                             question=inner.get("query"),

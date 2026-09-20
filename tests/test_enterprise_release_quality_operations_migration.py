@@ -218,6 +218,19 @@ def _upgrade_fixture(url: str) -> None:
     upgrade_0029(url)
     upgrade_0030(url)
     upgrade_0031(url)
+    # 0038 之后 head 的 ORM SELECT 与父权威能力检查会引用 datasets.storage_backend_id /
+    # tenants.default_storage_backend_id，而本链止于 0031，检查会以 OperationalError
+    # 失败并把能力报成 unavailable（stage21 preflight 因此多一条 blocker）。
+    # 放在链尾而不是 seed_0028 里：0028 那批用例断言的是当时的精确 schema。
+    from sqlalchemy import create_engine
+
+    from tests.head_catalog import align_era_columns
+
+    engine = create_engine(url)
+    try:
+        align_era_columns(engine)
+    finally:
+        engine.dispose()
 
 
 def _insert_slo_policy(connection, *, policy_id: str = "slo-policy-a") -> None:
