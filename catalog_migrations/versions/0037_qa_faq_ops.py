@@ -1,7 +1,7 @@
 """QA/FAQ ops: content_hash, import batch id, origin=import, negative questions.
 
 Revision ID: 0037_qa_faq_ops
-Revises: 0036_enterprise_knowledge_serving_reliability
+Revises: 0037_enterprise_knowledge_operations_feedback
 Create Date: 2026-09-20
 """
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0037_qa_faq_ops"
-down_revision: str | None = "0036_enterprise_knowledge_serving_reliability"
+down_revision: str | None = "0037_enterprise_knowledge_operations_feedback"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
