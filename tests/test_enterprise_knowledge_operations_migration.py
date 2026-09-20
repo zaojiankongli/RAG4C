@@ -233,10 +233,14 @@ def _insert_case(connection, case_id="case-a", query_id="query-a", profile_id="p
     )
 
 
-def test_0037_is_head_and_follows_0036() -> None:
+def test_0037_is_on_chain_and_follows_0036() -> None:
     migration = migration_module()
     scripts = ScriptDirectory.from_config(alembic_config("sqlite://"))
-    assert scripts.get_current_head() == REVISION
+    # 0037 之后有意续了 QA/FAQ 三段，它不再是全局 head；这里断言它在链上且不是链顶，
+    # 并保留下面"父级是 0036"的断言。写死"等于全局 head"会随每次新增迁移腐坏。
+    chain = [rev.revision for rev in scripts.walk_revisions()]
+    assert REVISION in chain
+    assert chain.index(REVISION) > 0
     assert migration.revision == REVISION
     assert migration.down_revision == DOWN_REVISION
 

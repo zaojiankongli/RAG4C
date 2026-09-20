@@ -162,9 +162,32 @@ def seed_0028(url: str, *, include_reference: bool = False) -> None:
     engine = engine_for(url)
     try:
         with Session(engine) as session:
-            tenant = Tenant(id="tenant-a", name="Tenant A", plan="enterprise", status="active")
+            # 时代夹具要写的是 0028 那一版的 tenants 表，而 ORM 模型反映 head schema
+            # （0038 之后 tenants 多了 default_storage_backend_id）。沿用本文件对 datasets 的
+            # 既有做法：反射真实表再插，只发出该时代确实存在的列。
+            tenants_table = Table("tenants", MetaData(), autoload_with=engine)
+            session.execute(
+                tenants_table.insert().values(
+                    **{
+                        key: value
+                        for key, value in {
+                            "id": "tenant-a",
+                            "name": "Tenant A",
+                            "plan": "enterprise",
+                            "status": "active",
+                            "quota_documents": 1000,
+                            "quota_chunks": 100000,
+                            "doc_count": 0,
+                            "chunk_count": 0,
+                            "created_at": datetime(2026, 8, 28, 12, 0, 0),
+                            "updated_at": datetime(2026, 8, 28, 12, 0, 0),
+                        }.items()
+                        if key in tenants_table.c
+                    }
+                )
+            )
             account = Account(id="owner-a", name="Owner A", email="owner-a@stage19.test")
-            session.add_all([tenant, account])
+            session.add(account)
             session.flush()
             session.add(
                 TenantMember(

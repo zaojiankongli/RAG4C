@@ -29,13 +29,15 @@ def _url(path: Path) -> str:
 def _upgrade(url: str) -> None:
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", url)
-    command.upgrade(config, REVISION)
+    command.upgrade(config, "head")
 
 
 def test_stage27_manifest_exposes_exact_seven_table_capability() -> None:
     assert manifest.ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION == REVISION
     assert manifest.ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_TABLES == TABLES
-    assert manifest.HEAD_REVISION == REVISION
+    # 0037 之后链条有意推进过（QA/FAQ 线），这里断言"它仍是被注册的链上一环"，
+    # 而非"它是全局 head"——后者每次新增迁移都会腐坏。
+    assert REVISION in manifest.ENTERPRISE_APPROVAL_CONTROL_REQUIRED_EXACT_CHECK_SQL_BY_REVISION
     assert TABLES <= manifest.HEAD_CATALOG_TABLES
     for table in TABLES:
         assert table in manifest.ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_COLUMNS
@@ -60,8 +62,9 @@ def test_stage27_empty_authority_is_ready_and_catalog_is_current(tmp_path: Path)
             (),
         )
         state = manifest.inspect_catalog_schema(engine)
-        assert state.revision == REVISION
-        assert state.head_revision == REVISION
+        # 动态对齐真头：仍完整断言 current，只是不把 head 写死成历史版本号
+        assert state.revision == manifest.HEAD_REVISION
+        assert state.head_revision == manifest.HEAD_REVISION
         assert state.status == "current"
     finally:
         engine.dispose()
