@@ -267,6 +267,9 @@ class Tenant(Base):
     status: Mapped[str] = mapped_column(String(16), default="active")  # active | suspended
     quota_documents: Mapped[int] = mapped_column(Integer, default=1000)
     quota_chunks: Mapped[int] = mapped_column(Integer, default=100_000)
+    default_storage_backend_id: Mapped[Optional[str]] = mapped_column(
+        String(64), default=None
+    )
     # 当前用量（由入库/删除路径经 bump_counts 维护，用于配额检查）
     doc_count: Mapped[int] = mapped_column(Integer, default=0)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -1937,6 +1940,7 @@ class Dataset(Base):
     parser_policy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     chunk_policy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     retrieval_policy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    storage_backend_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     retention_policy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     metadata_policy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     default_language: Mapped[str] = mapped_column(String(32), default="zh-CN")
@@ -7144,7 +7148,7 @@ class QAKnowledge(Base):
             "review_status = 'approved' OR NOT retrieval_enabled",
             name="ck_qa_knowledge_review_retrieval",
         ),
-        CheckConstraint("origin IN ('manual', 'automatic')", name="ck_qa_knowledge_origin"),
+        CheckConstraint("origin IN ('manual', 'automatic', 'import')", name="ck_qa_knowledge_origin"),
         Index(
             "ix_qa_knowledge_scope_effective",
             "tenant_id",
@@ -7159,6 +7163,12 @@ class QAKnowledge(Base):
             "tenant_id",
             "dataset_id",
             "review_status",
+        ),
+        Index(
+            "ix_qa_knowledge_scope_content_hash",
+            "tenant_id",
+            "dataset_id",
+            "content_hash",
         ),
     )
 
@@ -7176,6 +7186,8 @@ class QAKnowledge(Base):
     expires_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None, index=True)
     source_document_id: Mapped[Optional[str]] = mapped_column(String(64), default=None, index=True)
     source_uri: Mapped[str] = mapped_column(String(1024), default="")
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
     metadata_json: Mapped[Optional[dict[str, Any]]] = mapped_column("metadata", JSON, default=dict)
     created_by: Mapped[str] = mapped_column(String(64))
     reviewed_by: Mapped[Optional[str]] = mapped_column(String(64), default=None)
@@ -7223,6 +7235,154 @@ class QAAlternativeQuestion(Base):
     question: Mapped[str] = mapped_column(Text)
     normalized_hash: Mapped[str] = mapped_column(String(64))
     created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(_datetime6(), default=datetime.utcnow)
+
+
+class QANegativeQuestion(Base):
+    """Negative phrasing that should suppress QA retrieval hits when matched."""
+
+    __tablename__ = "qa_negative_questions"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "dataset_id",
+            "qa_id",
+            "normalized_hash",
+            name="uq_qa_negative_questions_qa_normalized_hash",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "dataset_id"],
+            ["datasets.tenant_id", "datasets.id"],
+            name="fk_qa_negative_questions_scope_dataset",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "dataset_id", "qa_id"],
+            ["qa_knowledge.tenant_id", "qa_knowledge.dataset_id", "qa_knowledge.id"],
+            name="fk_qa_negative_questions_scope_qa",
+        ),
+        Index(
+            "ix_qa_negative_questions_scope_qa",
+            "tenant_id",
+            "dataset_id",
+            "qa_id",
+        ),
+    )
+
+    id: Mapped[str] = _pk()
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    dataset_id: Mapped[str] = mapped_column(String(64), index=True)
+    qa_id: Mapped[str] = mapped_column(String(64), index=True)
+    question: Mapped[str] = mapped_column(Text)
+    normalized_hash: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(_datetime6(), default=datetime.utcnow)
+
+
+class StorageBackend(Base):
+    """Tenant-scoped object/file storage instance registry (control plane)."""
+
+    __tablename__ = "storage_backends"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_storage_backends_tenant_id"),
+        CheckConstraint(
+            "provider IN ('local','minio','s3','cos','oss','tos','obs')",
+            name="ck_storage_backends_provider",
+        ),
+        CheckConstraint(
+            "status IN ('active','disabled')",
+            name="ck_storage_backends_status",
+        ),
+        CheckConstraint(
+            "source IN ('user','env')",
+            name="ck_storage_backends_source",
+        ),
+        CheckConstraint(
+            "is_deleted IN (0,1)",
+            name="ck_storage_backends_is_deleted",
+        ),
+        Index("ix_storage_backends_tenant_live", "tenant_id", "is_deleted", "name"),
+        Index("ix_storage_backends_tenant_provider", "tenant_id", "provider"),
+        ForeignKeyConstraint(
+            ["tenant_id"],
+            ["tenants.id"],
+            name="fk_storage_backends_tenant",
+        ),
+    )
+
+    id: Mapped[str] = _pk()
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    provider: Mapped[str] = mapped_column(String(32), default="local")
+    config_json: Mapped[dict[str, Any]] = mapped_column("config", JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    source: Mapped[str] = mapped_column(String(16), default="user")
+    is_deleted: Mapped[int] = mapped_column(Integer, default=0)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(_datetime6(), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        _datetime6(), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class TenantKnowledgeAnswerFact(Base):
+    """Privacy-safe immutable production answer outcome fact."""
+
+    __tablename__ = "tenant_knowledge_answer_facts"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_answer_facts_tenant_id"),
+        Index(
+            "ix_answer_facts_scope_observed",
+            "tenant_id",
+            "dataset_id",
+            "observed_at",
+        ),
+        Index("ix_answer_facts_tenant_run", "tenant_id", "run_id"),
+        CheckConstraint(
+            "outcome_code IN ('answered','abstained','cancelled','failed','cached')",
+            name="ck_answer_facts_outcome",
+        ),
+        CheckConstraint("citation_count >= 0", name="ck_answer_facts_citation_count"),
+        CheckConstraint("evidence_count >= 0", name="ck_answer_facts_evidence_count"),
+    )
+
+    id: Mapped[str] = _pk()
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    dataset_id: Mapped[str] = mapped_column(String(64), default="default")
+    run_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    request_id_digest: Mapped[str] = mapped_column(String(64), default="")
+    query_digest: Mapped[str] = mapped_column(String(64), default="")
+    answer_digest: Mapped[str] = mapped_column(String(64), default="")
+    evidence_chain_digest: Mapped[str] = mapped_column(String(64), default="")
+    fact_digest: Mapped[str] = mapped_column(String(64), default="")
+    safe_query_preview: Mapped[Optional[str]] = mapped_column(String(160), default=None)
+    outcome_code: Mapped[str] = mapped_column(String(24), default="answered")
+    route_code: Mapped[str] = mapped_column(String(32), default="rag")
+    citation_count: Mapped[int] = mapped_column(Integer, default=0)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0)
+    observed_at: Mapped[datetime] = mapped_column(_datetime6(), default=datetime.utcnow)
+
+
+class TenantKnowledgeAnswerEvidenceRef(Base):
+    """Immutable child ref from one answer fact to a citation/evidence id."""
+
+    __tablename__ = "tenant_knowledge_answer_evidence_refs"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_answer_evidence_refs_tenant_id"),
+        Index("ix_answer_evidence_fact_seq", "answer_fact_id", "seq"),
+        Index("ix_answer_evidence_tenant_fact", "tenant_id", "answer_fact_id"),
+        CheckConstraint("seq >= 0", name="ck_answer_evidence_seq_nonneg"),
+    )
+
+    id: Mapped[str] = _pk()
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    answer_fact_id: Mapped[str] = mapped_column(String(64), index=True)
+    seq: Mapped[int] = mapped_column(Integer, default=0)
+    chunk_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    chunk_revision_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    document_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    citation_status: Mapped[str] = mapped_column(String(32), default="ok")
+    evidence_digest: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(_datetime6(), default=datetime.utcnow)
 
 
@@ -7570,6 +7730,10 @@ __all__ = [
     "DocumentTag",
     "QAKnowledge",
     "QAAlternativeQuestion",
+    "QANegativeQuestion",
+    "StorageBackend",
+    "TenantKnowledgeAnswerFact",
+    "TenantKnowledgeAnswerEvidenceRef",
     "KnowledgeAuditEvent",
     "RetrievalExperiment",
     "RetrievalJudgment",

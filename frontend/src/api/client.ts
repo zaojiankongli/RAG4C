@@ -318,7 +318,7 @@ function requireKnowledgeTenantId(value?: string): string {
   return tenantId;
 }
 
-function knowledgeAuthHeaders(tenantId: string, actorToken?: string): Record<string, string> {
+export function knowledgeAuthHeaders(tenantId: string, actorToken?: string): Record<string, string> {
   const token = knowledgeActorToken(actorToken);
   return {
     "X-RAG4C-Tenant": tenantId,

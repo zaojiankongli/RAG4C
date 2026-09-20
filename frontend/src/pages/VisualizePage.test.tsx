@@ -70,6 +70,13 @@ vi.mock("../components/RunHistorySidebar", () => ({ default: () => <aside /> }))
 vi.mock("../components/RunOpsBanners", () => ({ default: () => null }));
 vi.mock("../components/RunEventTable", () => ({ default: () => <div>events</div> }));
 vi.mock("../components/RunKnowledgePanel", () => ({ default: () => <div>knowledge</div> }));
+vi.mock("../answer-evidence/components/AnswerEvidencePanel", () => ({
+  default: ({ runId }: any) => (
+    <div data-testid="answer-evidence-panel" data-run-id={runId ?? ""}>
+      evidence
+    </div>
+  ),
+}));
 vi.mock("../components/RunFlowGraph", () => ({
   default: ({ selectedNodeId, onSelectNode }: any) => (
     <button

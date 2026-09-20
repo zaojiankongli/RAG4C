@@ -56,7 +56,13 @@ ENTERPRISE_NOTIFICATION_CENTER_REVISION = "0032_enterprise_notification_center"
 ENTERPRISE_CONTENT_RECOVERY_REVISION = "0033_enterprise_content_recovery"
 ENTERPRISE_TASK_OPERATIONS_REVISION = "0034_enterprise_task_operations"
 ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION = "0035_enterprise_automation_workflows"
-HEAD_REVISION = ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION
+ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION = (
+    "0036_enterprise_knowledge_serving_reliability"
+)
+QA_FAQ_OPS_REVISION = "0037_qa_faq_ops"
+STORAGE_BACKENDS_REVISION = "0038_storage_backends"
+ANSWER_EVIDENCE_FACTS_REVISION = "0039_answer_evidence_facts"
+HEAD_REVISION = ANSWER_EVIDENCE_FACTS_REVISION
 DATASET_ACL_CONTROL_REQUIRED_TABLES = frozenset({"dataset_acl_mutation_requests"})
 DATASET_ACL_CONTROL_REQUIRED_COLUMNS = {
     "datasets": frozenset({"acl_mode", "acl_revision", "acl_enabled_at", "acl_enabled_by"}),
@@ -380,6 +386,10 @@ HEAD_CATALOG_TABLES = BASELINE_CATALOG_TABLES | frozenset(
         "document_versions",
         "qa_knowledge",
         "qa_alternative_questions",
+        "qa_negative_questions",
+        "storage_backends",
+        "tenant_knowledge_answer_facts",
+        "tenant_knowledge_answer_evidence_refs",
         "document_delete_batches",
         "document_delete_operations",
         "retrieval_experiments",
@@ -531,6 +541,12 @@ _HEAD_REQUIRED_COLUMNS = {
             "acl_revision",
             "acl_enabled_at",
             "acl_enabled_by",
+            "storage_backend_id",
+        }
+    ),
+    "tenants": frozenset(
+        {
+            "default_storage_backend_id",
         }
     ),
     "dataset_acl_mutation_requests": frozenset(
@@ -706,6 +722,8 @@ _HEAD_REQUIRED_COLUMNS = {
             "reviewed_at",
             "created_at",
             "updated_at",
+            "content_hash",
+            "import_batch_id",
         }
     ),
     "qa_alternative_questions": frozenset(
@@ -717,6 +735,67 @@ _HEAD_REQUIRED_COLUMNS = {
             "question",
             "normalized_hash",
             "created_by",
+            "created_at",
+        }
+    ),
+    "qa_negative_questions": frozenset(
+        {
+            "id",
+            "tenant_id",
+            "dataset_id",
+            "qa_id",
+            "question",
+            "normalized_hash",
+            "created_by",
+            "created_at",
+        }
+    ),
+    "storage_backends": frozenset(
+        {
+            "id",
+            "tenant_id",
+            "name",
+            "provider",
+            "config",
+            "status",
+            "source",
+            "is_deleted",
+            "deleted_at",
+            "created_by",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "tenant_knowledge_answer_facts": frozenset(
+        {
+            "id",
+            "tenant_id",
+            "dataset_id",
+            "run_id",
+            "request_id_digest",
+            "query_digest",
+            "answer_digest",
+            "evidence_chain_digest",
+            "fact_digest",
+            "safe_query_preview",
+            "outcome_code",
+            "route_code",
+            "citation_count",
+            "evidence_count",
+            "observed_at",
+        }
+    ),
+    "tenant_knowledge_answer_evidence_refs": frozenset(
+        {
+            "id",
+            "tenant_id",
+            "answer_fact_id",
+            "seq",
+            "chunk_id",
+            "chunk_revision_id",
+            "document_id",
+            "citation_status",
+            "evidence_digest",
             "created_at",
         }
     ),
@@ -1112,6 +1191,23 @@ _HEAD_REQUIRED_UNIQUES = {
             "normalized_hash",
         )
     },
+    "qa_negative_questions": {
+        "uq_qa_negative_questions_qa_normalized_hash": (
+            "tenant_id",
+            "dataset_id",
+            "qa_id",
+            "normalized_hash",
+        )
+    },
+    "storage_backends": {
+        "uq_storage_backends_tenant_id": ("tenant_id", "id"),
+    },
+    "tenant_knowledge_answer_facts": {
+        "uq_answer_facts_tenant_id": ("tenant_id", "id"),
+    },
+    "tenant_knowledge_answer_evidence_refs": {
+        "uq_answer_evidence_refs_tenant_id": ("tenant_id", "id"),
+    },
     "document_delete_batches": {
         "uq_document_delete_batches_scope_id": ("tenant_id", "dataset_id", "id"),
         "uq_document_delete_batches_idempotency": ("tenant_id", "dataset_id", "idempotency_key"),
@@ -1294,6 +1390,21 @@ _HEAD_REQUIRED_FOREIGN_KEYS = {
             "qa_knowledge",
             ("tenant_id", "dataset_id", "id"),
         ),
+    },
+    "qa_negative_questions": {
+        "fk_qa_negative_questions_scope_dataset": (
+            ("tenant_id", "dataset_id"),
+            "datasets",
+            ("tenant_id", "id"),
+        ),
+        "fk_qa_negative_questions_scope_qa": (
+            ("tenant_id", "dataset_id", "qa_id"),
+            "qa_knowledge",
+            ("tenant_id", "dataset_id", "id"),
+        ),
+    },
+    "storage_backends": {
+        "fk_storage_backends_tenant": (("tenant_id",), "tenants", ("id",)),
     },
     "index_operations": {
         "fk_index_operations_scope_delete_operation": (
@@ -1560,7 +1671,35 @@ _HEAD_REQUIRED_CHECK_FRAGMENTS = {
         "ck_qa_knowledge_lifecycle_state": ("active", "expired", "delete_requested", "deleted"),
         "ck_qa_knowledge_retrieval_lifecycle": ("active", "not retrieval_enabled"),
         "ck_qa_knowledge_review_retrieval": ("approved", "not retrieval_enabled"),
-        "ck_qa_knowledge_origin": ("manual", "automatic"),
+        "ck_qa_knowledge_origin": ("manual", "automatic", "import"),
+    },
+    "storage_backends": {
+        "ck_storage_backends_provider": (
+            "local",
+            "minio",
+            "s3",
+            "cos",
+            "oss",
+            "tos",
+            "obs",
+        ),
+        "ck_storage_backends_status": ("active", "disabled"),
+        "ck_storage_backends_source": ("user", "env"),
+        "ck_storage_backends_is_deleted": ("0", "1"),
+    },
+    "tenant_knowledge_answer_facts": {
+        "ck_answer_facts_outcome": (
+            "answered",
+            "abstained",
+            "cancelled",
+            "failed",
+            "cached",
+        ),
+        "ck_answer_facts_citation_count": ("citation_count >= 0",),
+        "ck_answer_facts_evidence_count": ("evidence_count >= 0",),
+    },
+    "tenant_knowledge_answer_evidence_refs": {
+        "ck_answer_evidence_seq_nonneg": ("seq >= 0",),
     },
 }
 _HEAD_REQUIRED_INDEXES = {
@@ -1816,9 +1955,29 @@ _HEAD_REQUIRED_INDEXES = {
             "expires_at",
         ),
         "ix_qa_knowledge_scope_review": ("tenant_id", "dataset_id", "review_status"),
+        "ix_qa_knowledge_scope_content_hash": (
+            "tenant_id",
+            "dataset_id",
+            "content_hash",
+        ),
     },
     "qa_alternative_questions": {
         "ix_qa_alternatives_scope_qa": ("tenant_id", "dataset_id", "qa_id")
+    },
+    "qa_negative_questions": {
+        "ix_qa_negative_questions_scope_qa": ("tenant_id", "dataset_id", "qa_id")
+    },
+    "storage_backends": {
+        "ix_storage_backends_tenant_live": ("tenant_id", "is_deleted", "name"),
+        "ix_storage_backends_tenant_provider": ("tenant_id", "provider"),
+    },
+    "tenant_knowledge_answer_facts": {
+        "ix_answer_facts_scope_observed": ("tenant_id", "dataset_id", "observed_at"),
+        "ix_answer_facts_tenant_run": ("tenant_id", "run_id"),
+    },
+    "tenant_knowledge_answer_evidence_refs": {
+        "ix_answer_evidence_fact_seq": ("answer_fact_id", "seq"),
+        "ix_answer_evidence_tenant_fact": ("tenant_id", "answer_fact_id"),
     },
 }
 
@@ -5033,6 +5192,9 @@ def inspect_enterprise_content_recovery_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+            QA_FAQ_OPS_REVISION,
+            STORAGE_BACKENDS_REVISION,
+            ANSWER_EVIDENCE_FACTS_REVISION,
         }:
             if not recovery_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -5474,6 +5636,9 @@ def inspect_enterprise_task_operations_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }:
             if not task_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -6512,6 +6677,9 @@ def inspect_enterprise_knowledge_base_release_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }:
             if not release_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -6794,6 +6962,9 @@ def inspect_enterprise_release_quality_certification_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }:
             if not quality_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -7168,6 +7339,9 @@ def inspect_enterprise_release_quality_operations_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }:
             if not operations_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -7548,6 +7722,9 @@ def inspect_enterprise_notification_center_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }:
             if not notification_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -8259,6 +8436,9 @@ def _knowledge_base_registry_capability_issues(
                     ENTERPRISE_TASK_OPERATIONS_REVISION,
                     ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                     ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+                QA_FAQ_OPS_REVISION,
+                STORAGE_BACKENDS_REVISION,
+                ANSWER_EVIDENCE_FACTS_REVISION,
                 }
                 else ENTERPRISE_APPROVAL_ACTION_TYPES_0030
                 if approval_action_revision
@@ -8282,6 +8462,9 @@ def _knowledge_base_registry_capability_issues(
                     ENTERPRISE_TASK_OPERATIONS_REVISION,
                     ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                     ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+                QA_FAQ_OPS_REVISION,
+                STORAGE_BACKENDS_REVISION,
+                ANSWER_EVIDENCE_FACTS_REVISION,
                 }
                 else ENTERPRISE_APPROVAL_ACTION_TYPES_0030
                 if approval_action_revision
@@ -8313,6 +8496,9 @@ def _knowledge_base_registry_capability_issues(
                     ENTERPRISE_TASK_OPERATIONS_REVISION,
                     ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                     ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+                QA_FAQ_OPS_REVISION,
+                STORAGE_BACKENDS_REVISION,
+                ANSWER_EVIDENCE_FACTS_REVISION,
                 }
                 else ENTERPRISE_APPROVAL_ACTION_TYPES_0030
                 if approval_action_revision
@@ -8386,6 +8572,9 @@ def inspect_enterprise_knowledge_base_registry_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }:
             known_pre_0028 = revision in _known_catalog_revisions()
             if not registry_present and known_pre_0028:
@@ -8494,6 +8683,9 @@ def _workspace_authorization_capability_issues(
                 ENTERPRISE_TASK_OPERATIONS_REVISION,
                 ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                 ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+            QA_FAQ_OPS_REVISION,
+            STORAGE_BACKENDS_REVISION,
+            ANSWER_EVIDENCE_FACTS_REVISION,
             }
             else ENTERPRISE_APPROVAL_ACTION_TYPES_0030
             if approval_action_revision
@@ -8585,6 +8777,9 @@ def inspect_workspace_authorization_capability(bind: Any) -> tuple[str, tuple[st
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }
         if revision not in supported_revisions:
             known_pre_0027 = revision in _known_catalog_revisions()
@@ -9680,7 +9875,12 @@ ENTERPRISE_KNOWLEDGE_SERVING_ISSUE_FRAGMENTS = (
     ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_ISSUE_FRAGMENTS
 )
 HEAD_CATALOG_TABLES = HEAD_CATALOG_TABLES | ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_TABLES
-HEAD_REVISION = ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION
+HEAD_CATALOG_TABLES = HEAD_CATALOG_TABLES | {"qa_negative_questions", "storage_backends"}
+HEAD_CATALOG_TABLES = HEAD_CATALOG_TABLES | {
+    "tenant_knowledge_answer_facts",
+    "tenant_knowledge_answer_evidence_refs",
+}
+HEAD_REVISION = ANSWER_EVIDENCE_FACTS_REVISION
 
 _KNOWLEDGE_SERVING_SUPPORTED_DIALECTS = frozenset({"sqlite", "mysql", "mariadb", "postgresql"})
 _KNOWLEDGE_SERVING_STAGE_CODES = ("source", "parse", "chunk", "index", "serve")
@@ -10696,6 +10896,9 @@ def _REVISION_ORDER_FOR_CAPABILITY(revision: str) -> int:
                 ENTERPRISE_TASK_OPERATIONS_REVISION,
                 ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                 ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+                QA_FAQ_OPS_REVISION,
+                STORAGE_BACKENDS_REVISION,
+                ANSWER_EVIDENCE_FACTS_REVISION,
             ),
         )
     }

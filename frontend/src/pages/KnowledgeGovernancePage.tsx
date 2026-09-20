@@ -3,6 +3,7 @@ import { Button, Tag } from "tdesign-react";
 import { ControlPlatformIcon, RefreshIcon } from "tdesign-icons-react";
 import { useMemo } from "react";
 import PageState from "../components/PageState";
+import AuthRecoveryHint from "../components/AuthRecoveryHint";
 import PageTopbar from "../components/PageTopbar";
 import DocumentVersionInspector from "../governance/components/DocumentVersionInspector";
 import GovernanceAuthorityBanner from "../governance/components/GovernanceAuthorityBanner";
@@ -73,6 +74,7 @@ export default function KnowledgeGovernancePage({ embedded = false }: { embedded
               status="error"
               title={resolved.error?.title}
               description={resolved.error?.description}
+              extra={<AuthRecoveryHint compact title="无法进入知识治理" />}
             />
           </div>
         </div>
@@ -90,6 +92,15 @@ export default function KnowledgeGovernancePage({ embedded = false }: { embedded
               status="error"
               title="知识治理服务未连接"
               description="当前无法读取数据集、QA 或文档版本的权威事实。恢复连接后再重试。"
+              extra={
+                <AuthRecoveryHint
+                  compact
+                  title="治理权威不可用"
+                  description="若后端已恢复，请确认工作区身份后刷新；若服务未启动，请先启动桥服务。"
+                  onRetry={() => window.location.reload()}
+                  retryLabel="刷新页面"
+                />
+              }
             />
           </div>
         </div>

@@ -204,9 +204,134 @@
 
 .governance-filter-bar {
   display: grid;
-  grid-template-columns: repeat(3, minmax(150px, 1fr)) auto;
+  grid-template-columns: repeat(3, minmax(140px, 1fr)) auto;
   gap: 10px;
   margin-bottom: 14px;
+  align-items: center;
+}
+
+.governance-card-actions-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.governance-control-min-h {
+  min-height: var(--control-min-h, 44px);
+}
+
+.governance-batch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-primary-border);
+  border-radius: var(--radius-md);
+  background: var(--color-primary-bg);
+}
+
+.governance-batch-bar--idle {
+  border-style: dashed;
+  background: var(--color-bg-sunken);
+}
+
+.governance-batch-select-all {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin-right: 8px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.governance-batch-select-all input,
+.governance-row-select {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+}
+
+.governance-batch-failed-list,
+.governance-import-failed-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.governance-empty-cta {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  padding: 28px 16px;
+}
+
+.governance-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.governance-import-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.governance-import-editor > p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.governance-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.governance-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.governance-import-result {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-sunken);
+}
+
+.governance-import-result h4 {
+  margin: 0;
+  color: var(--color-text);
+}
+
+.governance-import-skipped {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.governance-negative-editor {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--color-border-strong);
+}
+
+.governance-negative-editor h4 {
+  margin: 0;
+  color: var(--color-text);
 }
 
 .governance-table-scroll {

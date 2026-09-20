@@ -1,0 +1,151 @@
+.storage-backends-control-min-h {
+  min-height: var(--control-min-h, 44px);
+}
+
+.storage-backends-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.storage-backends-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.storage-backends-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.storage-backend-card {
+  border: 1px solid var(--color-border, #d9d9d9);
+  border-radius: var(--radius-md, 8px);
+  padding: 12px 14px;
+  background: var(--color-bg-container, #fff);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.storage-backend-card.is-default {
+  border-color: var(--color-primary, #0052d9);
+  box-shadow: 0 0 0 1px var(--color-primary, #0052d9) inset;
+}
+
+.storage-backend-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.storage-backend-card-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin: 0;
+}
+
+.storage-backend-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.storage-backend-config-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #666);
+}
+
+.storage-backend-config-list code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  word-break: break-all;
+}
+
+.storage-backend-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.storage-backend-form {
+  display: grid;
+  gap: 10px;
+}
+
+.storage-backend-form-field {
+  display: grid;
+  gap: 4px;
+}
+
+.storage-backend-form-field > span {
+  font-size: 12px;
+  color: var(--color-text-secondary, #666);
+}
+
+.storage-backend-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.storage-backend-test-result {
+  margin-top: 4px;
+}
+
+.storage-backend-bind-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  align-items: end;
+  padding-top: 4px;
+  border-top: 1px dashed var(--color-border, #d9d9d9);
+}
+
+.storage-backend-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--color-text-secondary, #666);
+  background: var(--color-bg-sunken, #f5f5f5);
+  border-radius: var(--radius-md, 8px);
+}
+
+.storage-backend-secret-hint {
+  font-size: 12px;
+  color: var(--color-text-tertiary, #999);
+}
+
+.storage-backends-error {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.storage-backend-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 520px;
+  width: min(92vw, 520px);
+  max-height: 85vh;
+  overflow: auto;
+}
+
+.storage-backend-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}

@@ -9,6 +9,8 @@
   --color-primary-bg: #eef3fe;
   --color-primary-bg-strong: #dbe6fd;
   --color-primary-border: #c3d2fb;
+  --color-on-primary: #ffffff;
+  --control-min-h: 44px;
   --color-secondary: #0e7490;
   --color-accent: #3164f4;
   --color-bg: #f4f6fa;
@@ -112,6 +114,7 @@ html[data-theme="dark"] {
   --color-primary-bg: rgba(96, 165, 250, 0.14);
   --color-primary-bg-strong: rgba(96, 165, 250, 0.22);
   --color-primary-border: rgba(96, 165, 250, 0.38);
+  --color-on-primary: #0b1220;
   --color-bg: #0c0f15;
   --color-bg-elevated: #161a23;
   --color-bg-sunken: #12161e;
@@ -2009,6 +2012,7 @@ html[data-theme="dark"] .app-content {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-height: var(--control-min-h, 44px);
   padding: 8px 10px;
   color: var(--color-text-secondary);
   font: inherit;
@@ -2097,6 +2101,51 @@ html[data-theme="dark"] .app-content {
   gap: 20px;
   padding: 9px 0;
   border-bottom: 1px solid var(--color-border-light);
+}
+.adv-row-control .t-input,
+.adv-row-control .t-select,
+.adv-row-control .t-input-number,
+.adv-row-control input,
+.adv-row-control select,
+.adv-row-control .rag-input,
+.adv-row-control .rag-select,
+.config-page .page-topbar .rag-input,
+.config-page .page-topbar .rag-button,
+.config-page .page-topbar .t-input,
+.config-page .page-topbar .t-button,
+.config-page .page-topbar .t-select,
+.auth-recovery-control-min-h {
+  min-height: var(--control-min-h, 44px);
+}
+.auth-recovery-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 12px 14px;
+  text-align: left;
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.auth-recovery-hint.is-compact {
+  padding: 8px 10px;
+}
+.auth-recovery-title {
+  margin: 0;
+  color: var(--color-text);
+  font-weight: 600;
+}
+.auth-recovery-desc {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+.auth-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .adv-row:last-child {
   border-bottom: 0;

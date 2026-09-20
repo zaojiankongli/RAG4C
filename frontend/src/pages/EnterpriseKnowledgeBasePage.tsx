@@ -1,4 +1,5 @@
 import PageState from "../components/PageState";
+import AuthRecoveryHint from "../components/AuthRecoveryHint";
 import PageTopbar from "../components/PageTopbar";
 import type { EnterpriseContext, EnterpriseScope } from "../enterprise-admin/model";
 import { useOptionalKnowledgeWorkspace } from "../knowledge/KnowledgeWorkspaceContext";
@@ -38,6 +39,7 @@ export default function EnterpriseKnowledgeBasePage({
         status="error"
         title="需要企业身份"
         description="连接签名企业身份后才能读取 Knowledge Base Registry 真账。"
+        extra={<AuthRecoveryHint compact title="无法打开知识库注册表" />}
       />
     );
   }

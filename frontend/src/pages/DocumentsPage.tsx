@@ -2042,7 +2042,25 @@ export default function DocumentsPage({
                       (document.status === "completed" || document.status === "error")
                     }
                     emptyContent={
-                      <PageState compact status="empty" title="没有符合筛选条件的文件" />
+                      <PageState
+                        compact
+                        status="empty"
+                        title="没有符合筛选条件的文件"
+                        description="调整关键词或状态筛选后再试，或清除筛选查看全部文档。"
+                        extra={
+                          <Button
+                            tag="button"
+                            type="button"
+                            aria-label="清除文档筛选"
+                            onClick={() => {
+                              applyDocumentFilter("keyword", "");
+                              applyDocumentFilter("status", "all");
+                            }}
+                          >
+                            清除筛选
+                          </Button>
+                        }
+                      />
                     }
                     serverPagination={
                       modernCatalogEnabled && modernPage

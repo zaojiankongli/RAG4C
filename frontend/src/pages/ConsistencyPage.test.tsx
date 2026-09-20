@@ -114,6 +114,8 @@ beforeEach(() => {
   workspace.datasetId = "dataset-a";
   workspace.tenantId = "tenant-a";
   workspace.scope = { datasetId: "dataset-a", tenantId: "tenant-a" };
+  localStorage.setItem("rag4c.knowledge_actor_token", "test-actor-token");
+  localStorage.setItem("rag4c.knowledge_tenant_id", "tenant-a");
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
   connection.checking = false;
   connection.refresh.mockReset();
@@ -131,6 +133,17 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+describe("ConsistencyPage auth recovery", () => {
+  it("shows recovery hint when actor token is missing and does not call APIs", async () => {
+    localStorage.removeItem("rag4c.knowledge_actor_token");
+    render(<ConsistencyPage />);
+    expect(await screen.findByText("一致性报告身份校验失败")).toBeTruthy();
+    expect(screen.getByLabelText("鉴权恢复提示")).toBeTruthy();
+    expect(api.fetchConsistencySummary).not.toHaveBeenCalled();
+    expect(api.fetchConsistencyDeadLetters).not.toHaveBeenCalled();
+  });
+});
 
 describe("ConsistencyPage", () => {
   it("states catalog-only best-effort authority and renders lifeline plus drift categories", async () => {

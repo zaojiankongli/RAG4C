@@ -1,0 +1,155 @@
+// @vitest-environment jsdom
+
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+afterEach(cleanup);
+
+import type { AnswerFact } from "../model/answerEvidenceModel";
+import AnswerEvidencePanel from "./AnswerEvidencePanel";
+import * as api from "../api/answerEvidenceApi";
+
+vi.mock("../api/answerEvidenceApi", () => ({
+  loadAnswerEvidence: vi.fn(),
+  resolveAnswerEvidenceDatasetId: vi.fn(() => "ds-1"),
+}));
+
+const answeredFact: AnswerFact = {
+  id: "fact-1",
+  tenant_id: "tenant-a",
+  dataset_id: "ds-1",
+  run_id: "run-1",
+  outcome_code: "answered",
+  route_code: "rag",
+  citation_count: 2,
+  evidence_count: 2,
+  safe_query_preview: "如何配置对象存储",
+  observed_at: "2026-09-20T10:00:00Z",
+  evidence_refs: [
+    {
+      id: "ref-1",
+      seq: 0,
+      chunk_id: "chunk-1",
+      chunk_revision_id: "chunk-1-r3",
+      document_id: "doc-1",
+      citation_status: "ok",
+    },
+    {
+      id: "ref-2",
+      seq: 1,
+      chunk_id: "chunk-2",
+      chunk_revision_id: null,
+      document_id: null,
+      citation_status: "stale",
+    },
+  ],
+};
+
+const abstainedFact: AnswerFact = {
+  ...answeredFact,
+  id: "fact-2",
+  run_id: "run-2",
+  outcome_code: "abstained",
+  route_code: "abstain",
+  citation_count: 0,
+  evidence_count: 0,
+  safe_query_preview: null,
+  evidence_refs: [],
+};
+
+beforeEach(() => {
+  vi.mocked(api.loadAnswerEvidence).mockReset();
+  vi.mocked(api.resolveAnswerEvidenceDatasetId).mockReset();
+  vi.mocked(api.resolveAnswerEvidenceDatasetId).mockImplementation(() => "ds-1");
+});
+
+describe("AnswerEvidencePanel", () => {
+  it("loads by-run when a run is selected and shows 证据链 outcome/route/counts/ref status tags", async () => {
+    vi.mocked(api.loadAnswerEvidence).mockResolvedValue({
+      items: [answeredFact],
+      count: 1,
+    });
+
+    render(<AnswerEvidencePanel runId="run-1" datasetId="ds-1" />);
+
+    await waitFor(() => expect(screen.getByTestId("answer-evidence-panel")).toBeTruthy());
+    expect(api.loadAnswerEvidence).toHaveBeenCalledWith(
+      "ds-1",
+      { runId: "run-1", limit: 10 },
+      expect.objectContaining({ datasetId: "ds-1" }),
+    );
+
+    expect(screen.getByRole("region", { name: "答案证据链" })).toBeTruthy();
+    expect(screen.getByLabelText("答案事实摘要")).toBeTruthy();
+    expect(screen.getByText("已回答")).toBeTruthy();
+    expect(screen.getByText("RAG")).toBeTruthy();
+    expect(screen.getByLabelText("证据引用列表")).toBeTruthy();
+    expect(screen.getByLabelText("证据引用 0 ok")).toBeTruthy();
+    expect(screen.getByLabelText("证据引用 1 stale")).toBeTruthy();
+    expect(screen.getByText("引用有效")).toBeTruthy();
+    expect(screen.getByText("过期")).toBeTruthy();
+    expect(document.body.textContent).toContain("如何配置对象存储");
+    expect(screen.getByLabelText("打开文档 doc-1")).toBeTruthy();
+
+    const refresh = screen.getByRole("button", { name: "刷新答案证据链" });
+    expect(refresh.getAttribute("class") || "").toContain("answer-evidence-control-min-h");
+  });
+
+  it("falls back to list mode on load without a run and can switch facts", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.loadAnswerEvidence)
+      .mockResolvedValueOnce({ items: [answeredFact, abstainedFact], count: 2 })
+      .mockResolvedValueOnce({ items: [answeredFact, abstainedFact], count: 2 });
+
+    render(<AnswerEvidencePanel datasetId="ds-1" />);
+
+    await waitFor(() =>
+      expect(api.loadAnswerEvidence).toHaveBeenCalledWith(
+        "ds-1",
+        { runId: null, limit: 10 },
+        expect.anything(),
+      ),
+    );
+    expect(await screen.findByText("已回答")).toBeTruthy();
+
+    const switcher = screen.getByRole("group", { name: "选择答案事实" });
+    expect(switcher).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: `选择答案事实 ${abstainedFact.id}` }));
+    expect(await screen.findByText("已弃权")).toBeTruthy();
+    expect(screen.getByLabelText("证据引用为空")).toBeTruthy();
+  });
+
+  it("renders empty state when the selected run has no catalog fact", async () => {
+    vi.mocked(api.loadAnswerEvidence).mockResolvedValue({ items: [], count: 0 });
+
+    render(<AnswerEvidencePanel runId="run-empty" datasetId="ds-1" />);
+
+    expect(await screen.findByLabelText("暂无答案证据")).toBeTruthy();
+    expect(screen.queryByLabelText("证据引用列表")).toBeNull();
+  });
+
+  it("shows an error state with retry on API failure", async () => {
+    const user = userEvent.setup();
+    const failure = Object.assign(new Error("forbidden"), {
+      kind: "http",
+      status: 403,
+    });
+    // projectAnswerEvidenceError checks ApiError instances; simulate via status-bearing error path
+    vi.mocked(api.loadAnswerEvidence)
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce({ items: [answeredFact], count: 1 });
+
+    render(<AnswerEvidencePanel runId="run-1" datasetId="ds-1" />);
+
+    // generic error → 不可用 or 没有读取权限 depending on ApiError identity
+    const alert = await screen.findByRole("alert");
+    expect(alert).toBeTruthy();
+
+    const retry = screen.getByRole("button", { name: "重试加载答案证据链" });
+    expect(retry.getAttribute("class") || "").toContain("answer-evidence-control-min-h");
+    await user.click(retry);
+    await waitFor(() => expect(screen.getByTestId("answer-evidence-panel")).toBeTruthy());
+    expect(api.loadAnswerEvidence).toHaveBeenCalledTimes(2);
+  });
+});

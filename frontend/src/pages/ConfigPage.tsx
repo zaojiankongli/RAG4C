@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- compatibility callback types during TDesign migration */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -26,6 +26,11 @@ import { useConnection } from "../context/ConnectionContext";
 import type { ConfigField, ConfigSnapshot } from "../types/rag";
 
 const { Text } = Typography;
+
+/** 对象存储后端注册表（catalog/milvus 高级配置之后） */
+const StorageBackendsPanel = lazy(
+  () => import("../storage-backends/components/StorageBackendsPanel"),
+);
 
 const FIELD_LABELS: Record<string, string> = {
   "pipeline.hybrid_search_on": "混合检索（关键词 + 语义）",
@@ -683,6 +688,32 @@ export default function ConfigPage() {
                 </div>
               </div>
             )}
+          </Card>
+        </div>
+
+        {/*
+          对象存储后端注册表：catalog / milvus 高级配置之后。
+          控制面 CRUD + 测试连接 + 默认/知识库绑定；密钥永不回显明文。
+        */}
+        <div className="settings-storage-backends" style={{ marginTop: 16 }}>
+          <Card
+            className="settings-admin-card"
+            size="small"
+            title="对象存储后端"
+            extra={<Tag>控制面</Tag>}
+          >
+            <Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
+              注册对象存储实例，设置租户默认与知识库绑定。API 响应不包含明文密钥。
+            </Text>
+            <Suspense
+              fallback={
+                <div className="storage-backend-empty" aria-busy="true">
+                  加载对象存储后端面板…
+                </div>
+              }
+            >
+              <StorageBackendsPanel />
+            </Suspense>
           </Card>
         </div>
         </div>
