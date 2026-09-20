@@ -62,7 +62,7 @@ ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION = (
 QA_FAQ_OPS_REVISION = "0037_qa_faq_ops"
 STORAGE_BACKENDS_REVISION = "0038_storage_backends"
 ANSWER_EVIDENCE_FACTS_REVISION = "0039_answer_evidence_facts"
-HEAD_REVISION = ANSWER_EVIDENCE_FACTS_REVISION
+HEAD_REVISION = ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION
 DATASET_ACL_CONTROL_REQUIRED_TABLES = frozenset({"dataset_acl_mutation_requests"})
 DATASET_ACL_CONTROL_REQUIRED_COLUMNS = {
     "datasets": frozenset({"acl_mode", "acl_revision", "acl_enabled_at", "acl_enabled_by"}),
@@ -9892,7 +9892,7 @@ HEAD_CATALOG_TABLES = HEAD_CATALOG_TABLES | {
     "tenant_knowledge_answer_facts",
     "tenant_knowledge_answer_evidence_refs",
 }
-HEAD_REVISION = ANSWER_EVIDENCE_FACTS_REVISION
+HEAD_REVISION = ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION
 
 _KNOWLEDGE_SERVING_SUPPORTED_DIALECTS = frozenset({"sqlite", "mysql", "mariadb", "postgresql"})
 _KNOWLEDGE_SERVING_STAGE_CODES = ("source", "parse", "chunk", "index", "serve")
@@ -11781,3 +11781,18 @@ def _head_schema_issues(inspector: Any) -> tuple[str, ...]:
             )
         )
     return tuple(sorted(set(issues)))
+
+# QA/FAQ 运维线（0037_qa_faq_ops -> 0038_storage_backends -> 0039_answer_evidence_facts）
+# 在迁移链上排在主线 0037_enterprise_knowledge_operations_feedback 之后，所以它的 head 推进必须
+# 放在本文件最后：上面的审批 check 注册块读的是"此刻的 HEAD_REVISION"，若让这里提前把 head 抬到
+# 0039，0036 就永远不会被注册 —— 之前的 KeyError 就是这么来的。
+for _qa_revision in (
+    QA_FAQ_OPS_REVISION,
+    STORAGE_BACKENDS_REVISION,
+    ANSWER_EVIDENCE_FACTS_REVISION,
+):
+    if _qa_revision not in ENTERPRISE_APPROVAL_CONTROL_REQUIRED_EXACT_CHECK_SQL_BY_REVISION:
+        ENTERPRISE_APPROVAL_CONTROL_REQUIRED_EXACT_CHECK_SQL_BY_REVISION[_qa_revision] = (
+            ENTERPRISE_APPROVAL_CONTROL_REQUIRED_EXACT_CHECK_SQL_BY_REVISION[HEAD_REVISION]
+        )
+    HEAD_REVISION = _qa_revision
