@@ -93,7 +93,10 @@ html[data-theme="anime"] body .app-sider .t-menu__item.t-is-active {
 }
 
 html[data-theme="anime"] body .app-sider .t-menu__group-title {
-  color: #7a5f6c;
+  /* 颜色不在这里定：styles.css 的 `html[data-theme="anime"] .app-sider
+     .t-menu__group-title.t-menu__group-title`（重复类抬到 (0,4,1) 且带 !important）
+     永远赢过本条的 (0,3,2)，原先写在这里的 `color: #7a5f6c` 是一份永不生效的意图。
+     2026-09-21 裁定保留生效值 #c9a8b5，故这里只留排版属性。 */
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 1px;
