@@ -459,6 +459,11 @@ def test_stage26_empty_capability_is_ready_and_stage25_remains_ready(tmp_path: P
     try:
         # 本用例断言的是"在 head 上"的 current 语义，所以升到 head 而不是停在 0036。
         # 用 manifest.upgrade_catalog 而不是再写一个字面量：R2 的冻结 head 漂移教训。
+        # 共享 seed 夹具给时代库补过 0038 的列；这个库接下来还要升到 head，
+        # 而 0038 的 add_column 没有存在性守卫 -> 先还原成真正的时代形态再迁移。
+        from tests.head_catalog import drop_era_columns
+
+        drop_era_columns(engine)
         manifest.upgrade_catalog(str(engine.url))
         assert manifest.inspect_enterprise_knowledge_serving_reliability_capability(engine) == (
             "ready",

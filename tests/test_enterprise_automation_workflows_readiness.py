@@ -611,6 +611,11 @@ def test_readiness_api_returns_503_for_stage25_damage(tmp_path: Path) -> None:
     try:
         # 场景是"已到 head、但 stage25 索引被破坏"。停在 0036 会被 readiness 先判成
         # behind（也是 503，但不是本用例要验的 malformed 路径）。升到 head 且不写死字面量。
+        # 共享 seed 夹具给时代库补过 0038 的列；这个库接下来还要升到 head，
+        # 而 0038 的 add_column 没有存在性守卫 -> 先还原成真正的时代形态再迁移。
+        from tests.head_catalog import drop_era_columns
+
+        drop_era_columns(engine)
         manifest.upgrade_catalog(str(engine.url))
         with engine.begin() as connection:
             connection.execute(text("DROP INDEX ix_tenant_automation_runs_tenant_status_started"))

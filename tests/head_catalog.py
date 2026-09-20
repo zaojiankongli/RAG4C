@@ -186,6 +186,38 @@ ERA_LAZY_ADDED_COLUMNS: dict[str, str] = {
 }
 
 
+def drop_era_columns(engine: Any) -> list[str]:
+    """把 align_era_columns 补过的列再删掉，让库回到**真正的**时代形态。
+
+    存在的必要：`align_era_columns` 常装在共享 seed 夹具里（例 seed_0027），
+    而有些下游用例之后还要把同一个库 `upgrade_catalog()` 升到 head ——
+    `0038_storage_backends` 的 `batch.add_column` **没有存在性守卫**，
+    于是撞成 `duplicate column name: default_storage_backend_id`。
+    （这不是假设：automation_workflows / knowledge_serving 两个 readiness 用例实测就是这样红的。）
+
+    所以"补列"只能是**临时**的：写完时代行，若还要继续迁移，就先还原再迁移。
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    inspector = sa_inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    dropped: list[str] = []
+    statements: list[str] = []
+    for table_name, column_name in ERA_LAZY_ADDED_COLUMNS.items():
+        if table_name not in existing_tables:
+            continue
+        actual = {item["name"] for item in inspector.get_columns(table_name)}
+        if column_name not in actual:
+            continue
+        statements.append(f'ALTER TABLE "{table_name}" DROP COLUMN "{column_name}"')
+        dropped.append(f"{table_name}.{column_name}")
+    if statements:
+        with engine.begin() as connection:
+            for statement in statements:
+                connection.execute(text(statement))
+    return dropped
+
+
 def align_era_columns(engine: Any) -> list[str]:
     """把 ERA_LAZY_ADDED_COLUMNS 里"确实缺失"的列补到已存在的时代表上，返回补了什么。
 
