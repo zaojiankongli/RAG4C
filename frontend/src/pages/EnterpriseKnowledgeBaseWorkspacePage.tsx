@@ -72,7 +72,7 @@ function WorkspaceOverview() {
           <Card title="后续工作面" size="small">
             <ul>
               <li>Release Manifest 将在 Releases 资源中提供可复现发布事实。</li>
-              <li>所有未返回的 authority 均保持为“未返回”，不以演示数据补齐。</li>
+              <li>所有未返回的权威事实均保持为“未返回”，不以演示数据补齐。</li>
               <li>需要变更 ownership 或 Application reference 时返回 Registry 权威入口。</li>
             </ul>
           </Card>
