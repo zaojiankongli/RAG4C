@@ -307,6 +307,17 @@ def test_stamp_existing_rejects_legacy_create_all_with_partial_membership_schema
     with engine.begin() as connection:
         connection.execute(text("DROP TABLE alembic_version"))
     Base.metadata.create_all(engine)
+    # create_all 不会给已存在的基线表补列，所以 0037_qa/0038 新增的列在这里天然缺失。
+    # 本用例要模拟的唯一偏差是 tenant_members 成员关系不完整，不能让夹具顺带引入第二种偏差
+    # （否则守卫会先以"unexpected missing dataset columns"拒绝，测的就不是它想测的东西）。
+    with engine.begin() as connection:
+        for table, column in (
+            ("datasets", "storage_backend_id"),
+            ("tenants", "default_storage_backend_id"),
+        ):
+            existing = {item["name"] for item in inspect(engine).get_columns(table)}
+            if column not in existing:
+                connection.execute(text(f'ALTER TABLE {table} ADD COLUMN "{column}" VARCHAR(64)'))
     before_columns = {item["name"] for item in inspect(engine).get_columns("documents")}
     assert "content_revision" not in before_columns
     assert "chunk_heads" in inspect(engine).get_table_names()
