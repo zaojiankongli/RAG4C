@@ -76,6 +76,15 @@ from core.catalog_schema import (
     ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
     ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_ISSUE_FRAGMENTS,
     ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_TABLES,
+    QA_FAQ_OPS_REVISION,
+    QA_FAQ_OPS_ISSUE_FRAGMENTS,
+    QA_FAQ_OPS_REQUIRED_TABLES,
+    STORAGE_BACKENDS_REVISION,
+    STORAGE_BACKENDS_ISSUE_FRAGMENTS,
+    STORAGE_BACKENDS_REQUIRED_TABLES,
+    ANSWER_EVIDENCE_FACTS_REVISION,
+    ANSWER_EVIDENCE_FACTS_ISSUE_FRAGMENTS,
+    ANSWER_EVIDENCE_FACTS_REQUIRED_TABLES,
     inspect_catalog_schema,
 )
 from sqlalchemy import create_engine, text
@@ -438,6 +447,28 @@ _CAPABILITIES = (
         ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
         ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_TABLES,
         issue_fragments=ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_ISSUE_FRAGMENTS,
+    ),
+    # QA/FAQ 运维线并入后 head 前进到 0039；这三段必须注册，否则
+    # _REVISION_INDEX[HEAD_REVISION] is None，_evaluate_readiness 的所有"ready/behind"分支
+    # 都要求 head_index 非空，一个已升级到 head 的库会被永久判成 malformed（fail-closed，
+    # 但等于权威接口不可用）。注册是纯加法：不改判定语义，只让新链尾有对应能力组。
+    _Capability(
+        "enterprise_qa_faq_operations",
+        QA_FAQ_OPS_REVISION,
+        QA_FAQ_OPS_REQUIRED_TABLES,
+        issue_fragments=QA_FAQ_OPS_ISSUE_FRAGMENTS,
+    ),
+    _Capability(
+        "enterprise_storage_backends",
+        STORAGE_BACKENDS_REVISION,
+        STORAGE_BACKENDS_REQUIRED_TABLES,
+        issue_fragments=STORAGE_BACKENDS_ISSUE_FRAGMENTS,
+    ),
+    _Capability(
+        "enterprise_answer_evidence_facts",
+        ANSWER_EVIDENCE_FACTS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REQUIRED_TABLES,
+        issue_fragments=ANSWER_EVIDENCE_FACTS_ISSUE_FRAGMENTS,
     ),
 )
 _REVISION_INDEX = {capability.revision: index for index, capability in enumerate(_CAPABILITIES)}

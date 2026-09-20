@@ -11786,6 +11786,25 @@ def _head_schema_issues(inspector: Any) -> tuple[str, ...]:
 # 在迁移链上排在主线 0037_enterprise_knowledge_operations_feedback 之后，所以它的 head 推进必须
 # 放在本文件最后：上面的审批 check 注册块读的是"此刻的 HEAD_REVISION"，若让这里提前把 head 抬到
 # 0039，0036 就永远不会被注册 —— 之前的 KeyError 就是这么来的。
+#
+# 每张表都属于 HEAD_CATALOG_TABLES（见文件头部），所以这三段的存在性由 inspect_catalog_schema
+# 负责；下面的 *_ISSUE_FRAGMENTS 只用于把已检出的 issue 归因到能力组（readiness 侧）。
+QA_FAQ_OPS_TABLES = frozenset({"qa_negative_questions"})
+STORAGE_BACKENDS_TABLES = frozenset({"storage_backends"})
+ANSWER_EVIDENCE_FACTS_TABLES = frozenset(
+    {"tenant_knowledge_answer_facts", "tenant_knowledge_answer_evidence_refs"}
+)
+QA_FAQ_OPS_REQUIRED_TABLES = QA_FAQ_OPS_TABLES
+STORAGE_BACKENDS_REQUIRED_TABLES = STORAGE_BACKENDS_TABLES
+ANSWER_EVIDENCE_FACTS_REQUIRED_TABLES = ANSWER_EVIDENCE_FACTS_TABLES
+QA_FAQ_OPS_ISSUE_FRAGMENTS = tuple(f"{table}." for table in sorted(QA_FAQ_OPS_TABLES))
+STORAGE_BACKENDS_ISSUE_FRAGMENTS = tuple(
+    f"{table}." for table in sorted(STORAGE_BACKENDS_TABLES)
+)
+ANSWER_EVIDENCE_FACTS_ISSUE_FRAGMENTS = tuple(
+    f"{table}." for table in sorted(ANSWER_EVIDENCE_FACTS_TABLES)
+)
+
 for _qa_revision in (
     QA_FAQ_OPS_REVISION,
     STORAGE_BACKENDS_REVISION,
