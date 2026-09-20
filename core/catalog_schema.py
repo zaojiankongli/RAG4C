@@ -5638,9 +5638,9 @@ def inspect_enterprise_task_operations_capability(
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
             ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
-            QA_FAQ_OPS_REVISION,
-            STORAGE_BACKENDS_REVISION,
-            ANSWER_EVIDENCE_FACTS_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }:
             if not task_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -6680,9 +6680,9 @@ def inspect_enterprise_knowledge_base_release_capability(
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
             ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
-            QA_FAQ_OPS_REVISION,
-            STORAGE_BACKENDS_REVISION,
-            ANSWER_EVIDENCE_FACTS_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }:
             if not release_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -6966,9 +6966,9 @@ def inspect_enterprise_release_quality_certification_capability(
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
             ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
-            QA_FAQ_OPS_REVISION,
-            STORAGE_BACKENDS_REVISION,
-            ANSWER_EVIDENCE_FACTS_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }:
             if not quality_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -7344,9 +7344,9 @@ def inspect_enterprise_release_quality_operations_capability(
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
             ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
-            QA_FAQ_OPS_REVISION,
-            STORAGE_BACKENDS_REVISION,
-            ANSWER_EVIDENCE_FACTS_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }:
             if not operations_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -7728,9 +7728,9 @@ def inspect_enterprise_notification_center_capability(
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
             ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
-            QA_FAQ_OPS_REVISION,
-            STORAGE_BACKENDS_REVISION,
-            ANSWER_EVIDENCE_FACTS_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }:
             if not notification_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -8443,9 +8443,9 @@ def _knowledge_base_registry_capability_issues(
                     ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                     ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
                     ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
-                    QA_FAQ_OPS_REVISION,
-                    STORAGE_BACKENDS_REVISION,
-                    ANSWER_EVIDENCE_FACTS_REVISION,
+                QA_FAQ_OPS_REVISION,
+                STORAGE_BACKENDS_REVISION,
+                ANSWER_EVIDENCE_FACTS_REVISION,
                 }
                 else ENTERPRISE_APPROVAL_ACTION_TYPES_0030
                 if approval_action_revision
@@ -8470,9 +8470,9 @@ def _knowledge_base_registry_capability_issues(
                     ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                     ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
                     ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
-                    QA_FAQ_OPS_REVISION,
-                    STORAGE_BACKENDS_REVISION,
-                    ANSWER_EVIDENCE_FACTS_REVISION,
+                QA_FAQ_OPS_REVISION,
+                STORAGE_BACKENDS_REVISION,
+                ANSWER_EVIDENCE_FACTS_REVISION,
                 }
                 else ENTERPRISE_APPROVAL_ACTION_TYPES_0030
                 if approval_action_revision
@@ -8505,9 +8505,9 @@ def _knowledge_base_registry_capability_issues(
                     ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                     ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
                     ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
-                    QA_FAQ_OPS_REVISION,
-                    STORAGE_BACKENDS_REVISION,
-                    ANSWER_EVIDENCE_FACTS_REVISION,
+                QA_FAQ_OPS_REVISION,
+                STORAGE_BACKENDS_REVISION,
+                ANSWER_EVIDENCE_FACTS_REVISION,
                 }
                 else ENTERPRISE_APPROVAL_ACTION_TYPES_0030
                 if approval_action_revision
@@ -8582,9 +8582,9 @@ def inspect_enterprise_knowledge_base_registry_capability(
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
             ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
-            QA_FAQ_OPS_REVISION,
-            STORAGE_BACKENDS_REVISION,
-            ANSWER_EVIDENCE_FACTS_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }:
             known_pre_0028 = revision in _known_catalog_revisions()
             if not registry_present and known_pre_0028:
@@ -8694,9 +8694,9 @@ def _workspace_authorization_capability_issues(
                 ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                 ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
                 ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
-                QA_FAQ_OPS_REVISION,
-                STORAGE_BACKENDS_REVISION,
-                ANSWER_EVIDENCE_FACTS_REVISION,
+            QA_FAQ_OPS_REVISION,
+            STORAGE_BACKENDS_REVISION,
+            ANSWER_EVIDENCE_FACTS_REVISION,
             }
             else ENTERPRISE_APPROVAL_ACTION_TYPES_0030
             if approval_action_revision
@@ -8789,9 +8789,9 @@ def inspect_workspace_authorization_capability(bind: Any) -> tuple[str, tuple[st
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
             ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
-            QA_FAQ_OPS_REVISION,
-            STORAGE_BACKENDS_REVISION,
-            ANSWER_EVIDENCE_FACTS_REVISION,
+        QA_FAQ_OPS_REVISION,
+        STORAGE_BACKENDS_REVISION,
+        ANSWER_EVIDENCE_FACTS_REVISION,
         }
         if revision not in supported_revisions:
             known_pre_0027 = revision in _known_catalog_revisions()
