@@ -17,7 +17,6 @@ from core import catalog_schema
 from models.orm import (
     Account,
     App,
-    Tenant,
     TenantMember,
     TenantWorkspace,
     TenantWorkspaceDataset,

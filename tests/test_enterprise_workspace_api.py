@@ -23,6 +23,7 @@ from core.enterprise_tenant_idempotency import (
     TenantMutationIdempotencyInProgress,
     TenantMutationIdempotencyValidationError,
 )
+from tests.head_catalog import align_era_columns
 from models.orm import Account, Base, Dataset, Tenant, TenantMember
 from server.knowledge_auth import issue_knowledge_actor_token
 
@@ -68,6 +69,7 @@ def _auth_engine():
         engine,
         tables=[Tenant.__table__, Account.__table__, TenantMember.__table__],
     )
+    align_era_columns(engine)
     with Session(engine) as session:
         session.add_all(
             [
@@ -190,6 +192,7 @@ def _real_0026_engine(tmp_path):
     upgrade_catalog(url, "0025_enterprise_approval_control")
 
     seed_engine = create_engine(url)
+    align_era_columns(seed_engine)
     with Session(seed_engine) as session:
         session.add_all(
             [

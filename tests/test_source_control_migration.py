@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from core import catalog_schema
 from core.catalog_schema import _alembic_config
+from tests.head_catalog import align_era_columns
 from models.orm import DataSourceRecord, Tenant
 
 
@@ -247,6 +248,7 @@ def test_source_sync_run_database_checks_reject_invalid_authority(tmp_path: Path
     config = _alembic_config(url)
     command.upgrade(config, "0013_source_control")
     engine = create_engine(url)
+    align_era_columns(engine)
     with Session(engine) as session:
         session.add(Tenant(id="tenant-1", name="Tenant"))
         _add_legacy_dataset(session, tenant_id="tenant-1", dataset_id="dataset-1")
@@ -308,6 +310,7 @@ def test_0013_populated_retry_rows_downgrade_and_reupgrade_deterministically(
     config = _alembic_config(url)
     command.upgrade(config, "0013_source_control")
     engine = create_engine(url)
+    align_era_columns(engine)
     with Session(engine) as session:
         session.add(Tenant(id="tenant-populated", name="Tenant"))
         _add_legacy_dataset(session, tenant_id="tenant-populated", dataset_id="dataset-populated")
@@ -379,6 +382,7 @@ def test_0013_upgrade_normalizes_legacy_running_rows_to_pending(tmp_path: Path) 
     config = _alembic_config(url)
     command.upgrade(config, "0012_retrieval_experiments")
     engine = create_engine(url)
+    align_era_columns(engine)
     with Session(engine) as session:
         session.add(Tenant(id="tenant-legacy", name="Tenant"))
         _add_legacy_dataset(session, tenant_id="tenant-legacy", dataset_id="dataset-legacy")
@@ -461,6 +465,7 @@ def test_0013_disposable_mysql_legacy_running_and_populated_roundtrip() -> None:
         config = _alembic_config(test_url.render_as_string(hide_password=False))
         command.upgrade(config, "0012_retrieval_experiments")
         engine = create_engine(test_url)
+        align_era_columns(engine)
         with Session(engine) as session:
             session.add(Tenant(id="tenant-mysql", name="Tenant"))
             _add_legacy_dataset(session, tenant_id="tenant-mysql", dataset_id="dataset-mysql")

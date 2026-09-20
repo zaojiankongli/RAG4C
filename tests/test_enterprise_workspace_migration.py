@@ -12,6 +12,7 @@ from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from tests.head_catalog import align_era_columns
 from models.orm import Account, Dataset, Tenant, TenantMember
 
 REVISION = "0026_enterprise_workspace_control"
@@ -50,6 +51,7 @@ def seed_0025(url: str) -> None:
     api.upgrade_catalog(url, DOWN_REVISION)
     engine = engine_for(url)
     try:
+        align_era_columns(engine)
         with Session(engine) as session:
             accounts = [
                 Account(id="owner-a", name="Owner A", email="owner-a@example.test"),
@@ -242,6 +244,7 @@ def test_long_tenant_name_backfill_is_deterministic_and_within_mysql_column_cont
         seed_0025(url)
         engine = engine_for(url)
         try:
+            align_era_columns(engine)
             with Session(engine) as session:
                 session.add(
                     Tenant(id="tenant-long", name=long_name, plan="enterprise", status="active")
@@ -285,6 +288,7 @@ def test_casefold_expanding_tenant_name_keeps_normalized_name_within_256(
     seed_0025(url)
     engine = engine_for(url)
     try:
+        align_era_columns(engine)
         with Session(engine) as session:
             session.add(
                 Tenant(

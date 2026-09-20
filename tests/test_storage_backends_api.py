@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from config.settings import KnowledgeSecuritySettings, RunHistorySettings, TenantSettings
 from core import catalog
-from models.orm import Account, Base, Dataset, Document, Tenant, TenantMember
+from models.orm import Account, Base, Dataset, Tenant, TenantMember
 from server.knowledge_auth import issue_knowledge_actor_token
 from server.storage_backends_api import router
 

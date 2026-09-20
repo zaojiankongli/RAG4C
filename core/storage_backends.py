@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from models.orm import Dataset, Document, StorageBackend, Tenant
+from models.orm import Dataset, StorageBackend, Tenant
 
 PROVIDERS = ("local", "minio", "s3", "cos", "oss", "tos", "obs")
 SECRET_FIELDS = frozenset({"secret_access_key", "access_key_id"})

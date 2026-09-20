@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from tests.head_catalog import align_era_columns
 from io import StringIO
 import os
 from pathlib import Path
@@ -24,6 +25,7 @@ TABLES = {"retrieval_experiments", "retrieval_judgments"}
 
 
 def _assert_live_immutable_triggers(engine) -> None:
+    align_era_columns(engine)
     with Session(engine) as session:
         session.add(Tenant(id="trigger-tenant", name="Trigger Tenant"))
         session.add(Dataset(id="trigger-dataset", tenant_id="trigger-tenant", name="Trigger KB"))

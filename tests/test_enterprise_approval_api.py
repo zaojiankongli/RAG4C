@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from config.settings import KnowledgeSecuritySettings, RunHistorySettings, TenantSettings
 from core.catalog_schema import _alembic_config
+from tests.head_catalog import align_era_columns
 from models.orm import Account, Base, Tenant, TenantGroup, TenantGroupMember, TenantMember
 from server.knowledge_auth import issue_knowledge_actor_token
 
@@ -68,6 +69,7 @@ def _upgrade_catalog(url: str, revision: str) -> None:
 
 def _seed_scope(engine: Any) -> None:
     joined = NOW - timedelta(days=30)
+    align_era_columns(engine)
     with Session(engine) as session:
         session.add_all(
             [

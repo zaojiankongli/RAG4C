@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from tests.head_catalog import align_era_columns
 from io import StringIO
 import os
 from pathlib import Path
@@ -331,6 +332,7 @@ def test_orm_defaults_and_database_state_constraints() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     BaseMetadata = DocumentDeleteBatch.metadata
     BaseMetadata.create_all(engine)
+    align_era_columns(engine)
     with Session(engine) as session:
         tenant = Tenant(id="tenant-1", name="Tenant")
         dataset = Dataset(id="dataset-1", tenant_id="tenant-1", name="Dataset")

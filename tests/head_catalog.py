@@ -176,3 +176,53 @@ def seed_head_authority(engine: Any, *, now: str | None = None) -> dict[str, int
                 created["bindings"] += 1
 
     return created
+
+
+# 0038_storage_backends 给核心表加的两个可空列。时代夹具（先升旧 revision、再用当前 ORM
+# 模型写行）会因为旧表没有它们而直接 OperationalError。新增这类列时同步更新这里。
+ERA_LAZY_ADDED_COLUMNS: dict[str, str] = {
+    "tenants": "default_storage_backend_id",
+    "datasets": "storage_backend_id",
+}
+
+
+def align_era_columns(engine: Any) -> list[str]:
+    """把 ERA_LAZY_ADDED_COLUMNS 里"确实缺失"的列补到已存在的时代表上，返回补了什么。
+
+    刻意不做通用 diff：曾经写成"把 head 模型缺的列都补上"，结果它撞到
+    `datasets.serving_release_id` —— 那是主线自己的列，时代夹具从不通过 head ORM 写
+    datasets，所以"通用对齐"会伪造出没人需要的 schema。列清单必须显式声明。
+
+    仍然保留约束自检：只补可空、无外键、无唯一的列，否则抛错让人来决策。
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    from models.orm import Base
+
+    inspector = sa_inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    added: list[str] = []
+    statements: list[str] = []
+    for table_name, column_name in ERA_LAZY_ADDED_COLUMNS.items():
+        if table_name not in existing_tables:
+            continue
+        actual = {item["name"] for item in inspector.get_columns(table_name)}
+        if column_name in actual:
+            continue
+        column = Base.metadata.tables[table_name].columns.get(column_name)
+        if column is None or not column.nullable or column.foreign_keys or column.unique:
+            raise RuntimeError(
+                f"{table_name}.{column_name} 不是惰性的可空无约束列，不能自动补，请显式改夹具。"
+            )
+        spec = (
+            "VARCHAR(64)"
+            if column.type.__class__.__name__ == "String"
+            else str(column.type.compile(engine.dialect))
+        )
+        statements.append(f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {spec}')
+        added.append(f"{table_name}.{column_name}")
+    if statements:
+        with engine.begin() as connection:
+            for statement in statements:
+                connection.execute(text(statement))
+    return added

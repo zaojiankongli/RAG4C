@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from tests.head_catalog import align_era_columns
 import os
 import uuid
 from pathlib import Path
@@ -136,6 +137,7 @@ def test_database_constraints_reject_cross_scope_and_forged_parent_keys(
     url = sqlite_url(tmp_path / "governance-constraints.db")
     command.upgrade(_alembic_config(url), "head")
     engine = create_engine(url)
+    align_era_columns(engine)
     with Session(engine) as session:
         session.execute(text("PRAGMA foreign_keys=ON"))
         session.add_all(

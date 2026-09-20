@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core import catalog_schema
+from tests.head_catalog import align_era_columns
 from models.orm import (
     Account,
     App,
@@ -103,6 +104,7 @@ def seed_0027(url: str, *, long_ids: bool = False) -> dict[str, str]:
 
     engine = engine_for(url)
     try:
+        align_era_columns(engine)
         with Session(engine) as session:
             session.add_all(
                 [

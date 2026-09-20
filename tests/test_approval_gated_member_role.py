@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from config.settings import KnowledgeSecuritySettings, RunHistorySettings, TenantSettings
 from core.catalog_schema import _alembic_config
+from tests.head_catalog import align_era_columns
 from models.orm import Account, Tenant, TenantMember
 from server.knowledge_auth import issue_knowledge_actor_token
 
@@ -43,6 +44,7 @@ def _configure_sqlite(engine: Any) -> None:
 
 def _seed(engine: Any) -> None:
     joined = NOW - timedelta(days=30)
+    align_era_columns(engine)
     with Session(engine) as session:
         session.add(Tenant(id=TENANT_ID, name="Stage 15 Tenant", status="active"))
         session.add_all(

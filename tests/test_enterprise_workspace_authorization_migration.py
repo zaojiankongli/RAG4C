@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core import catalog_schema
+from tests.head_catalog import align_era_columns
 from models.orm import Account, Tenant, TenantMember
 
 REVISION = "0027_enterprise_workspace_authorization"
@@ -49,6 +50,7 @@ def seed_0026(url: str, *, include_long_workspace: bool = False) -> str | None:
     catalog_schema.upgrade_catalog(url, "0025_enterprise_approval_control")
     engine = engine_for(url)
     try:
+        align_era_columns(engine)
         with Session(engine) as session:
             session.add_all(
                 [

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from core import catalog_schema
 from core.catalog_schema import _alembic_config
 from core.knowledge_governance import AuditContext
+from tests.head_catalog import align_era_columns
 
 
 def _sqlite_url(path: Path) -> str:
@@ -52,6 +53,7 @@ def _indexes(inspector, table: str) -> dict[str, tuple[str, ...]]:
 def _seed_scope(engine) -> None:
     from models.orm import DataSourceRecord, Tenant
 
+    align_era_columns(engine)
     with Session(engine) as session:
         session.add(Tenant(id="tenant-schedule", name="Tenant", plan="enterprise"))
         session.execute(
