@@ -361,8 +361,10 @@ def bridge_api(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(catalog, "get_engine", lambda: engine)
     from server.app import app as bridge_app
 
-    bridge_app.state.knowledge_auth_engine = engine
-    bridge_app.state.knowledge_auth_settings = settings
+    # 裸赋值会把内存 sqlite 引擎永久留在进程级 app.state 上，污染后续用例
+    # （test_enterprise_admin_api 的引擎同一性断言即因此变红）；monkeypatch 会在 teardown 还原。
+    monkeypatch.setattr(bridge_app.state, "knowledge_auth_engine", engine)
+    monkeypatch.setattr(bridge_app.state, "knowledge_auth_settings", settings, raising=False)
     return TestClient(
         bridge_app,
         client=("10.0.0.2", 50000),

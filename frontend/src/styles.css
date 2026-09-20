@@ -19,9 +19,29 @@
   --color-border: #e6eaf1;
   --color-border-light: #eef1f6;
   --color-border-strong: #d4dae5;
+  /* 控件边界必须独立于装饰性 hairline：WCAG 1.4.11 要求表单控件边界 ≥3:1，
+     实测旧值 #e3e7ee 压在 #f4f6fa 画布上只有 1.1:1。 */
+  --color-border-control: #6b7280;
+  /* 结构性引导线（时间轴导轨、虚线占位框）：要看得见，但不是控件边界，
+     所以既不能用 --color-border-control（太重），也不能用 --color-border-strong（太淡）。 */
+  --color-border-guide: #b7c5d8;
   --color-text: #101828;
   --color-text-secondary: #475467;
-  --color-text-tertiary: #667085;
+  /* #667085 压在 sunken/hover 底色上只有 4.4~4.5:1 —— 它在 12~14px 正文级
+     文字里被大量使用，是本轮 216 条对比度违规里最大的一簇边缘失分。 */
+  --color-text-tertiary: #5b6472;
+  /* eyebrow / 小字号强调标签的语义色：10px 文字必须达 AA 4.5:1，
+     不能直接取品牌色（浅色 #3164f4 在白底只有 4.4:1）。 */
+  --color-eyebrow: #1f46b8;
+  --color-eyebrow-warning: #92400e;
+  /* 压在 --color-primary 实色上的前景色：浅色主题白字 4.9:1 达标，
+     深色主题的品牌蓝 #60a5fa 配白字只有 2.5:1，必须换成深色墨。 */
+  --color-on-primary: #ffffff;
+  --color-accent-solid: #3164f4;
+  /* 交互控件命中区下限：窄屏按 WCAG 2.5.5 抬到 44px。用 token 而不是在
+     @media 里重写类规则——类规则散在后段，同特异性会赢过媒体查询。 */
+  --control-min-h: 32px;
+  --control-min-h-compact: 28px;
   --color-success: #166534;
   --color-success-bg: #ecfdf3;
   --color-warning: #6b2d0e;
@@ -120,9 +140,15 @@ html[data-theme="dark"] {
   --color-border: #262c3a;
   --color-border-light: #1f242f;
   --color-border-strong: #3a4254;
+  --color-border-control: #6e7889;
+  --color-border-guide: #506079;
   --color-text: #f2f4f7;
   --color-text-secondary: #c3c9d4;
   --color-text-tertiary: #98a2b3;
+  --color-eyebrow: #bfdbfe;
+  --color-eyebrow-warning: #fbbf24;
+  --color-on-primary: #0c0f15;
+  --color-accent-solid: #486fd1;
   --color-success: #4ade80;
   --color-success-bg: rgba(74, 222, 128, 0.12);
   --color-warning: #fbbf24;
@@ -225,9 +251,11 @@ html[data-theme="dark"] {
   --td-text-color-brand: #84a2ff;
   --td-text-color-link: #93c5fd;
   --td-border-level-1-color: #2a2f38;
-  --td-border-level-2-color: #3a4150;
+  /* TDesign 的 .t-input / .t-input-number__decrease|increase 直接取 level-2 当描边，
+     不经过 --td-component-border；只改后者会让控件边界原地不动（R9 实测 1.7:1）。 */
+  --td-border-level-2-color: var(--color-border-control);
   --td-component-stroke: #343a45;
-  --td-component-border: #3a4150;
+  --td-component-border: var(--color-border-control);
   --td-rag-success-text: #4ade80;
   --td-rag-warning-text: #fbbf24;
   --td-rag-error-text: #f87171;
@@ -347,18 +375,51 @@ html[data-theme="anime"] .app-sider.app-sider {
 }
 /* 二次元主题：TDesign 品牌色变量全局粉橙化（按钮/标签/链接/选中态一改全改） */
 html[data-theme="anime"] {
-  --td-brand-color: #ff7fa5;
+  /* 品牌粉此前同时充当「文字/图标色」和「白字底色」：#ff7fa5 压白底 2.4:1、
+     #f06292 压白字 3.1:1，两头都不达 AA。-7/--td-brand-color 收到深玫瑰
+     #c2185b（白底 5.9:1、白字压它 5.9:1），浅粉保留在 -1~-6 做底色与描边。 */
+  --td-brand-color: #c2185b;
   --td-brand-color-1: #fff0f4;
   --td-brand-color-2: #ffe4ec;
   --td-brand-color-3: #ffc2d4;
   --td-brand-color-4: #ff9ebc;
   --td-brand-color-5: #ff8aae;
   --td-brand-color-6: #ff7fa5;
-  --td-brand-color-7: #f06292;
-  --td-brand-color-8: #e05a80;
+  --td-brand-color-7: #c2185b;
+  --td-brand-color-8: #a91b4d;
   --td-brand-color-9: #c44a6c;
   --td-brand-color-10: #a03a58;
-  --td-brand-color: #ff7fa5;
+  --color-border-control: #7a5560;
+  /* 不覆写就会回落 :root 的蓝灰 #b7c5d8：粉画布上长出蓝灰导轨，与 R7 的蓝焦点环同源。
+     #ddb4c4 压 #fff9fb 约 1.75:1，与浅色主题同一档可见度。 */
+  --color-border-guide: #ddb4c4;
+  /* --color-primary* 整族此前 anime 一个都没覆写（303 个消费点全在拿 :root 的蓝），
+     于是粉主题里链接/选中态/按钮/图表描边是蓝的，而焦点光晕是同族玫瑰色。
+     定值判据不是"挑个好看的粉"，而是**同角色 = 同可见度档、只换色相**：
+     每个值压 anime 画布 #fff9fb 的对比度，落在 :root 同角色压白底的同一档
+     （primary 5.65 vs 4.93、hover 6.84 vs 6.22、strong 8.60 vs 8.00、
+     border 1.45 vs 1.51、bg 1.06 vs 1.11、bg-strong 1.15 vs 1.25）。
+     前五个体量直接复用本块已有的 --td-brand-color-7/8/3/1/2；
+     只有 --color-primary-strong 是新的更深一阶，用来复刻 :root 里
+     strong 比 hover 再深一阶的关系。控件边界仍归 --color-border-control 管，
+     这里没动那条线。 */
+  --color-primary: #c2185b;
+  --color-primary-hover: #a91b4d;
+  --color-primary-strong: #8e1741;
+  --color-primary-bg: #fff0f4;
+  --color-primary-bg-strong: #ffe4ec;
+  --color-primary-border: #ffc2d4;
+  --color-primary-light: #fff0f4;
+  --color-primary-soft: #fff0f4;
+  --color-eyebrow: #a03a58;
+  --color-eyebrow-warning: #9a3412;
+  /* 焦点可见性 token：此前 anime 块一个都没覆写，粉主题的焦点环/光晕直接回落成
+     :root 的蓝色 rgba(49,100,244)，既串味也不易辨。补齐为同族深玫瑰。 */
+  --color-accent-solid: #c2185b;
+  --color-focus-ring: #c2185b;
+  --focus-ring: 0 0 0 3px rgba(194, 24, 91, 0.28);
+  --shadow-glow: 0 0 0 3px rgba(194, 24, 91, 0.14);
+  --td-brand-color-focus: #ffe4ec;
 }
 .sider-brand {
   display: flex;
@@ -545,12 +606,51 @@ html[data-theme="anime"] .app-sider .t-menu__group-title.t-menu__group-title {
  * 只加"命中区"（min-width/min-height），不动图标的视觉尺寸与字号——视觉上几乎无感，
  * 手指的落点却从 28px 高变成 44px。用 @media 收在窄屏，桌面端保持紧凑。 */
 @media (max-width: 480px) {
-  .app-topbar .rag-button,
-  .app-topbar .rag-button.is-text,
+  .mobile-nav-toggle,
   .app-sider .rag-button.is-text,
   .sider-actions .rag-button.is-text {
     min-width: 44px;
     min-height: 44px;
+  }
+  /* 表单控件的命中区：/config 单页在 375px 下量到 53 处 <44px，
+     主要是数字步进器 24×24、样例句 chip 与 select 触发器。
+     只抬 min-height / min-width，不改字号与视觉密度。 */
+  .t-input-number__decrease,
+  .t-input-number__increase {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .t-select__trigger-element,
+  .rag-select .t-select__input {
+    min-height: 44px;
+  }
+  .sample-chip,
+  .rag-chip {
+    min-height: 44px;
+  }
+  .t-button--variant-text,
+  .t-button--variant-outline,
+  .t-button--variant-base {
+    min-height: 44px;
+  }
+  /* 兼容层自绘控件（rag-button / facet-item / 原生 select）此前完全没进过
+     命中区规则：375px 下 `button.rag-button.is-default` 28px 高一项就占 66 条。
+     .rag-button 走 --control-min-h，避开同特异性类规则的后置覆盖。 */
+  :root {
+    --control-min-h: 44px;
+    --control-min-h-compact: 44px;
+  }
+  .facet-item.facet-item,
+  select,
+  .t-select__wrap select,
+  button {
+    min-height: 44px;
+  }
+  /* 分段/页签标签的可点区域：375px 下 17~39px 宽（"All"/"Failed"/"活动"）点不准。
+     只加 min-width，文字仍居中，视觉上是"略微变松"。 */
+  .t-tabs__nav-item,
+  .rag-segmented button {
+    min-width: 44px;
   }
 }
 .status-dot {
@@ -657,7 +757,7 @@ html[data-theme="dark"] .app-content {
   width: 28px;
   height: 28px;
   place-items: center;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   font-size: var(--font-size-lg);
   background: linear-gradient(135deg, var(--color-primary-bg) 0%, var(--color-primary-bg-strong) 100%);
   border: 1px solid var(--color-primary-border);
@@ -766,7 +866,11 @@ html[data-theme="dark"] .app-content {
 }
 .app-content .t-input:hover,
 .app-content .t-select-selector:hover {
-  border-color: var(--color-primary-border) !important;
+  /* 原来取 --color-primary-border(#c3d2fb)：那是给横幅/导轨用的浅蓝面板描边，
+     压在白底只有 1.51:1 —— 悬停是「控件状态」，WCAG 1.4.11 要 ≥3:1。
+     静止态已是 --color-border-control(#6b7280, 4.8:1)，悬停再往深走只能用品牌色，
+     与聚焦态同色但少了光晕，层级仍分得开。 */
+  border-color: var(--color-primary) !important;
 }
 .app-content .t-input:focus,
 .app-content .t-input--focused,
@@ -828,7 +932,7 @@ html[data-theme="dark"] .app-content {
   left: 12px;
   z-index: 1000;
   padding: 8px 12px;
-  color: #fff;
+  color: var(--color-on-primary);
   background: var(--color-primary);
   border-radius: var(--radius-md);
 }
@@ -892,7 +996,7 @@ html[data-theme="dark"] .app-content {
   line-height: 1;
 }
 .stat-card .stat-value-icon.is-primary {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
 }
 .stat-card .stat-value-icon.is-success {
   color: var(--color-success);
@@ -915,7 +1019,7 @@ html[data-theme="dark"] .app-content {
   font-size: var(--font-size-lg);
 }
 .stat-icon.is-primary {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   background: var(--color-primary-bg);
 }
 .stat-icon.is-success {
@@ -1026,7 +1130,7 @@ html[data-theme="dark"] .app-content {
   background: var(--color-danger-bg);
 }
 .doc-file-icon.is-word {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   background: var(--color-primary-bg);
 }
 .doc-file-icon.is-excel {
@@ -1241,7 +1345,7 @@ html[data-theme="dark"] .app-content {
 }
 .citation-item.active {
   background: var(--color-primary-bg);
-  border-color: var(--color-primary);
+  border-color: var(--color-primary-strong);
 }
 .citation-claim {
   display: flex;
@@ -1259,7 +1363,7 @@ html[data-theme="dark"] .app-content {
   height: 18px;
   margin-top: 1px;
   place-items: center;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   font-weight: 600;
@@ -1267,7 +1371,7 @@ html[data-theme="dark"] .app-content {
   border-radius: var(--radius-sm);
 }
 .citation-item.active .citation-index {
-  color: #fff;
+  color: var(--color-on-primary);
   background: var(--color-primary);
 }
 .citation-meta {
@@ -1366,7 +1470,7 @@ html[data-theme="dark"] .app-content {
   font-weight: 600;
 }
 .markdown-body a {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
 }
 .markdown-body img {
   max-width: 100%;
@@ -1407,7 +1511,7 @@ html[data-theme="dark"] .app-content {
 }
 .phase-step.is-active,
 .phase-step.is-done {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   font-weight: 500;
 }
 /* 「回到底部」浮动按钮：定位锚在输入区上沿，而不是写死 bottom: 108px。
@@ -1444,7 +1548,7 @@ html[data-theme="dark"] .app-content {
     box-shadow var(--transition-fast);
 }
 .input-box:focus-within {
-  border-color: var(--color-primary);
+  border-color: var(--color-primary-strong);
   box-shadow: var(--shadow-glow);
 }
 .query-input.t-input {
@@ -1539,7 +1643,7 @@ html[data-theme="dark"] .app-content {
 .welcome-card > svg {
   flex: 0 0 auto;
   margin-top: 2px;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   font-size: var(--font-size-xl);
 }
 .welcome-card-title {
@@ -1577,7 +1681,7 @@ html[data-theme="dark"] .app-content {
 }
 .sample-chip:hover,
 .sample-chip:focus-visible {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   background: var(--color-primary-bg);
   border-color: var(--color-primary-border);
 }
@@ -1650,7 +1754,7 @@ html[data-theme="dark"] .app-content {
   width: 20px;
   height: 20px;
   place-items: center;
-  color: #fff;
+  color: var(--color-on-primary);
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   font-weight: 700;
@@ -2027,7 +2131,7 @@ html[data-theme="dark"] .app-content {
   background: var(--color-bg-active);
 }
 .adv-nav-item.is-active {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   font-weight: 600;
   background: var(--color-primary-bg);
 }
@@ -2044,7 +2148,7 @@ html[data-theme="dark"] .app-content {
   font-size: var(--font-size-xs);
 }
 .adv-nav-item.is-active .adv-nav-count {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
 }
 
 /* min-height:0 是关键：grid 项的 min-height 默认为 auto，会拒绝被压到
@@ -2234,7 +2338,7 @@ html[data-theme="dark"] .app-content {
 .graph-entity-choice.is-selected {
   color: var(--color-primary-strong);
   background: var(--color-primary-bg);
-  border-color: var(--color-primary);
+  border-color: var(--color-primary-strong);
 }
 .graph-entity-choice > span:first-child {
   min-width: 0;
@@ -2739,7 +2843,7 @@ html[data-theme="dark"] .app-content {
     border-color var(--transition-fast);
 }
 .run-flow-mode-toggle:hover {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   background: var(--color-primary-bg);
   border-color: var(--color-primary-border);
 }
@@ -2779,7 +2883,7 @@ html[data-theme="dark"] .app-content {
   border-bottom-color: var(--color-border-light);
 }
 .run-flow-canvas .react-flow__controls-button:hover {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   background: var(--color-bg-hover);
 }
 .run-flow-canvas .react-flow__controls-button svg {
@@ -2890,7 +2994,7 @@ html[data-theme="dark"] .app-content {
   font-size: var(--font-size-xxs);
 }
 .run-flow-node.is-active .run-flow-node-status {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
 }
 .run-flow-node.is-completed .run-flow-node-status {
   color: var(--color-success);
@@ -2963,7 +3067,7 @@ html[data-theme="dark"] .app-content {
   border: 2px solid var(--color-border-strong);
 }
 .run-flow-node.is-active .react-flow__handle {
-  border-color: var(--color-primary);
+  border-color: var(--color-primary-strong);
 }
 @keyframes run-node-scan {
   to {
@@ -3178,8 +3282,8 @@ html[data-theme="dark"] .app-content {
     top: 12px;
     left: 10px;
     z-index: 40;
-    width: 32px;
-    height: 32px;
+    width: 44px;
+    height: 44px;
     color: var(--color-text-secondary);
     background: var(--color-bg-elevated);
     border: 1px solid var(--color-border);
@@ -3197,7 +3301,7 @@ html[data-theme="dark"] .app-content {
     padding: 0;
   }
   .page-topbar {
-    padding: 8px 14px 8px 52px;
+    padding: 8px 14px 8px 62px;
   }
   /* 窄屏下操作区独占一行并左对齐：挤在标题右侧会被裁掉且无法滚到 */
   .page-topbar-extra {
@@ -3345,13 +3449,22 @@ html[data-theme="dark"] .app-content {
   font: inherit;
   font-size: var(--font-size-xs);
   background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-sm);
 }
 .run-history-filter select:focus-visible,
 .run-mobile-ledger select:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+/* 上面窄屏段里已经有 `select { min-height: 44px }`，但对这里**空转**：
+   `.run-history-filter select, .run-mobile-ledger select { min-height: 30px }`
+   的特异性是 (0,1,1)，压过裸元素的 (0,0,1)，所以 375 实测仍是 30px。
+   补一条同特异性、位置更靠后的规则把意图接回来；
+   `.run-mobile-ledger` 平时 `display:none` 只在窄屏出现，故桌面的
+   `.run-history-filter select` 不受影响。 */
+.run-mobile-ledger select {
+  min-height: var(--control-min-h);
 }
 .run-history-status-mark {
   flex: 0 0 auto;
@@ -3804,7 +3917,7 @@ html[data-theme="dark"] .app-content {
   padding: 4px 26px 4px 8px;
   color: var(--color-text);
   background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-sm);
 }
 .run-event-table-wrap {
@@ -4344,7 +4457,7 @@ html[data-theme="dark"] .app-content {
   width: 22px;
   height: 22px;
   border-radius: 6px;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   background: var(--color-primary-soft);
   font-weight: 700;
 }
@@ -4406,8 +4519,9 @@ html[data-theme="dark"] .app-content {
   --td-bg-color-page: #f4f6fa;
   --td-bg-color-container: #ffffff;
   --td-text-color-primary: #16181d;
-  --td-text-color-secondary: #6b7280;
-  --td-component-border: #e3e7ee;
+  --td-text-color-secondary: #5b6472;
+  --td-border-level-2-color: var(--color-border-control);
+  --td-component-border: var(--color-border-control);
 }
 
 /* Dark component overrides separate filled-control contrast from outline/tag contrast. */
@@ -4511,14 +4625,14 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
 .rag-table-check input {
   width: 16px;
   height: 16px;
-  accent-color: var(--color-primary);
+  accent-color: var(--color-primary-strong);
 }
 .rag-table-expand button {
   width: 24px;
   height: 24px;
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   background: var(--color-bg-elevated);
   cursor: pointer;
 }
@@ -4549,14 +4663,14 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   inset: 0;
   display: grid;
   place-items: center;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   background: color-mix(in srgb, var(--color-bg-elevated) 82%, transparent);
   backdrop-filter: blur(1px);
 }
 
 /* TDesign-token native compatibility controls */
 .rag-button {
-  min-height: 32px;
+  min-height: var(--control-min-h);
   padding: 0 14px;
   border: 1px solid var(--color-border);
   border-radius: 6px;
@@ -4573,8 +4687,8 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
     box-shadow 0.15s;
 }
 .rag-button:hover:not(:disabled) {
-  color: var(--color-primary);
-  border-color: var(--color-primary);
+  color: var(--color-primary-strong);
+  border-color: var(--color-primary-strong);
   background: var(--color-primary-soft);
 }
 .rag-button.is-primary {
@@ -4595,7 +4709,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   color: var(--color-danger);
 }
 .rag-button.is-small {
-  min-height: 28px;
+  min-height: var(--control-min-h-compact);
   padding-inline: 10px;
 }
 .rag-button.is-block {
@@ -4633,7 +4747,10 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
 .rag-select,
 .rag-textarea {
   width: 100%;
-  border: 1px solid var(--color-border);
+  /* 自绘控件与 TDesign 控件同一 1.4.11 标准：边界 ≥3:1，不能用装饰性 hairline。
+     这里必须改**源规则**——文件末尾的 `select { border-color: … }` 兜底特异性
+     只有 (0,0,1)，会被 `.rag-select` (0,1,0) 压掉（R9 实测仍是 1.21:1）。 */
+  border: 1px solid var(--color-border-control);
   border-radius: 6px;
   color: var(--color-text);
   background: var(--color-bg-elevated);
@@ -4652,8 +4769,71 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
 .rag-input:focus,
 .rag-select:focus,
 .rag-textarea:focus {
-  border-color: var(--color-primary);
+  border-color: var(--color-primary-strong);
   box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+/* 兼容层 Tabs 的自绘页签。规格从 tdesign-react/es/tabs/style/index.css 逐条移植：
+   nav-item 是 inline-flex + 常态次级文字色，激活态换品牌色；留白与高度在它内层的
+   nav-item-wrapper 上（height:--td-comp-size-m、padding:0 --td-comp-paddingLR-s）。
+   这里刻意不再依赖 t-tabs__* 第三方类名——兼容层自己就是渲染方，再挂第三方类等于
+   把样式绑到一个我们随时可能换掉的实现上。 */
+.rag-tabs [role="tablist"] {
+  display: flex;
+  min-width: 0;
+  border-bottom: 1px solid var(--color-border-guide);
+  user-select: none;
+}
+.rag-tabs [role="tab"] {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control-min-h);
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  box-shadow: inset 0 -2px 0 transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+}
+.rag-tabs [role="tab"]:hover:not([aria-selected="true"]) {
+  background: var(--color-bg-hover);
+}
+.rag-tabs [role="tab"][aria-selected="true"] {
+  box-shadow: inset 0 -2px 0 var(--color-primary);
+  color: var(--color-primary);
+  text-shadow: 0 0 0.3px currentcolor;
+}
+.rag-tabs [role="tab"][disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.rag-tabs [role="tabpanel"] {
+  min-width: 0;
+}
+/* 卡片档：对应 TDesign 的 theme="card"（TaskOperationsCenter 用的就是这档）。
+   它和 normal 档的关键差别不是颜色而是形状——每个页签自己带描边坐在导航底线上，
+   激活页签用容器底色把那段底线"接"过去，并且 TDesign 显式 `::after { display:none }`
+   去掉 ink bar。所以下面必须**清掉** normal 档那条 inset 下划线，否则两种指示器叠加。
+   圆角用 6px 与同段的 `.rag-input` 对齐；仓里没有一个"小圆角"token，不用未验证的名字。 */
+.rag-tabs--card [role="tab"] {
+  margin-bottom: -1px;
+  padding: 0 16px;
+  /* 页签是控件，不是装饰性分隔线：这里必须用控件描边 token（≥3:1），
+     不能用结构性引导线 token。TDesign 原样用的是 component-stroke，
+     但那正是本仓"控件描边 vs 引导线"拆分要纠正的东西（见 findings §30 与用户裁定）。 */
+  border: 1px solid var(--color-border-control);
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  box-shadow: none;
+}
+.rag-tabs--card [role="tab"][aria-selected="true"] {
+  background: var(--color-bg-elevated);
+  box-shadow: none;
+}
+.rag-tabs--card [role="tab"]:hover:not([aria-selected="true"]) {
+  background: var(--color-bg-hover);
 }
 .rag-tooltip-trigger {
   position: relative;
@@ -4722,9 +4902,14 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   background: var(--color-warning-bg);
 }
 .rag-tag.is-primary {
-  color: var(--color-primary);
+  /* --color-primary(#3164f4) 压在 --color-primary-bg 上只有 4.43:1，
+     11px 标签不达 AA；文字改用 strong 阶，底色不变。 */
+  color: var(--color-primary-strong);
   border-color: var(--color-primary-border);
   background: var(--color-primary-bg);
+}
+.t-alert__description {
+  color: var(--color-text-secondary);
 }
 .rag-alert {
   padding: 10px 13px;
@@ -4763,7 +4948,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   background: var(--color-bg-sunken);
 }
 .rag-segmented button {
-  min-height: 28px;
+  min-height: var(--control-min-h-compact);
   padding: 0 12px;
   border: 0;
   border-radius: 5px;
@@ -4772,7 +4957,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   cursor: pointer;
 }
 .rag-segmented button.is-active {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   background: var(--color-bg-elevated);
   box-shadow: var(--shadow-sm);
   font-weight: 600;
@@ -4910,7 +5095,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
 .facet-rail-title > svg {
   width: 20px;
   height: 20px;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
 }
 .facet-rail-title > div {
   display: grid;
@@ -4950,7 +5135,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   background: var(--color-bg-hover);
 }
 .facet-item.is-active {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   border-color: var(--color-primary-border);
   background: var(--color-primary-soft);
   font-weight: 600;
@@ -4993,7 +5178,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
 .doc-workbench-panel-title > svg {
   width: 22px;
   height: 22px;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
 }
 .doc-workbench-panel-title > div {
   display: grid;
@@ -5117,7 +5302,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   background: var(--color-bg-hover);
 }
 .doc-chunk-item.is-active {
-  border-color: var(--color-primary);
+  border-color: var(--color-primary-strong);
   background: var(--color-primary-soft);
   box-shadow: inset 3px 0 0 var(--color-primary);
 }
@@ -5192,7 +5377,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   word-break: break-word;
 }
 .doc-metadata-details summary {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   font-size: var(--font-size-sm);
   cursor: pointer;
 }
@@ -5259,14 +5444,14 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   background: var(--color-bg-hover);
 }
 .import-source-tabs > button.is-active {
-  border-color: var(--color-primary);
+  border-color: var(--color-primary-strong);
   background: var(--color-primary-soft);
   box-shadow: inset 3px 0 0 var(--color-primary);
 }
 .import-source-tabs svg {
   width: 22px;
   height: 22px;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
 }
 .import-source-tabs span {
   display: grid;
@@ -5290,7 +5475,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
 .import-guide-note svg {
   flex: 0 0 auto;
   margin-top: 2px;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
 }
 .import-path-field {
   display: grid;
@@ -5368,7 +5553,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   font-size: var(--font-size-xxs);
 }
 .doc-management-meta em {
@@ -5397,7 +5582,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
 .settings-form-intro svg {
   flex: 0 0 auto;
   margin-top: 2px;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
 }
 .document-settings-form label {
   display: grid;
@@ -5627,7 +5812,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   height: 34px;
   place-items: center;
   border-radius: var(--radius-md);
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   background: var(--color-primary-bg-strong);
 }
 .taxonomy-layout {
@@ -5655,7 +5840,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
 }
 .taxonomy-list button.is-active,
 .taxonomy-list button:hover {
-  border-color: var(--color-primary);
+  border-color: var(--color-primary-strong);
   background: var(--color-primary-soft);
 }
 .taxonomy-list button span {
@@ -5703,7 +5888,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   border-radius: 8px;
 }
 .taxonomy-doc-grid > div > span {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   font-size: var(--font-size-xs);
 }
 .source-summary {
@@ -5743,7 +5928,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   height: 36px;
   place-items: center;
   border-radius: 8px;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   background: var(--color-primary-soft);
 }
 .source-card-title > div {
@@ -5826,7 +6011,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
 .retrieval-empty svg {
   width: 38px;
   height: 38px;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
 }
 .retrieval-run-summary {
   display: grid;
@@ -6111,13 +6296,13 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   color: var(--color-text);
 }
 .document-import-steps li.is-active > span {
-  color: #fff;
-  border-color: var(--color-primary);
+  color: var(--color-on-primary);
+  border-color: var(--color-on-primary);
   background: var(--color-primary);
   box-shadow: 0 0 0 4px var(--color-primary-soft);
 }
 .document-import-steps li.is-complete > span {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   border-color: var(--color-primary-border);
   background: var(--color-primary-soft);
 }
@@ -6137,7 +6322,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
   gap: 2px;
 }
 .import-stage-heading > div > span {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   font-size: var(--font-size-xs);
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -6160,7 +6345,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
 .import-selection-summary > svg {
   width: 24px;
   height: 24px;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
 }
 .import-selection-summary > div {
   display: grid;
@@ -6253,7 +6438,7 @@ html[data-theme="dark"] .t-tag--danger.t-tag--light-outline {
 .monitor-section-kicker {
   display: block;
   margin-bottom: 4px;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   font-family: var(--font-mono);
   font-size: var(--font-size-xxs);
   font-weight: 700;
@@ -6772,7 +6957,7 @@ html[data-theme="dark"] .ingest-failure-list strong {
   color: var(--color-text-tertiary);
 }
 .consistency-copy-button:hover {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
 }
 .consistency-operation-cell {
   display: grid;
@@ -6880,4 +7065,24 @@ html[data-theme="dark"] .ingest-failure-list strong {
 
 html[data-theme="dark"] {
   color-scheme: dark;
+}
+
+/* 深色主题下 TDesign 页签文字取 --td-brand-color(#486fd1)，压在 #181b21 上只有
+   3.67:1（知识底座页 16 条对比度违规的唯一来源）。品牌蓝继续负责实色填充，
+   文字改走 AA 文字阶。 */
+html[data-theme="dark"] .t-tabs__nav-item {
+  color: var(--color-text-secondary);
+}
+html[data-theme="dark"] .t-tabs__nav-item.t-is-active,
+html[data-theme="dark"] .t-tabs__nav-item:hover {
+  color: var(--color-primary-strong);
+}
+
+/* 兼容层自绘表单控件：边界与 TDesign 控件同一标准 */
+input.rag-input,
+textarea.rag-input,
+select,
+.rag-select .t-select__input,
+.rag-textarea {
+  border-color: var(--color-border-control);
 }

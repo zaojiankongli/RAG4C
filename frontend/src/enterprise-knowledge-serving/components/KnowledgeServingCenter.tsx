@@ -192,7 +192,7 @@ export default function KnowledgeServingCenter({
         <LoadState
           status={controller.summary.status}
           title="知识服务可靠性能力不可用"
-          description={safeErrorMessage(controller.summary.error) ?? "Summary authority 未返回。"}
+          description={safeErrorMessage(controller.summary.error) ?? "摘要权威未返回。"}
           onRetry={() => void controller.summary.reload()}
         />
       ) : null}
@@ -264,7 +264,7 @@ export default function KnowledgeServingCenter({
             <span>Snapshot / Observation / Policy</span>
             <Input
               value={visibleKeyword}
-              placeholder="搜索 authority ID"
+              placeholder="搜索权威 ID"
               prefixIcon={<SearchIcon />}
               clearable
               onChange={(value) => setKeyword(String(value))}

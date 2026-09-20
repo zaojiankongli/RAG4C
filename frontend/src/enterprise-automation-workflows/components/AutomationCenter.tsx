@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Alert, Tabs } from "tdesign-react";
+import { Alert } from "tdesign-react";
+import { Tabs } from "../../ui/index";
 import { RefreshIcon } from "tdesign-icons-react";
 
 import type { AutomationRule, AutomationRuleRevision } from "../model/automationModel";
@@ -29,29 +30,6 @@ export interface AutomationCenterProps {
   onHandoff?: (rule: AutomationRule, revision: AutomationRuleRevision) => void;
 }
 
-function tabLabel(
-  label: string,
-  value: AutomationCenterTab,
-  current: AutomationCenterTab,
-  activate: (value: AutomationCenterTab) => void,
-) {
-  return (
-    <span
-      role="tab"
-      tabIndex={0}
-      aria-selected={current === value}
-      onClick={() => activate(value)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          activate(value);
-        }
-      }}
-    >
-      {label}
-    </span>
-  );
-}
 
 function fallbackDetail(
   rule: AutomationRule,
@@ -331,15 +309,17 @@ export default function AutomationCenter({
           </div>
           <span className="automation-workflows__workspace-fence">
             <RefreshIcon aria-hidden="true" />{" "}
-            {controller.active ? "Tenant scope locked" : "Authority inactive"}
+            {controller.active ? "租户范围已锁定" : "权威未生效"}
           </span>
         </div>
         <Tabs
-          className="automation-workflows__tabs"
-          value={tab}
-          onChange={(value) => setTab(String(value) as AutomationCenterTab)}
+          className="rag-tabs automation-workflows__tabs"
+          aria-label="自动化工作面"
+          keepAlive
+          activeKey={tab}
+          onChange={(value: any) => setTab(String(value) as AutomationCenterTab)}
         >
-          <Tabs.TabPanel value="rules" label={tabLabel("规则", "rules", tab, setTab)}>
+          <Tabs.TabPanel value="rules" label="规则">
             <section className="automation-workflows__tab-panel" aria-label="自动化规则">
               <div className="automation-workflows__list-heading">
                 <div>
@@ -360,7 +340,7 @@ export default function AutomationCenter({
               />
             </section>
           </Tabs.TabPanel>
-          <Tabs.TabPanel value="runs" label={tabLabel("运行记录", "runs", tab, setTab)}>
+          <Tabs.TabPanel value="runs" label="运行记录">
             <section className="automation-workflows__tab-panel" aria-label="自动化运行记录">
               <div className="automation-workflows__list-heading">
                 <div>
@@ -375,13 +355,13 @@ export default function AutomationCenter({
               <RunsSurface runs={controller.runs} mobile={mobile} />
             </section>
           </Tabs.TabPanel>
-          <Tabs.TabPanel value="requests" label={tabLabel("请求", "requests", tab, setTab)}>
+          <Tabs.TabPanel value="requests" label="请求">
             <section className="automation-workflows__tab-panel" aria-label="动作请求">
               <div className="automation-workflows__list-heading">
                 <div>
                   <span className="automation-workflows__eyebrow">ACTION REQUEST REGISTER</span>
                   <h3>请求</h3>
-                  <p>动作请求是 durable、bounded 的输出，需由既有领域 authority 接管。</p>
+                  <p>动作请求是持久、有界的输出，需由既有领域权威接管。</p>
                 </div>
                 <span className="automation-workflows__record-count">
                   {controller.requests.items.length} requests
@@ -390,7 +370,7 @@ export default function AutomationCenter({
               <RequestsSurface requests={controller.requests} mobile={mobile} />
             </section>
           </Tabs.TabPanel>
-          <Tabs.TabPanel value="activity" label={tabLabel("活动", "activity", tab, setTab)}>
+          <Tabs.TabPanel value="activity" label="活动">
             <section className="automation-workflows__tab-panel" aria-label="自动化活动">
               <ActivitySurface activity={controller.activity} />
             </section>

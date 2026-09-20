@@ -289,7 +289,7 @@ export default function ReleaseMutationDialog({
           <Alert
             theme="info"
             title="只读模式"
-            message="当前身份只能查看 Release authority，所有发布、回滚和候选生成操作已禁用。"
+            message="当前身份只能查看发布权威，所有发布、回滚和候选生成操作已禁用。"
           />
         ) : null}
       </div>

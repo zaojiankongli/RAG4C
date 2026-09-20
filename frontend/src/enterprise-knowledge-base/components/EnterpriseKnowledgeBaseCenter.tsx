@@ -273,7 +273,7 @@ function AuthorityStrip({ result }: { result: KnowledgeBaseCenterResult }) {
       <dl className="enterprise-knowledge-base-center__authority-item">
         <dt>有效知识库</dt>
         <dd>{countLabel(evidence?.active_count ?? null)}</dd>
-        <small>生命周期状态来自 Dataset authority</small>
+        <small>生命周期状态来自 Dataset 权威</small>
       </dl>
       <dl className="enterprise-knowledge-base-center__authority-item">
         <dt>可证明 ownership</dt>

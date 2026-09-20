@@ -1,0 +1,22 @@
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rag4c_ro') THEN
+    CREATE ROLE rag4c_ro LOGIN PASSWORD 'ChangeMe_ReadOnlyPwd';
+  END IF;
+END
+$$;
+
+GRANT CONNECT ON DATABASE rag4c TO rag4c_ro;
+GRANT USAGE ON SCHEMA public TO rag4c_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO rag4c_ro;
+ALTER DEFAULT PRIVILEGES FOR ROLE rag4c IN SCHEMA public GRANT SELECT ON TABLES TO rag4c_ro;
+
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+
+ALTER DATABASE rag4c SET statement_timeout = '60s';
+ALTER DATABASE rag4c SET idle_in_transaction_session_timeout = '5min';
+ALTER DATABASE rag4c SET lock_timeout = '10s';

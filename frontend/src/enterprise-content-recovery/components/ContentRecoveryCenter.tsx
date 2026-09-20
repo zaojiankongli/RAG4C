@@ -345,7 +345,7 @@ export default function ContentRecoveryCenter({
         </div>
         <span className="content-recovery__list-boundary">
           <SecuredIcon aria-hidden="true" />
-          Tenant scoped
+          租户范围内
         </span>
       </div>
 

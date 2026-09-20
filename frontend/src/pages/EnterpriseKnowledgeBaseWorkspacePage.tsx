@@ -35,14 +35,14 @@ function WorkspaceOverview() {
         >
           <div>
             <span className="knowledge-base-resource-overview__eyebrow">RESOURCE OVERVIEW</span>
-            <h2 id="resource-overview-title">一个 Knowledge Base，统一承载知识责任边界</h2>
+            <h2 id="resource-overview-title">一个知识库，统一承载知识责任边界</h2>
             <p>
               当前页面复用既有 Documents、Taxonomy、Sources 与 Governance
               权威；资源壳只负责上下文、导航和可验证状态，不复制业务表单。
             </p>
           </div>
           <Tag theme={authorityReady ? "success" : "warning"} variant="light-outline">
-            {authorityReady ? "Workspace scope 已验证" : "等待 Workspace scope"}
+            {authorityReady ? "工作区作用域已验证" : "等待工作区作用域验证"}
           </Tag>
         </section>
         <section

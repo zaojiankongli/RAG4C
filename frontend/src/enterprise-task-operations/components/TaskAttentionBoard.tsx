@@ -40,7 +40,7 @@ export default function TaskAttentionBoard({ summary }: TaskAttentionBoardProps)
           <p>先看需要介入的状态，再进入任务明细处理。</p>
         </div>
         <Tag theme="primary" variant="light-outline">
-          Tenant scoped
+          租户范围内
         </Tag>
       </div>
       <div className="task-operations__metric-grid">

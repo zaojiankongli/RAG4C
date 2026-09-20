@@ -609,9 +609,9 @@ def test_capability_rejects_broken_event_chain(tmp_path: Path) -> None:
 def test_readiness_api_returns_503_for_stage25_damage(tmp_path: Path) -> None:
     engine = _engine(tmp_path, "readiness-api.db")
     try:
-        from tests.test_enterprise_knowledge_serving_migration import upgrade_0036
-
-        upgrade_0036(str(engine.url))
+        # 场景是"已到 head、但 stage25 索引被破坏"。停在 0036 会被 readiness 先判成
+        # behind（也是 503，但不是本用例要验的 malformed 路径）。升到 head 且不写死字面量。
+        manifest.upgrade_catalog(str(engine.url))
         with engine.begin() as connection:
             connection.execute(text("DROP INDEX ix_tenant_automation_runs_tenant_status_started"))
         api = __import__(

@@ -194,7 +194,7 @@ describe("Stage21 QualityOperationsDetailDrawer", () => {
     renderDrawer({ onOpenCertification: vi.fn(), onCancelRecertification: vi.fn() });
 
     fireEvent.click(screen.getByRole("tab", { name: "Certification" }));
-    expect(screen.getByText("Certification authority")).toBeTruthy();
+    expect(screen.getByText("质量认证权威")).toBeTruthy();
     expect(screen.getByText("有效至")).toBeTruthy();
     expect(screen.getByText("Certification current")).toBeTruthy();
     expect(screen.getByRole("button", { name: "打开 Release Certification 详情" })).toBeTruthy();
@@ -261,10 +261,10 @@ describe("Stage21 QualityOperationsDetailDrawer", () => {
     };
     const { rerender } = renderDrawer({ authority: unavailable, timelineStatus: "empty" });
     expect(screen.getByTestId("quality-operations-detail-unavailable").textContent).toContain(
-      "Quality authority unavailable",
+      "质量权威不可用",
     );
     expect(screen.getByText("quality_authority_unavailable")).toBeTruthy();
-    expect(screen.getByText("当前 authority 不可用")).toBeTruthy();
+    expect(screen.getByText("当前质量权威不可用")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("tab", { name: "Timeline" }));
     expect(screen.getByText("尚无运营时间线")).toBeTruthy();

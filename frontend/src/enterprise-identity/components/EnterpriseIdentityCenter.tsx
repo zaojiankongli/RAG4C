@@ -652,7 +652,7 @@ export default function EnterpriseIdentityCenter({
           title={workspace.scimDataPlane.state}
           message={
             workspace.scimDataPlane.ready
-              ? "0022 SCIM provisioning authority 已就绪；支持 Users/Groups 与严格 scope。"
+              ? "0022 SCIM provisioning 权威已就绪；支持 Users/Groups 与严格 scope。"
               : "SCIM token 控制面可用，但 0022 Users/Groups provisioning data plane 尚未就绪。"
           }
         />

@@ -43,10 +43,10 @@ export function highRiskWorkspaceAuthorizationEvidenceError({
     return "permission model 必须为 v1，无法提交高风险变更。";
   }
   if (authority.policy.tenant_id !== expectedTenantId.trim()) {
-    return "authority evidence 的 tenant id 与当前租户不一致，无法提交高风险变更。";
+    return "授权事实的 tenant id 与当前租户不一致，无法提交高风险变更。";
   }
   if (authority.policy.workspace_id !== expectedWorkspaceId.trim()) {
-    return "authority evidence 的 Workspace id 与当前详情不一致，无法提交高风险变更。";
+    return "授权事实的 Workspace id 与当前详情不一致，无法提交高风险变更。";
   }
   if (!authority.evidence.catalog_revision?.trim()) {
     return "缺少 catalog revision，无法提交高风险变更。";

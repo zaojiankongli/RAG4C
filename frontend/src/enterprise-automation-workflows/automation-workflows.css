@@ -1,5 +1,5 @@
 .automation-workflows {
-  --aw-primary: var(--td-brand-color, #2f6fed);
+  --aw-primary: var(--color-accent-solid);
   --aw-primary-soft: color-mix(in srgb, var(--aw-primary) 10%, transparent);
   --aw-primary-mid: color-mix(in srgb, var(--aw-primary) 24%, transparent);
   --aw-teal: #0f8b8d;
@@ -12,7 +12,7 @@
   --aw-line-strong: color-mix(in srgb, var(--aw-line) 72%, #70829e);
   --aw-ink: var(--td-text-color-primary, #1d2129);
   --aw-ink-soft: var(--td-text-color-secondary, #4e5969);
-  --aw-muted: var(--td-text-color-placeholder, #86909c);
+  --aw-muted: var(--color-text-tertiary);
   --aw-success: var(--td-success-color, #2ba471);
   --aw-warning: var(--td-warning-color, #e37318);
   --aw-danger: var(--td-error-color, #d54941);
@@ -53,7 +53,7 @@
 .automation-workflows__eyebrow {
   display: block;
   overflow: hidden;
-  color: var(--aw-primary);
+  color: var(--color-eyebrow);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
   font-size: 10px;
   font-weight: 760;
@@ -114,7 +114,7 @@
   width: 48px;
   height: 48px;
   place-items: center;
-  color: var(--aw-primary);
+  color: var(--color-primary-strong);
   border: 1px solid var(--aw-primary-mid);
   border-radius: 10px;
   background: var(--aw-primary-soft);
@@ -246,7 +246,7 @@
 .automation-workflows__attention-caption svg,
 .automation-workflows__workspace-fence svg,
 .automation-workflows__activity-count svg {
-  color: var(--aw-primary);
+  color: var(--color-primary-strong);
   font-size: 14px;
 }
 
@@ -300,7 +300,7 @@
   width: 29px;
   height: 29px;
   place-items: center;
-  color: var(--aw-primary);
+  color: var(--color-primary-strong);
   border-radius: 7px;
   background: var(--aw-primary-soft);
   font-size: 16px;
@@ -404,7 +404,7 @@
   width: 23px;
   height: 23px;
   place-items: center;
-  color: var(--aw-primary);
+  color: var(--color-primary-strong);
   border: 1px solid var(--aw-primary-mid);
   border-radius: 50%;
   background: var(--aw-primary-soft);
@@ -424,7 +424,7 @@
 }
 
 .automation-workflows__rail-stage strong {
-  color: var(--aw-primary);
+  color: var(--color-primary-strong);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
   font-size: 10px;
   letter-spacing: 0.08em;
@@ -497,12 +497,23 @@
   background: var(--aw-surface);
 }
 
-.automation-workflows__tabs > .t-tabs__nav {
+.automation-workflows__tabs > [role="tablist"] {
   padding: 0 16px;
   border-bottom: 1px solid var(--aw-line);
 }
 
-.automation-workflows__tabs .t-tabs__content {
+/* 兼容层 Tabs 自己就渲染 <button role="tab">，触控下限已由 styles.css 的
+   `.rag-tabs [role="tab"]`（min-height: var(--control-min-h)）统一保证。
+   这条补丁是当年为自绘 span 加的，迁移后只剩横向 min-width 还有意义。 */
+.automation-workflows__tabs [role="tab"] {
+  display: inline-flex;
+  min-width: var(--control-min-h);
+  min-height: var(--control-min-h);
+  align-items: center;
+  justify-content: center;
+}
+
+.automation-workflows__tabs > [role="tabpanel"] {
   min-width: 0;
   padding: 0;
 }
@@ -801,7 +812,7 @@
 }
 
 .automation-workflows__definition-summary span {
-  color: var(--aw-primary);
+  color: var(--color-primary-strong);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
   font-size: 10px;
   letter-spacing: 0.08em;
@@ -935,7 +946,7 @@
 
 .automation-workflows__builder-actions > svg {
   margin-left: auto;
-  color: var(--aw-primary);
+  color: var(--color-primary-strong);
 }
 
 .automation-workflows__preview {
@@ -982,7 +993,7 @@
 }
 
 .automation-workflows__preview-steps strong {
-  color: var(--aw-primary);
+  color: var(--color-primary-strong);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
   font-size: 10px;
   letter-spacing: 0.08em;
@@ -1121,7 +1132,7 @@
     grid-template-columns: 1fr;
   }
 
-  .automation-workflows__tabs > .t-tabs__nav {
+  .automation-workflows__tabs > [role="tablist"] {
     overflow-x: auto;
   }
 

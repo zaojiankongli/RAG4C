@@ -346,7 +346,7 @@ describe("Stage26 KnowledgeServingCenter", () => {
       <KnowledgeServingCenter controller={initialController} datasetId="dataset-a" />,
     );
 
-    await user.type(screen.getByPlaceholderText("搜索 authority ID"), "snapshot-a");
+    await user.type(screen.getByPlaceholderText("搜索权威 ID"), "snapshot-a");
     await user.click(screen.getByRole("button", { name: "调整服务策略" }));
     await user.click(screen.getByRole("button", { name: "零写入预览" }));
     await waitFor(() => expect(screen.getByText("策略模拟结果")).toBeTruthy());
@@ -366,7 +366,7 @@ describe("Stage26 KnowledgeServingCenter", () => {
 
     expect(screen.queryByRole("dialog", { name: "服务策略" })).toBeNull();
     expect(screen.queryByText("策略模拟结果")).toBeNull();
-    expect(screen.getByPlaceholderText("搜索 authority ID")).toHaveProperty("value", "");
+    expect(screen.getByPlaceholderText("搜索权威 ID")).toHaveProperty("value", "");
   });
 
   it("keeps policy controls disabled and labels the surface read-only", () => {

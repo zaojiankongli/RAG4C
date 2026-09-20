@@ -1,12 +1,3 @@
-# ============================================================
-# Milvus v3.0.0 standalone 部署（修复版 · 具体路径版）
-# 修复：关闭 Milvus 侧 etcd 认证（v3.0.0 默认 auth.enabled=true，
-#       与无认证 etcd 冲突 → 启动即崩 "authentication is not enabled"）
-# 卷路径：/usr/local/service/milvus/{etcd,minio,milvus}
-# 用法：docker compose up -d
-# ============================================================
-version: '3.5'
-
 services:
   etcd:
     container_name: milvus-etcd
@@ -25,6 +16,8 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - zjkl
 
   minio:
     container_name: milvus-minio
@@ -44,6 +37,8 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - zjkl
 
   standalone:
     container_name: milvus-standalone
@@ -54,7 +49,7 @@ services:
     environment:
       MINIO_REGION: us-east-1
       ETCD_ENDPOINTS: etcd:2379
-      ETCD_AUTH_ENABLED: "false"      # ★ 修复点
+      ETCD_AUTH_ENABLED: "false"
       MINIO_ADDRESS: minio:9000
     volumes:
       - /usr/local/service/milvus/milvus:/var/lib/milvus
@@ -71,23 +66,79 @@ services:
     depends_on:
       - "etcd"
       - "minio"
+    networks:
+      - zjkl
+
+  rabbitmq:
+    image: rabbitmq:4.3.0-management
+    container_name: rabbitmq
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: root
+      RABBITMQ_DEFAULT_PASS: root1234
+    volumes:
+      - /usr/local/service/rabbitmq/data:/var/lib/rabbitmq
+      - /usr/local/service/rabbitmq/logs:/var/log/rabbitmq
+    restart: unless-stopped
+    networks:
+      - zjkl
+
+  redis:
+    image: redis:8.6.3
+    container_name: redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - /usr/local/service/redis/conf:/usr/local/etc/redis
+      - /usr/local/service/redis/data:/data
+    restart: unless-stopped
+    networks:
+      - zjkl
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 60s
+    command: redis-server /usr/local/etc/redis/redis.conf
+
+  postgres:
+    image: postgres:17.8-alpine
+    container_name: postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_DB: zjkl
+      POSTGRES_PASSWORD: root1234
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: Asia/Shanghai
+    volumes:
+      - /usr/local/service/postgres/data:/var/lib/postgresql/data
+      - /usr/local/service/postgres/init:/docker-entrypoint-initdb.d:ro
+      - /usr/local/service/postgres/conf:/etc/postgresql/conf.d:ro
+    shm_size: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d zjkl -h 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    networks:
+      - zjkl
 
 networks:
-  default:
-    name: milvus
-
-# ============================================================
-# 备用方案 2：若仍报 "etcdserver: authentication is not enabled"
-# （环境变量未覆盖到配置），执行：
-#
-#   docker run --rm --entrypoint cat milvusdb/milvus:v3.0.0 \
-#     /milvus/configs/milvus.yaml > /usr/local/service/milvus/milvus.yaml
-#   sed -i '/^  auth:/,/^  requestTimeout:/ s/enabled: true/enabled: false/' \
-#     /usr/local/service/milvus/milvus.yaml
-#   # compose standalone.volumes 追加：- /usr/local/service/milvus/milvus.yaml:/milvus/configs/milvus.yaml
-#   docker compose up -d
-#
-# 权限提示（CentOS）：
-#   sudo chcon -Rt svirt_sandbox_file_t /usr/local/service/milvus   # SELinux
-#   sudo chown -R 1000:1000 /usr/local/service/milvus/milvus
-# ============================================================
+  zjkl:
+    driver: bridge

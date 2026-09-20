@@ -20,7 +20,7 @@ export default function TaskOperationsLifecycleRail({ summary }: TaskOperationsL
       key: "source",
       label: "SOURCE",
       title: "来源",
-      value: "Tenant 数据源",
+      value: "租户数据源",
       icon: <CheckCircleIcon />,
       status: "complete",
     },

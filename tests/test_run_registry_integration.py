@@ -188,7 +188,8 @@ def test_stream_stores_same_typed_events_with_optional_fingerprint(
         tmp_path, persistence_enabled=False, fingerprint_secret=secret
     )
     runtime = RunOpsRuntime.bootstrap(settings)
-    server_app.app.state.run_ops_runtime = runtime
+    # 裸赋值会把 runtime 永久留在进程级 app.state 上污染后续用例；monkeypatch 会还原。
+    monkeypatch.setattr(server_app.app.state, "run_ops_runtime", runtime, raising=False)
     monkeypatch.setattr(server_app, "get_settings", lambda: settings)
     monkeypatch.setattr(
         server_app, "get_pipeline", lambda _settings=None: {"retrieval": SimpleNamespace()}
@@ -254,7 +255,8 @@ def test_rest_query_does_not_bind_registry_sink(
 ) -> None:
     settings = _settings(tmp_path, persistence_enabled=False)
     runtime = RunOpsRuntime.bootstrap(settings)
-    server_app.app.state.run_ops_runtime = runtime
+    # 裸赋值会把 runtime 永久留在进程级 app.state 上污染后续用例；monkeypatch 会还原。
+    monkeypatch.setattr(server_app.app.state, "run_ops_runtime", runtime, raising=False)
     calls = 0
 
     def forbidden(*_args: Any, **_kwargs: Any) -> Any:
@@ -585,7 +587,10 @@ def test_registry_failure_modes_preserve_query_sse_and_cache_parity(
     async def capture(selected_runtime: Any) -> dict[str, Any]:
         server_app._aio_flights.clear()
         server_app._query_slots = asyncio.Semaphore(32)
-        server_app.app.state.run_ops_runtime = selected_runtime
+        # 同上：裸赋值会把本次选中的 runtime 永久留在进程级 app.state 上。
+        monkeypatch.setattr(
+            server_app.app.state, "run_ops_runtime", selected_runtime, raising=False
+        )
         cache_writes: list[dict[str, Any]] = []
         monkeypatch.setattr(
             server_app, "_cache_reserve", lambda _key: (None, threading.Event(), True)

@@ -4,7 +4,7 @@
   --identity-border: var(--td-component-border, #dcdfe6);
   --identity-text: var(--td-text-color-primary, #1d2129);
   --identity-secondary: var(--td-text-color-secondary, #4e5969);
-  --identity-muted: var(--td-text-color-placeholder, #86909c);
+  --identity-muted: var(--color-text-tertiary);
   --identity-brand: var(--td-brand-color, #0052d9);
   grid-column: 1 / -1;
   min-width: 0;
@@ -22,12 +22,12 @@
 .enterprise-identity-header > svg {
   padding: 8px;
   border-radius: 6px;
-  color: var(--identity-brand);
+  color: var(--color-primary-strong);
   background: color-mix(in srgb, var(--identity-brand) 12%, transparent);
   font-size: 36px;
 }
 .enterprise-identity-header span {
-  color: var(--identity-brand);
+  color: var(--color-primary-strong);
   font-family: var(--font-mono, Consolas, monospace);
   font-size: 10px;
   font-weight: 700;
@@ -287,7 +287,7 @@
   gap: 6px;
 }
 .identity-scim-copy-status {
-  color: var(--identity-brand);
+  color: var(--color-primary-strong);
   font-size: 12px;
   font-weight: 600;
 }
@@ -339,7 +339,7 @@
   background: color-mix(in srgb, var(--td-success-color, #2ba471) 7%, var(--identity-surface));
 }
 .identity-oidc-runtime > div > span {
-  color: var(--identity-brand);
+  color: var(--color-primary-strong);
   font-family: var(--font-mono, Consolas, monospace);
   font-size: 10px;
   font-weight: 700;
@@ -379,7 +379,7 @@
   font-size: 36px;
 }
 .oidc-callback-surface__header span {
-  color: var(--identity-brand);
+  color: var(--color-primary-strong);
   font-family: var(--font-mono, Consolas, monospace);
   font-size: 10px;
   font-weight: 700;

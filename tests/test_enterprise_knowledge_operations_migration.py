@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import import_module
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -129,7 +130,25 @@ def _triggers(engine):
         }
 
 
+_MEMBER_ROW_IDS: dict[str, int] = {}
+
+
+def _member_row_id(member_id: str) -> int:
+    """tenant_members.id 自 0001 起是 INTEGER PRIMARY KEY，文本主键会 datatype mismatch。
+    与 tests/test_enterprise_knowledge_serving_readiness.py 的可用夹具保持同一形状。"""
+    if member_id not in _MEMBER_ROW_IDS:
+        _MEMBER_ROW_IDS[member_id] = len(_MEMBER_ROW_IDS) + 1
+    return _MEMBER_ROW_IDS[member_id]
+
+
 def _seed_parent_scope(connection, tenant_id="tenant-a", dataset_id="dataset-a", member_id="member-a"):
+    connection.execute(
+        text(
+            "INSERT OR IGNORE INTO accounts (id,name,email,created_at) "
+            "VALUES (:id,:id,:id || '@example.com',CURRENT_TIMESTAMP)"
+        ),
+        {"id": member_id},
+    )
     connection.execute(
         text(
             "INSERT OR IGNORE INTO tenants "
@@ -141,18 +160,19 @@ def _seed_parent_scope(connection, tenant_id="tenant-a", dataset_id="dataset-a",
     connection.execute(
         text(
             "INSERT OR IGNORE INTO tenant_members "
-            "(id,tenant_id,account_id,role,status,created_at) "
-            "VALUES (:id,:tenant,:id,'owner','active',CURRENT_TIMESTAMP)"
+            "(id,account_id,tenant_id,role,status,revision,created_at,updated_at,updated_by) "
+            "VALUES (:row,:id,:tenant,'owner','active',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,:id)"
         ),
-        {"id": member_id, "tenant": tenant_id},
+        {"row": _member_row_id(member_id), "id": member_id, "tenant": tenant_id},
     )
     connection.execute(
         text(
             "INSERT OR IGNORE INTO datasets "
-            "(id,tenant_id,name,status,profile_revision,owner_id,visibility,profile_json,parser_policy,"
+            "(id,tenant_id,name,description,status,profile_revision,owner_id,visibility,profile_json,parser_policy,"
             "chunk_policy,retrieval_policy,retention_policy,metadata_policy,default_language,graph_enabled,"
-            "qa_enabled,mutation_generation,serving_generation,release_revision,acl_mode,acl_revision) VALUES "
-            "(:dataset,:tenant,'Dataset','active',1,:member,'private','{}','{}','{}','{}','{}','{}','zh-CN',0,1,0,0,1,'tenant_role',1)"
+            "qa_enabled,mutation_generation,serving_generation,release_revision,acl_mode,acl_revision,"
+            "doc_count,chunk_count,created_at,updated_at) VALUES "
+            "(:dataset,:tenant,'Dataset','','active',1,:member,'private','{}','{}','{}','{}','{}','{}','zh-CN',0,1,0,0,1,'tenant_role',1,0,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)"
         ),
         {"dataset": dataset_id, "tenant": tenant_id, "member": member_id},
     )
@@ -281,14 +301,14 @@ def test_exact_allowlists_digests_preview_and_revision_checks_are_exposed(tmp_pa
     try:
         inspector = inspect(engine)
         checks = {table: _checks(inspector, table) for table in TABLES}
-        assert "channel_code IN ('web','api','wecom','dingtalk','custom')" in checks["tenant_knowledge_conversation_sessions"]["ck_tenant_knowledge_conversation_sessions_channel"]
-        assert "route_code IN ('rag','cache','fallback','abstain','changed')" in checks["tenant_knowledge_query_facts"]["ck_tenant_knowledge_query_facts_route"]
-        assert "outcome_code IN ('answered','abstained','cancelled','failed','knowledge_changed')" in checks["tenant_knowledge_query_facts"]["ck_tenant_knowledge_query_facts_outcome"]
-        assert "feedback_kind IN ('helpful','unhelpful','correction','unsafe','incomplete')" in checks["tenant_knowledge_feedback_facts"]["ck_tenant_knowledge_feedback_facts_kind"]
-        assert "priority IN ('low','medium','high','critical')" in checks["tenant_knowledge_review_cases"]["ck_tenant_knowledge_review_cases_priority"]
-        assert "status IN ('open','triaged','investigating','resolved','dismissed')" in checks["tenant_knowledge_review_cases"]["ck_tenant_knowledge_review_cases_status"]
-        assert "candidate_type IN ('qa_gap','document_gap','source_gap','retrieval_tuning','citation_policy','refusal_policy')" in checks["tenant_knowledge_improvement_candidates"]["ck_tenant_knowledge_improvement_candidates_type"]
-        assert "status IN ('proposed','accepted','rejected','converted','archived')" in checks["tenant_knowledge_improvement_candidates"]["ck_tenant_knowledge_improvement_candidates_status"]
+        assert "channel_code in ('web','api','wecom','dingtalk','custom')" in checks["tenant_knowledge_conversation_sessions"]["ck_tenant_knowledge_conversation_sessions_channel"]
+        assert "route_code in ('rag','cache','fallback','abstain','changed')" in checks["tenant_knowledge_query_facts"]["ck_tenant_knowledge_query_facts_route"]
+        assert "outcome_code in ('answered','abstained','cancelled','failed','knowledge_changed')" in checks["tenant_knowledge_query_facts"]["ck_tenant_knowledge_query_facts_outcome"]
+        assert "feedback_kind in ('helpful','unhelpful','correction','unsafe','incomplete')" in checks["tenant_knowledge_feedback_facts"]["ck_tenant_knowledge_feedback_facts_kind"]
+        assert "priority in ('low','medium','high','critical')" in checks["tenant_knowledge_review_cases"]["ck_tenant_knowledge_review_cases_priority"]
+        assert "status in ('open','triaged','investigating','resolved','dismissed')" in checks["tenant_knowledge_review_cases"]["ck_tenant_knowledge_review_cases_status"]
+        assert "candidate_type in ('qa_gap','document_gap','source_gap','retrieval_tuning','citation_policy','refusal_policy')" in checks["tenant_knowledge_improvement_candidates"]["ck_tenant_knowledge_improvement_candidates_type"]
+        assert "status in ('proposed','accepted','rejected','converted','archived')" in checks["tenant_knowledge_improvement_candidates"]["ck_tenant_knowledge_improvement_candidates_status"]
         for table, name in (
             ("tenant_knowledge_conversation_sessions", "ck_tenant_knowledge_conversation_sessions_digests"),
             ("tenant_knowledge_query_facts", "ck_tenant_knowledge_query_facts_digests"),
@@ -404,3 +424,39 @@ def test_unknown_dialect_fails_closed_without_table_creation() -> None:
     assert "mysql" in migration.SUPPORTED_DIALECTS
     assert "postgresql" in migration.SUPPORTED_DIALECTS
     assert "oracle" not in migration.SUPPORTED_DIALECTS
+
+
+def test_offline_ddl_renders_mysql_mariadb_postgresql_and_refuses_sqlite() -> None:
+    """方言分支不能只被"在 SUPPORTED_DIALECTS 里"断言，渲染结果本身也要钉住。
+
+    0036 有这道口径，0037 一直没有——于是 `upgrade()` 里那句 `dialect in {"mysql","mariadb"}`
+    的正确性只能靠 review。R10 修掉的正是这一类缺陷：早期写法只认 `"mysql"`，
+    MariaDB 上的 DATETIME(6) 列会拿到无小数位的 CURRENT_TIMESTAMP，微秒静默丢失，
+    而事件链定序依赖它。下面把 mariadb 与 mysql 并列断言，这条缺陷就此有了回归网。
+    """
+    for url, datetime_marker in (
+        ("mysql+pymysql://u:p@localhost/rag4c", "DATETIME(6)"),
+        ("mariadb+pymysql://u:p@localhost/rag4c", "DATETIME(6)"),
+        ("postgresql+psycopg://u:p@localhost/rag4c", "TIMESTAMP"),
+    ):
+        output = StringIO()
+        command.upgrade(
+            alembic_config(url, output_buffer=output), f"{DOWN_REVISION}:{REVISION}", sql=True
+        )
+        sql = output.getvalue().upper()
+        for table in TABLES:
+            assert f"CREATE TABLE {table.upper()}" in sql
+        # 事件链的两列 + 触发器 DDL：证明 mysql/mariadb/postgres 分支真的渲染出了守卫，
+        # 而不是"表建了、append-only 与 hash chain 静默缺失"。
+        assert "PREVIOUS_EVENT_DIGEST" in sql and "EVENT_DIGEST" in sql
+        assert "CREATE TRIGGER" in sql
+        assert datetime_marker in sql
+
+    with pytest.raises(Exception, match="online|SQLite|sqlite"):
+        command.upgrade(
+            alembic_config(
+                "sqlite:///knowledge-operations-offline.db", output_buffer=StringIO()
+            ),
+            f"{DOWN_REVISION}:{REVISION}",
+            sql=True,
+        )

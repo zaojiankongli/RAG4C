@@ -5033,6 +5033,7 @@ def inspect_enterprise_content_recovery_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+            ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
         }:
             if not recovery_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -5474,6 +5475,7 @@ def inspect_enterprise_task_operations_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+            ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
         }:
             if not task_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -6512,6 +6514,7 @@ def inspect_enterprise_knowledge_base_release_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+            ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
         }:
             if not release_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -6794,6 +6797,7 @@ def inspect_enterprise_release_quality_certification_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+            ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
         }:
             if not quality_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -7168,6 +7172,7 @@ def inspect_enterprise_release_quality_operations_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+            ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
         }:
             if not operations_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -7548,6 +7553,7 @@ def inspect_enterprise_notification_center_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+            ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
         }:
             if not notification_present and revision in _known_catalog_revisions():
                 return "not_available", ()
@@ -8259,6 +8265,7 @@ def _knowledge_base_registry_capability_issues(
                     ENTERPRISE_TASK_OPERATIONS_REVISION,
                     ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                     ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+                    ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
                 }
                 else ENTERPRISE_APPROVAL_ACTION_TYPES_0030
                 if approval_action_revision
@@ -8282,6 +8289,7 @@ def _knowledge_base_registry_capability_issues(
                     ENTERPRISE_TASK_OPERATIONS_REVISION,
                     ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                     ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+                    ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
                 }
                 else ENTERPRISE_APPROVAL_ACTION_TYPES_0030
                 if approval_action_revision
@@ -8313,6 +8321,7 @@ def _knowledge_base_registry_capability_issues(
                     ENTERPRISE_TASK_OPERATIONS_REVISION,
                     ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                     ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+                    ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
                 }
                 else ENTERPRISE_APPROVAL_ACTION_TYPES_0030
                 if approval_action_revision
@@ -8386,6 +8395,7 @@ def inspect_enterprise_knowledge_base_registry_capability(
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+            ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
         }:
             known_pre_0028 = revision in _known_catalog_revisions()
             if not registry_present and known_pre_0028:
@@ -8494,6 +8504,7 @@ def _workspace_authorization_capability_issues(
                 ENTERPRISE_TASK_OPERATIONS_REVISION,
                 ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                 ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+                ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
             }
             else ENTERPRISE_APPROVAL_ACTION_TYPES_0030
             if approval_action_revision
@@ -8585,6 +8596,7 @@ def inspect_workspace_authorization_capability(bind: Any) -> tuple[str, tuple[st
             ENTERPRISE_TASK_OPERATIONS_REVISION,
             ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
             ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+            ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
         }
         if revision not in supported_revisions:
             known_pre_0027 = revision in _known_catalog_revisions()
@@ -10552,8 +10564,13 @@ def inspect_enterprise_knowledge_serving_reliability_capability(
         if len(revisions) > 1:
             return "unavailable", ("alembic_version contains multiple revisions",)
         revision = revisions[0] if revisions else None
-        if revision != ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION:
-            if not present and revision in _known_catalog_revisions():
+        revision_known = revision in _known_catalog_revisions()
+        if not (
+            revision_known
+            and _REVISION_ORDER_FOR_CAPABILITY(str(revision))
+            >= _REVISION_ORDER_FOR_CAPABILITY(ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION)
+        ):
+            if not present and revision_known:
                 return "not_available", ()
             return "unavailable", ("catalog is not at a known pre-0036 or 0036 revision",)
         issues = _enterprise_knowledge_serving_reliability_capability_issues(connection)
@@ -10696,6 +10713,7 @@ def _REVISION_ORDER_FOR_CAPABILITY(revision: str) -> int:
                 ENTERPRISE_TASK_OPERATIONS_REVISION,
                 ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
                 ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+                ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
             ),
         )
     }
@@ -10839,3 +10857,724 @@ def inspect_enterprise_task_operations_capability(bind: Any) -> tuple[str, tuple
         ENTERPRISE_TASK_OPERATIONS_REVISION,
         _enterprise_task_operations_capability_issues,
     )
+
+
+# ---------------------------------------------------------------------------
+# Enterprise Knowledge Operations & Feedback (Stage 27)
+# ---------------------------------------------------------------------------
+
+ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION = "0037_enterprise_knowledge_operations_feedback"
+ENTERPRISE_KNOWLEDGE_OPERATIONS_REVISION = ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION
+ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES = frozenset(
+    {
+        "tenant_knowledge_operations_profiles",
+        "tenant_knowledge_conversation_sessions",
+        "tenant_knowledge_query_facts",
+        "tenant_knowledge_feedback_facts",
+        "tenant_knowledge_review_cases",
+        "tenant_knowledge_review_events",
+        "tenant_knowledge_improvement_candidates",
+    }
+)
+ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_TABLES = (
+    ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES
+)
+
+for _knowledge_operations_table in ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES:
+    (
+        _operations_columns,
+        _operations_not_null,
+        _operations_uniques,
+        _operations_foreign_keys,
+        _operations_checks,
+        _operations_indexes,
+    ) = _orm_table_contract(_knowledge_operations_table)
+    _HEAD_REQUIRED_COLUMNS[_knowledge_operations_table] = _operations_columns
+    _HEAD_REQUIRED_NOT_NULL[_knowledge_operations_table] = _operations_not_null
+    _HEAD_REQUIRED_UNIQUES[_knowledge_operations_table] = _operations_uniques
+    _HEAD_REQUIRED_FOREIGN_KEYS[_knowledge_operations_table] = _operations_foreign_keys
+    _HEAD_REQUIRED_CHECK_FRAGMENTS[_knowledge_operations_table] = _operations_checks
+    _HEAD_REQUIRED_INDEXES[_knowledge_operations_table] = _operations_indexes
+
+ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_COLUMNS = {
+    table: _HEAD_REQUIRED_COLUMNS[table]
+    for table in ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES
+}
+ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_NOT_NULL = {
+    table: _HEAD_REQUIRED_NOT_NULL[table]
+    for table in ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES
+}
+ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_UNIQUES = {
+    table: _HEAD_REQUIRED_UNIQUES[table]
+    for table in ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES
+}
+ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_FOREIGN_KEYS = {
+    table: _HEAD_REQUIRED_FOREIGN_KEYS[table]
+    for table in ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES
+}
+ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_INDEXES = {
+    table: _HEAD_REQUIRED_INDEXES[table]
+    for table in ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES
+}
+
+# The fragments are an explicit capability contract rather than an incidental
+# serialization of ORM expression objects.
+ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_CHECK_FRAGMENTS = {
+    "tenant_knowledge_operations_profiles": {
+        "ck_tenant_knowledge_operations_profiles_status": (
+            "draft",
+            "active",
+            "paused",
+            "archived",
+        ),
+        "ck_tenant_knowledge_operations_profiles_revision": ("revision > 0",),
+        "ck_tenant_knowledge_operations_profiles_policy": (
+            "retention_days",
+            "sampling_basis_points",
+            "review_sla_minutes",
+        ),
+        "ck_tenant_knowledge_operations_profiles_active_identity": (
+            "active_profile_key",
+            "dataset_id",
+        ),
+        "ck_tenant_knowledge_operations_profiles_active_key": (
+            "active_profile_key",
+            "status",
+        ),
+        "ck_tenant_knowledge_operations_profiles_lifecycle": ("archived_at", "archived_by"),
+    },
+    "tenant_knowledge_conversation_sessions": {
+        "ck_tenant_knowledge_conversation_sessions_channel": (
+            "channel_code",
+            "web",
+            "api",
+            "wecom",
+            "dingtalk",
+            "custom",
+        ),
+        "ck_tenant_knowledge_conversation_sessions_digests": (
+            "session_key_digest",
+            "session_digest",
+            "actor_subject_digest",
+        ),
+        "ck_tenant_knowledge_conversation_sessions_counts": (
+            "query_count",
+            "feedback_count",
+        ),
+        "ck_tenant_knowledge_conversation_sessions_expiry": ("expires_at", "started_at"),
+    },
+    "tenant_knowledge_query_facts": {
+        "ck_tenant_knowledge_query_facts_route": ("route_code", "rag", "cache", "abstain"),
+        "ck_tenant_knowledge_query_facts_outcome": (
+            "outcome_code",
+            "answered",
+            "abstained",
+            "knowledge_changed",
+        ),
+        "ck_tenant_knowledge_query_facts_digests": (
+            "request_id_digest",
+            "query_digest",
+            "answer_digest",
+            "fact_digest",
+            "trace_digest",
+        ),
+        "ck_tenant_knowledge_query_facts_preview": ("safe_query_preview",),
+        "ck_tenant_knowledge_query_facts_metrics": (
+            "retrieval_count",
+            "citation_count",
+            "total_ms",
+            "serving_generation",
+        ),
+    },
+    "tenant_knowledge_feedback_facts": {
+        "ck_tenant_knowledge_feedback_facts_kind": (
+            "feedback_kind",
+            "helpful",
+            "unhelpful",
+            "correction",
+            "unsafe",
+            "incomplete",
+        ),
+        "ck_tenant_knowledge_feedback_facts_source": (
+            "source_code",
+            "explicit",
+            "operator",
+            "policy",
+            "implicit",
+        ),
+        "ck_tenant_knowledge_feedback_facts_reason": ("reason_code", "wrong_answer"),
+        "ck_tenant_knowledge_feedback_facts_digest": ("feedback_digest",),
+        "ck_tenant_knowledge_feedback_facts_preview": ("safe_comment_preview",),
+    },
+    "tenant_knowledge_review_cases": {
+        "ck_tenant_knowledge_review_cases_priority": ("priority", "low", "critical"),
+        "ck_tenant_knowledge_review_cases_issue": (
+            "issue_type",
+            "no_recall",
+            "wrong_answer",
+            "outdated_knowledge",
+        ),
+        "ck_tenant_knowledge_review_cases_status": (
+            "status",
+            "open",
+            "triaged",
+            "investigating",
+            "resolved",
+            "dismissed",
+        ),
+        "ck_tenant_knowledge_review_cases_revision": ("revision > 0",),
+        "ck_tenant_knowledge_review_cases_resolution": (
+            "resolution_code",
+            "safe_resolution_summary",
+        ),
+        "ck_tenant_knowledge_review_cases_closure": ("closed_at", "closed_by"),
+    },
+    "tenant_knowledge_review_events": {
+        "ck_tenant_knowledge_review_events_type": (
+            "event_type",
+            "case_created",
+            "triaged",
+            "assigned",
+            "status_changed",
+            "candidate_linked",
+            "resolved",
+            "dismissed",
+        ),
+        "ck_tenant_knowledge_review_events_sequence": ("sequence > 0",),
+        "ck_tenant_knowledge_review_events_digests": (
+            "event_digest",
+            "previous_event_digest",
+        ),
+        "ck_tenant_knowledge_review_events_hash_chain": ("sequence", "previous_event_digest"),
+        "ck_tenant_knowledge_review_events_snapshot": ("safe_snapshot_json",),
+    },
+    "tenant_knowledge_improvement_candidates": {
+        "ck_tenant_knowledge_improvement_candidates_type": (
+            "candidate_type",
+            "qa_gap",
+            "document_gap",
+            "source_gap",
+            "retrieval_tuning",
+            "citation_policy",
+            "refusal_policy",
+        ),
+        "ck_tenant_knowledge_improvement_candidates_status": (
+            "status",
+            "proposed",
+            "accepted",
+            "rejected",
+            "converted",
+            "archived",
+        ),
+        "ck_tenant_knowledge_improvement_candidates_digest": ("query_cluster_digest",),
+        "ck_tenant_knowledge_improvement_candidates_revision": ("revision > 0",),
+        "ck_tenant_knowledge_improvement_candidates_counts": (
+            "supporting_fact_count",
+            "negative_feedback_count",
+        ),
+        "ck_tenant_knowledge_improvement_candidates_text": ("safe_title", "safe_summary"),
+        "ck_tenant_knowledge_improvement_candidates_route": ("target_route_code",),
+        "ck_tenant_knowledge_improvement_candidates_target": ("target_resource_id",),
+        "ck_tenant_knowledge_improvement_candidates_decision": ("decided_at", "decided_by"),
+    },
+}
+_HEAD_REQUIRED_CHECK_FRAGMENTS.update(
+    ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_CHECK_FRAGMENTS
+)
+ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_ISSUE_FRAGMENTS = tuple(
+    f"{table}." for table in sorted(ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES)
+)
+HEAD_CATALOG_TABLES = HEAD_CATALOG_TABLES | ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES
+HEAD_REVISION = ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION
+
+_KNOWLEDGE_OPERATIONS_SUPPORTED_DIALECTS = frozenset({"sqlite", "mysql", "mariadb", "postgresql"})
+_KNOWLEDGE_OPERATIONS_PROFILE_STATUSES = frozenset({"draft", "active", "paused", "archived"})
+_KNOWLEDGE_OPERATIONS_CHANNEL_CODES = frozenset({"web", "api", "wecom", "dingtalk", "custom"})
+_KNOWLEDGE_OPERATIONS_ROUTE_CODES = frozenset({"rag", "cache", "fallback", "abstain", "changed"})
+_KNOWLEDGE_OPERATIONS_OUTCOME_CODES = frozenset(
+    {"answered", "abstained", "cancelled", "failed", "knowledge_changed"}
+)
+_KNOWLEDGE_OPERATIONS_FEEDBACK_KINDS = frozenset(
+    {"helpful", "unhelpful", "correction", "unsafe", "incomplete"}
+)
+_KNOWLEDGE_OPERATIONS_CASE_PRIORITIES = frozenset({"low", "medium", "high", "critical"})
+_KNOWLEDGE_OPERATIONS_CASE_STATUSES = frozenset(
+    {"open", "triaged", "investigating", "resolved", "dismissed"}
+)
+_KNOWLEDGE_OPERATIONS_EVENT_TYPES = frozenset(
+    {
+        "case_created",
+        "triaged",
+        "assigned",
+        "status_changed",
+        "candidate_linked",
+        "resolved",
+        "dismissed",
+    }
+)
+_KNOWLEDGE_OPERATIONS_CANDIDATE_TYPES = frozenset(
+    {
+        "qa_gap",
+        "document_gap",
+        "source_gap",
+        "retrieval_tuning",
+        "citation_policy",
+        "refusal_policy",
+    }
+)
+_KNOWLEDGE_OPERATIONS_CANDIDATE_STATUSES = frozenset(
+    {"proposed", "accepted", "rejected", "converted", "archived"}
+)
+_KNOWLEDGE_OPERATIONS_IMMUTABLE_TABLES = (
+    "tenant_knowledge_query_facts",
+    "tenant_knowledge_feedback_facts",
+    "tenant_knowledge_review_events",
+)
+
+
+def _knowledge_operations_exact_allowlist_issues(
+    checks_by_table: Mapping[str, Mapping[str, str]],
+) -> tuple[str, ...]:
+    specifications = (
+        (
+            "tenant_knowledge_operations_profiles",
+            "ck_tenant_knowledge_operations_profiles_status",
+            "status",
+            _KNOWLEDGE_OPERATIONS_PROFILE_STATUSES,
+            "profile status",
+        ),
+        (
+            "tenant_knowledge_conversation_sessions",
+            "ck_tenant_knowledge_conversation_sessions_channel",
+            "channel_code",
+            _KNOWLEDGE_OPERATIONS_CHANNEL_CODES,
+            "session channel",
+        ),
+        (
+            "tenant_knowledge_query_facts",
+            "ck_tenant_knowledge_query_facts_route",
+            "route_code",
+            _KNOWLEDGE_OPERATIONS_ROUTE_CODES,
+            "query route",
+        ),
+        (
+            "tenant_knowledge_query_facts",
+            "ck_tenant_knowledge_query_facts_outcome",
+            "outcome_code",
+            _KNOWLEDGE_OPERATIONS_OUTCOME_CODES,
+            "query outcome",
+        ),
+        (
+            "tenant_knowledge_feedback_facts",
+            "ck_tenant_knowledge_feedback_facts_kind",
+            "feedback_kind",
+            _KNOWLEDGE_OPERATIONS_FEEDBACK_KINDS,
+            "feedback kind",
+        ),
+        (
+            "tenant_knowledge_review_cases",
+            "ck_tenant_knowledge_review_cases_priority",
+            "priority",
+            _KNOWLEDGE_OPERATIONS_CASE_PRIORITIES,
+            "review priority",
+        ),
+        (
+            "tenant_knowledge_review_cases",
+            "ck_tenant_knowledge_review_cases_status",
+            "status",
+            _KNOWLEDGE_OPERATIONS_CASE_STATUSES,
+            "review status",
+        ),
+        (
+            "tenant_knowledge_review_events",
+            "ck_tenant_knowledge_review_events_type",
+            "event_type",
+            _KNOWLEDGE_OPERATIONS_EVENT_TYPES,
+            "review event type",
+        ),
+        (
+            "tenant_knowledge_improvement_candidates",
+            "ck_tenant_knowledge_improvement_candidates_type",
+            "candidate_type",
+            _KNOWLEDGE_OPERATIONS_CANDIDATE_TYPES,
+            "candidate type",
+        ),
+        (
+            "tenant_knowledge_improvement_candidates",
+            "ck_tenant_knowledge_improvement_candidates_status",
+            "status",
+            _KNOWLEDGE_OPERATIONS_CANDIDATE_STATUSES,
+            "candidate status",
+        ),
+    )
+    issues: list[str] = []
+    for table, check_name, column, expected, label in specifications:
+        actual = _automation_check_allowlist_values(
+            checks_by_table.get(table, {}).get(check_name), column
+        )
+        if actual is None or len(actual) != len(expected) or set(actual) != set(expected):
+            rendered = ",".join(actual) if actual is not None else "unparseable"
+            issues.append(
+                f"invalid exact Knowledge Operations {label} allow-list "
+                f"{table}.{check_name}: {rendered}"
+            )
+    return tuple(issues)
+
+
+def _knowledge_operations_postgresql_guard_issues(connection: Any) -> tuple[str, ...]:
+    trusted_schema = str(connection.scalar(text("SELECT current_schema()")) or "").casefold()
+    if not trusted_schema:
+        return ("cannot prove Knowledge Operations trusted PostgreSQL schema",)
+    rows = connection.execute(
+        text(
+            "SELECT t.tgname, n.nspname AS table_schema, c.relname AS table_name, "
+            "t.tgenabled AS trigger_enabled, pg_get_triggerdef(t.oid) AS trigger_definition, "
+            "fn.nspname AS function_schema, p.proname AS function_name, "
+            "pg_get_functiondef(p.oid) AS function_definition "
+            "FROM pg_trigger AS t "
+            "JOIN pg_class AS c ON c.oid=t.tgrelid "
+            "JOIN pg_namespace AS n ON n.oid=c.relnamespace "
+            "JOIN pg_proc AS p ON p.oid=t.tgfoid "
+            "JOIN pg_namespace AS fn ON fn.oid=p.pronamespace "
+            "WHERE NOT t.tgisinternal AND n.nspname=current_schema() ORDER BY t.tgname"
+        )
+    ).all()
+    records: dict[str, dict[str, Any]] = {}
+    issues: list[str] = []
+    for row in rows:
+        name = str(row[0])
+        if name in records:
+            issues.append(f"duplicate Knowledge Operations PostgreSQL trigger {name}")
+        records[name] = {
+            "table_schema": str(row[1] or "").casefold(),
+            "table_name": str(row[2] or ""),
+            "trigger_enabled": str(row[3] or "").casefold(),
+            "trigger_definition": _normalized_sql(row[4]),
+            "function_schema": str(row[5] or "").casefold(),
+            "function_name": str(row[6] or ""),
+            "function_definition": _normalized_sql(row[7]),
+        }
+    for table in _KNOWLEDGE_OPERATIONS_IMMUTABLE_TABLES:
+        for operation in ("update", "delete"):
+            name = f"trg_{table}_no_{operation}"
+            record = records.get(name)
+            if record is None:
+                issues.append(f"missing Knowledge Operations immutable trigger {name}")
+                continue
+            if record["trigger_enabled"] not in {"o", "a"}:
+                issues.append(f"disabled Knowledge Operations immutable trigger {name}")
+            if record["table_schema"] != trusted_schema or record["table_name"].casefold() != table:
+                issues.append(f"invalid Knowledge Operations immutable trigger {name} target")
+            if f"before {operation}" not in record["trigger_definition"]:
+                issues.append(
+                    f"invalid Knowledge Operations immutable trigger {name} operation"
+                )
+            if record["function_name"] != "rag4c_knowledge_operations_immutable":
+                issues.append(f"invalid Knowledge Operations immutable trigger {name} function")
+            if record["function_schema"] != trusted_schema:
+                issues.append(
+                    f"invalid Knowledge Operations immutable trigger {name} function schema"
+                )
+            if "raise exception" not in record["function_definition"]:
+                issues.append(f"invalid Knowledge Operations immutable function {name}")
+    insert_name = "trg_tenant_knowledge_review_events_validate_insert"
+    insert_record = records.get(insert_name)
+    if insert_record is None:
+        issues.append("missing Knowledge Operations event predecessor trigger")
+    else:
+        if insert_record["table_name"].casefold() != "tenant_knowledge_review_events":
+            issues.append("invalid Knowledge Operations event predecessor trigger target table")
+        if "before insert" not in insert_record["trigger_definition"]:
+            issues.append("invalid Knowledge Operations event predecessor trigger operation")
+        if insert_record["function_name"] != "rag4c_knowledge_operations_event_validate":
+            issues.append("invalid Knowledge Operations event predecessor trigger function")
+        if insert_record["function_schema"] != trusted_schema:
+            issues.append("invalid Knowledge Operations event predecessor function schema")
+        for fragment in (
+            "raise exception",
+            "case_id",
+            "previous_event_digest",
+            "sequence",
+            "event_digest",
+            "e.event_digest=new.previous_event_digest",
+        ):
+            if _normalized_sql(fragment) not in insert_record["function_definition"]:
+                issues.append(f"invalid Knowledge Operations predecessor function: {fragment}")
+    return tuple(sorted(set(issues)))
+
+
+def _knowledge_operations_guard_issues(connection: Any) -> tuple[str, ...]:
+    dialect = str(getattr(connection.dialect, "name", "")).casefold()
+    if dialect not in _KNOWLEDGE_OPERATIONS_SUPPORTED_DIALECTS:
+        return (f"unsupported database dialect for Knowledge Operations: {dialect or 'unknown'}",)
+    if dialect == "postgresql":
+        try:
+            return _knowledge_operations_postgresql_guard_issues(connection)
+        except Exception as exc:
+            return (
+                "cannot prove Knowledge Operations PostgreSQL guard semantics: "
+                f"{exc.__class__.__name__}: {exc}",
+            )
+
+    if dialect == "sqlite":
+        definitions = {
+            str(name): str(sql or "")
+            for name, sql in connection.execute(
+                text("SELECT name, sql FROM sqlite_master WHERE type='trigger'")
+            ).all()
+        }
+    else:
+        definitions = {
+            str(name): f"{timing} {event} {statement}"
+            for name, timing, event, statement in connection.execute(
+                text(
+                    "SELECT TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION, ACTION_STATEMENT "
+                    "FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE()"
+                )
+            ).all()
+        }
+
+    issues: list[str] = []
+    for table in _KNOWLEDGE_OPERATIONS_IMMUTABLE_TABLES:
+        for operation in ("update", "delete"):
+            name = f"trg_{table}_no_{operation}"
+            definition = _normalized_sql(definitions.get(name))
+            if not definition:
+                issues.append(f"missing Knowledge Operations immutable trigger {name}")
+            elif operation not in definition:
+                issues.append(f"invalid Knowledge Operations immutable trigger {name}")
+    insert_definition = _normalized_sql(
+        definitions.get("trg_tenant_knowledge_review_events_validate_insert")
+    )
+    if not insert_definition:
+        issues.append("missing Knowledge Operations event predecessor trigger")
+    else:
+        for fragment in (
+            "insert",
+            "case_id",
+            "previous_event_digest",
+            "sequence",
+            "event_digest",
+            "case_created",
+        ):
+            if _normalized_sql(fragment) not in insert_definition:
+                issues.append(f"invalid Knowledge Operations event predecessor trigger: {fragment}")
+    return tuple(sorted(set(issues)))
+
+
+def _knowledge_operations_data_issues(connection: Any) -> tuple[str, ...]:
+    """Fail closed on authority drift the composite keys cannot express."""
+
+    issues: list[str] = []
+    try:
+        for tenant_id, case_id, events, highest, first_created in connection.execute(
+            text(
+                "SELECT tenant_id, case_id, COUNT(*), MAX(sequence), "
+                "SUM(CASE WHEN sequence=1 AND event_type='case_created' THEN 1 ELSE 0 END) "
+                "FROM tenant_knowledge_review_events "
+                "GROUP BY tenant_id, case_id ORDER BY tenant_id, case_id LIMIT 20"
+            )
+        ).all():
+            if int(highest or 0) != int(events or 0) or int(first_created or 0) != 1:
+                issues.append(
+                    "review event chain is not contiguous from case_created "
+                    f"{tenant_id}/{case_id}"
+                )
+        for tenant_id, candidate_id in connection.execute(
+            text(
+                "SELECT c.tenant_id, c.id FROM tenant_knowledge_improvement_candidates AS c "
+                "JOIN tenant_knowledge_review_cases AS k "
+                "ON k.tenant_id=c.tenant_id AND k.id=c.linked_case_id "
+                "WHERE COALESCE(c.profile_id,'')<>COALESCE(k.profile_id,'') "
+                "OR COALESCE(c.dataset_id,'')<>COALESCE(k.dataset_id,'') "
+                "ORDER BY c.tenant_id, c.id LIMIT 20"
+            )
+        ).all():
+            issues.append(
+                "improvement candidate ownership does not match its review case "
+                f"{tenant_id}/{candidate_id}"
+            )
+        for tenant_id, session_id in connection.execute(
+            text(
+                "SELECT s.tenant_id, s.id FROM tenant_knowledge_conversation_sessions AS s "
+                "JOIN tenant_knowledge_operations_profiles AS p "
+                "ON p.tenant_id=s.tenant_id AND p.id=s.profile_id "
+                "WHERE COALESCE(s.dataset_id,'')<>COALESCE(p.dataset_id,'') "
+                "ORDER BY s.tenant_id, s.id LIMIT 20"
+            )
+        ).all():
+            issues.append(
+                f"conversation session dataset does not match its profile {tenant_id}"
+                f"/{session_id}"
+            )
+    except Exception as exc:
+        return (f"Knowledge Operations data inspection failed: {exc.__class__.__name__}",)
+    return tuple(sorted(set(issues)))
+
+
+def _enterprise_knowledge_operations_feedback_capability_issues(
+    connection: Any,
+) -> tuple[str, ...]:
+    inspector = inspect(connection)
+    tables = set(inspector.get_table_names())
+    missing_tables = ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES - tables
+    issues: list[str] = [f"missing table {name}" for name in sorted(missing_tables)]
+    if missing_tables:
+        return tuple(sorted(set(issues)))
+
+    checks_by_table: dict[str, dict[str, str]] = {}
+    for table in sorted(ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES):
+        columns = {str(item.get("name")): item for item in inspector.get_columns(table)}
+        required = ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_COLUMNS[table]
+        issues.extend(f"missing column {table}.{name}" for name in sorted(required - set(columns)))
+        for name in ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_NOT_NULL[table]:
+            if name in columns and bool(columns[name].get("nullable", True)):
+                issues.append(f"nullable column {table}.{name}")
+
+        uniques = {
+            str(item.get("name")): tuple(item.get("column_names") or ())
+            for item in inspector.get_unique_constraints(table)
+            if item.get("name")
+        }
+        for name, expected in ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_UNIQUES[
+            table
+        ].items():
+            if uniques.get(name) != tuple(expected):
+                issues.append(f"missing or invalid unique {table}.{name}")
+
+        foreign_keys = {
+            str(item.get("name")): (
+                tuple(item.get("constrained_columns") or ()),
+                str(item.get("referred_table")),
+                tuple(item.get("referred_columns") or ()),
+            )
+            for item in inspector.get_foreign_keys(table)
+            if item.get("name")
+        }
+        for name, expected in ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_FOREIGN_KEYS[
+            table
+        ].items():
+            if foreign_keys.get(name) != expected:
+                issues.append(f"missing or invalid foreign key {table}.{name}")
+        for name, contract in foreign_keys.items():
+            if contract[0] and contract[0][0] != "tenant_id":
+                issues.append(f"non-tenant-leading foreign key {table}.{name}")
+
+        checks = {
+            str(item.get("name")): str(item.get("sqltext") or "")
+            for item in inspector.get_check_constraints(table)
+            if item.get("name")
+        }
+        checks_by_table[table] = checks
+        for name, fragments in ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_CHECK_FRAGMENTS[
+            table
+        ].items():
+            sql = _parenless_sql(checks.get(name))
+            if not sql or any(_parenless_sql(fragment) not in sql for fragment in fragments):
+                issues.append(f"missing or invalid check {table}.{name}")
+
+        indexes = {
+            str(item.get("name")): tuple(item.get("column_names") or ())
+            for item in inspector.get_indexes(table)
+            if item.get("name")
+        }
+        for name, expected in ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_INDEXES[
+            table
+        ].items():
+            if indexes.get(name) != tuple(expected):
+                issues.append(f"missing or invalid index {table}.{name}")
+
+    issues.extend(_knowledge_operations_exact_allowlist_issues(checks_by_table))
+    issues.extend(_knowledge_operations_guard_issues(connection))
+    issues.extend(_knowledge_operations_data_issues(connection))
+    issues.extend(_knowledge_operations_parent_issues(connection))
+    return tuple(sorted(set(issues)))
+
+
+def inspect_enterprise_knowledge_operations_feedback_capability(
+    bind: Any,
+) -> tuple[str, tuple[str, ...]]:
+    """Return revision-aware Stage27 Knowledge Operations authority state."""
+
+    def inspect_connection(connection: Any) -> tuple[str, tuple[str, ...]]:
+        dialect = str(getattr(connection.dialect, "name", "")).casefold()
+        if dialect not in _KNOWLEDGE_OPERATIONS_SUPPORTED_DIALECTS:
+            return "unavailable", (
+                f"unsupported database dialect for Knowledge Operations: {dialect or 'unknown'}",
+            )
+        inspector = inspect(connection)
+        tables = set(inspector.get_table_names())
+        present = bool(ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES & tables)
+        revisions: tuple[str, ...] = ()
+        if "alembic_version" in tables:
+            revisions = tuple(
+                str(value)
+                for value in connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalars()
+            )
+        if len(revisions) > 1:
+            return "unavailable", ("alembic_version contains multiple revisions",)
+        revision = revisions[0] if revisions else None
+        revision_known = revision in _known_catalog_revisions()
+        if not (
+            revision_known
+            and _REVISION_ORDER_FOR_CAPABILITY(str(revision))
+            >= _REVISION_ORDER_FOR_CAPABILITY(ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION)
+        ):
+            if not present and revision_known:
+                return "not_available", ()
+            return "unavailable", ("catalog is not at a known pre-0037 or 0037 revision",)
+        issues = _enterprise_knowledge_operations_feedback_capability_issues(connection)
+        return ("ready", ()) if not issues else ("unavailable", issues)
+
+    try:
+        return _schema_connection(bind, inspect_connection)
+    except Exception as exc:
+        return "unavailable", (
+            f"Knowledge Operations schema inspection failed: {exc.__class__.__name__}",
+        )
+
+
+_KNOWLEDGE_OPERATIONS_LEGACY_HEAD_SCHEMA_ISSUES = _head_schema_issues
+
+
+def _knowledge_operations_parent_issues(connection: Any) -> tuple[str, ...]:
+    inspector = inspect(connection)
+    try:
+        issues = _KNOWLEDGE_OPERATIONS_LEGACY_HEAD_SCHEMA_ISSUES(inspector)
+    except Exception as exc:
+        return (f"parent catalog capability inspection failed: {exc.__class__.__name__}",)
+    return tuple(
+        sorted(
+            {
+                issue
+                for issue in issues
+                if any(
+                    fragment in issue
+                    for fragment in ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_ISSUE_FRAGMENTS
+                )
+            }
+        )
+    )
+
+
+if HEAD_REVISION not in ENTERPRISE_APPROVAL_CONTROL_REQUIRED_EXACT_CHECK_SQL_BY_REVISION:
+    ENTERPRISE_APPROVAL_CONTROL_REQUIRED_EXACT_CHECK_SQL_BY_REVISION[HEAD_REVISION] = (
+        ENTERPRISE_APPROVAL_CONTROL_REQUIRED_EXACT_CHECK_SQL_BY_REVISION[
+            ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION
+        ]
+    )
+
+
+def _head_schema_issues(inspector: Any) -> tuple[str, ...]:
+    issues = list(_KNOWLEDGE_OPERATIONS_LEGACY_HEAD_SCHEMA_ISSUES(inspector))
+    tables = set(inspector.get_table_names())
+    if ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES <= tables:
+        issues.extend(
+            _schema_connection(
+                inspector.bind,
+                _enterprise_knowledge_operations_feedback_capability_issues,
+            )
+        )
+    return tuple(sorted(set(issues)))

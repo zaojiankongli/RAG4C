@@ -253,6 +253,6 @@ describe("Stage21 Quality Operations Center", () => {
         jobs={[]}
       />,
     );
-    expect(screen.getByText("当前筛选范围没有 Release quality authority")).toBeTruthy();
+    expect(screen.getByText("当前筛选范围没有发布质量权威")).toBeTruthy();
   });
 });

@@ -8,7 +8,15 @@ const css = readFileSync(new URL("./enterprise-approval.css", import.meta.url), 
 
 describe("Stage 13 enterprise approval responsive CSS", () => {
   it("uses TDesign tokens, table-first density and visible keyboard focus", () => {
-    expect(css).toContain("var(--td-brand-color");
+    // 这条守卫的本意是"品牌色必须走 token，不许硬编码"。R7 把模块私有 --*-primary 从
+    // 直接抓 var(--td-brand-color) 拆成实心阶 --color-accent-solid 与文字阶
+    // --color-primary-strong —— 因为同一个变量同时当填充和文字用，必然有一头不达 AA
+    // （深色主题白字压 #bfdbfe 只有 1.42:1，被 frontend-visual 门禁抓出）。
+    // 因此这里接受任一条 token 路径，并额外禁止裸品牌 hex：比原来更严。
+    expect(css).toMatch(
+      /var\(--td-brand-color|var\(--color-accent-solid|var\(--color-primary-strong/,
+    );
+    expect(css).not.toMatch(/#0052d9|#2f6fed|#3164f4/);
     expect(css).toContain("var(--td-bg-color-container");
     expect(css).toContain(".enterprise-approval-table-viewport");
     expect(css).toMatch(/\.enterprise-approval-table-viewport[^{]*\{[^}]*overflow-x:\s*auto/s);

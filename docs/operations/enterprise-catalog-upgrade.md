@@ -869,3 +869,155 @@ Downgrade to `0034_enterprise_task_operations` has a **nonempty downgrade blocke
 - [ ] The nonempty downgrade blocker, backup/recovery evidence, maintenance window, operator, and approval references are recorded.
 
 For avoidance of doubt: **MySQL/PostgreSQL offline DDL review** is a review gate only, not an execution path.
+
+## Stage 26 — Enterprise Knowledge Serving Reliability (`0036_enterprise_knowledge_serving_reliability`)
+
+> Backfilled in R10 (2026-09-19). This section was a registered documentation gap: Stage 25
+> (`0035`) jumped straight to Stage 27 (`0037`) in this ledger, so operators preparing a live
+> drill had no authority shape, no downgrade blocker text and no coverage boundary for `0036`.
+> Every statement below was read off the migration and its tests, not off a prior document.
+
+### Authority shape
+
+`revision = 0036_enterprise_knowledge_serving_reliability`,
+`down_revision = 0035_enterprise_automation_workflows`. Six tenant-scoped tables, in
+`TABLES` order:
+
+`tenant_knowledge_serving_profiles`, `tenant_knowledge_serving_policy_revisions`,
+`tenant_knowledge_serving_snapshots`, `tenant_knowledge_serving_stage_facts`,
+`tenant_knowledge_serving_evidence_links`, `tenant_knowledge_serving_events`.
+
+`IMMUTABLE_TABLES = TABLES[1:]` — i.e. **everything except the profile header is append-only**:
+UPDATE and DELETE are blocked by `trg_<table>_no_update` / `trg_<table>_no_delete`.
+
+Stage facts are constrained to a closed vocabulary, so a "reliability" row cannot be invented
+ad hoc: `STAGE_CODES = (source, parse, chunk, index, serve)`,
+`STAGE_STATES = (ready, lagging, blocked, missing, unavailable)`.
+
+Profiles carry two mutable pointers (`current_snapshot`, `current_policy`) whose foreign keys
+`fk_tenant_knowledge_serving_profiles_current_snapshot` / `_current_policy` are the only
+constraints the downgrade path has to drop explicitly (non-SQLite only — SQLite rebuilds).
+
+Six indexes, one per table:
+`ix_tenant_knowledge_serving_profiles_tenant_status_updated`,
+`ix_tenant_knowledge_serving_policy_revisions_profile_created`,
+`ix_tenant_knowledge_serving_snapshots_profile_as_of`,
+`ix_tenant_knowledge_serving_stage_facts_snapshot_sequence`,
+`ix_tenant_knowledge_serving_evidence_links_snapshot_kind`,
+`ix_tenant_knowledge_serving_events_profile_time`.
+
+### Event hash chain
+
+`tenant_knowledge_serving_events` is guarded by `trg_tenant_knowledge_serving_events_validate_insert`
+(BEFORE INSERT). The chain is per `(tenant_id, profile_id, stream_key)`:
+
+* `sequence = 1` must have `event_type = 'profile_created'` **and** `previous_event_digest IS NULL`
+  (`knowledge serving first event invalid` / `knowledge serving first previous digest invalid`).
+* `sequence > 1` must carry a `previous_event_digest`
+  (`knowledge serving previous digest required`) **and** the predecessor row must exist with
+  `sequence = NEW.sequence - 1` and `event_digest = NEW.previous_event_digest`
+  (`knowledge serving event predecessor invalid`).
+
+Dialect implementations differ and this matters for review: SQLite/MySQL/MariaDB use inline
+trigger bodies, PostgreSQL uses two functions — `rag4c_knowledge_serving_immutable` (the
+append-only guard) and `rag4c_knowledge_serving_event_validate` (the chain) — and
+`_drop_guards()` must `DROP FUNCTION` both, not just the triggers.
+
+### Readiness and fail-closed behaviour
+
+* Capability key `enterprise_knowledge_serving_reliability`, label 「知识服务可靠性」,
+  default state `unavailable` with reason 「知识服务可靠性权威尚未通过数据库验证」;
+  the directory gate message is 「0036 知识服务可靠性数据库升级尚未就绪」.
+* `SUPPORTED_DIALECTS = {sqlite, mysql, mariadb, postgresql}`. Anything else (the test uses
+  `oracle`) raises rather than half-applying.
+* Offline mode is refused for downgrade: `0036 downgrade requires online preflight`.
+* Downgrade is blocked while **any** of the six tables is non-empty:
+  `0036 downgrade blocked by Knowledge Serving authority: <table>=<count>, …`.
+  Operators must not delete authority rows to make downgrade pass.
+
+### Coverage boundary
+
+Better than Stage 27's, and worth stating precisely so nobody over- or under-trusts it:
+
+* All execution-path tests in `tests/test_enterprise_knowledge_serving_migration.py` run on
+  **SQLite** (`sqlite_url(tmp_path / …)`): contract, guards, profile identity, evidence
+  contract, clean vs blocked downgrade.
+* `test_offline_ddl_supports_mysql_postgresql_and_sqlite_fails_closed` does assert the
+  **rendered offline DDL** for `mysql+pymysql` (expects `DATETIME(6)`) and
+  `postgresql+psycopg` (expects `TIMESTAMP`), and that SQLite offline is refused.
+  So the dialect branches are *rendered* under test, but never *executed* against a live
+  MySQL/MariaDB/PostgreSQL server in CI.
+* Trigger bodies on MySQL/MariaDB/PostgreSQL therefore remain review-only. This is exactly the
+  class of gap where Stage 27 later found a real defect (`dialect.name == "mysql"` excluding
+  `mariadb`), so treat "offline DDL renders" as necessary, not sufficient.
+
+**Gate:** the live MySQL release drill must cover `0036` and `0037` together — they share the
+same trigger/function structure, and `0037`'s chain depends on `0036`'s profile authority.
+
+### Stage 26 operator checklist
+
+- [ ] `plan --from 0035_enterprise_automation_workflows --to 0036_enterprise_knowledge_serving_reliability` archived with the approved change.
+- [ ] Preflight reports all six table counts and the manifest-backed capability state/issues.
+- [ ] A partial 0036 schema (e.g. events table without its insert trigger) is blocked, not tolerated.
+- [ ] The nonempty downgrade blocker text, backup/recovery evidence, maintenance window, operator and approval references are recorded.
+- [ ] PostgreSQL path reviewed for both `DROP FUNCTION`s (`…_immutable`, `…_event_validate`), not just triggers.
+- [ ] MySQL/MariaDB `DATETIME(6)` defaults verified to actually carry microseconds on the live engine.
+
+## Stage 27 — Enterprise Knowledge Operations & Feedback (`0037_enterprise_knowledge_operations_feedback`)
+
+> Ledger note: Stage 26 previously had no section in this file. It was backfilled in R10
+> (2026-09-19) — see the Stage 26 section immediately above. Stage 27's coverage boundary was
+> **narrower** than Stage 26's (no offline-DDL dialect test at all); R10 added
+> `test_offline_ddl_renders_mysql_mariadb_postgresql_and_refuses_sqlite`, which renders the
+> `0036:0037` step for mysql, **mariadb** and postgresql and asserts the seven `CREATE TABLE`s,
+> both digest columns, `CREATE TRIGGER` and the `DATETIME(6)` / `TIMESTAMP` markers. Live-engine
+> execution is still untested for both stages.
+
+### Authority shape
+
+Seven tenant-scoped tables that project **derived operational facts only** — no raw query,
+answer, prompt, token, credential or document content column is permitted anywhere in this
+authority (the migration asserts this and `tests/test_enterprise_knowledge_operations_migration.py`
+re-checks every column name against a protected-name set):
+
+`tenant_knowledge_operations_profiles`, `tenant_knowledge_conversation_sessions`,
+`tenant_knowledge_query_facts`, `tenant_knowledge_feedback_facts`,
+`tenant_knowledge_review_cases`, `tenant_knowledge_review_events`,
+`tenant_knowledge_improvement_candidates`.
+
+### Readiness and fail-closed behaviour
+
+* Capability key `enterprise_knowledge_operations_feedback`, label 「企业知识运营与反馈」,
+  appended **immediately after** `enterprise_knowledge_serving_reliability` in
+  `server/enterprise_readiness_api.py::_CAPABILITIES`.
+* Default state is `unavailable`; a partial schema, an unknown dialect, or an
+  unrecognised revision all resolve to fail-closed, never to `ready`.
+* `tenant_knowledge_query_facts`, `tenant_knowledge_feedback_facts` and
+  `tenant_knowledge_review_events` are **append-only**: UPDATE/DELETE are blocked by triggers.
+* `tenant_knowledge_review_events` enforces a hash chain — `sequence=1` must be
+  `case_created` with no predecessor digest; later events must carry the previous event's
+  digest and have their predecessor present.
+* Downgrade is blocked while **any** of the seven tables is non-empty
+  (`0037 downgrade blocked by Knowledge Operations authority: <table>=<count>`).
+  Operators must not delete authority rows to make downgrade pass.
+
+### Coverage boundary (read before trusting this migration on MySQL)
+
+All 19 Stage 27 tests run on **SQLite**. The MySQL/MariaDB/PostgreSQL trigger branches have no
+regression coverage, and one real defect was found by review rather than by test:
+`upgrade()` decided MySQL-ness with `dialect.name == "mysql"`, which excluded `mariadb` and would
+have given `DATETIME(6)` columns a second-precision `CURRENT_TIMESTAMP` default — silently
+destroying the microsecond ordering the event chain depends on. Fixed to use the same casefolded
+dialect set as the trigger branches.
+
+**Gate:** run the MySQL release drill
+(`docs/knowledgeops-mysql-release-drill-2026-08-24.md` procedure) against `0037` before any live
+execution, and review MySQL/PostgreSQL offline DDL as a review gate only.
+
+### Stage 27 operator checklist
+
+- [ ] `plan --from 0036_enterprise_knowledge_serving_reliability --to 0037_enterprise_knowledge_operations_feedback` archived with the approved change.
+- [ ] Preflight reports all seven table counts and manifest-backed capability state/issues.
+- [ ] A partial 0037 schema is blocked; no synthetic authority rows are inserted to make it green.
+- [ ] The nonempty downgrade blocker, backup/recovery evidence, maintenance window, operator and approval references are recorded.
+- [ ] MySQL/MariaDB/PostgreSQL trigger + guard branches reviewed (untested by CI).

@@ -1,5 +1,5 @@
 .task-operations {
-  --to-primary: var(--td-brand-color, #0052d9);
+  --to-primary: var(--color-accent-solid);
   --to-primary-soft: color-mix(in srgb, var(--to-primary) 10%, transparent);
   --to-primary-mid: color-mix(in srgb, var(--to-primary) 22%, transparent);
   --to-cyan: #0891b2;
@@ -12,7 +12,7 @@
   --to-line-strong: color-mix(in srgb, var(--to-line) 76%, #73839c);
   --to-ink: var(--td-text-color-primary, #1d2129);
   --to-ink-soft: var(--td-text-color-secondary, #4e5969);
-  --to-muted: var(--td-text-color-placeholder, #86909c);
+  --to-muted: var(--color-text-tertiary);
   --to-success: var(--td-success-color, #2ba471);
   --to-warning: var(--td-warning-color, #e37318);
   --to-danger: var(--td-error-color, #d54941);
@@ -44,7 +44,7 @@
 .task-operations__eyebrow {
   display: block;
   overflow: hidden;
-  color: var(--to-primary);
+  color: var(--color-eyebrow);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
   font-size: 10px;
   font-weight: 760;
@@ -105,7 +105,7 @@
   width: 46px;
   height: 46px;
   place-items: center;
-  color: var(--to-primary);
+  color: var(--color-primary-strong);
   border: 1px solid var(--to-primary-mid);
   border-radius: 10px;
   background: var(--to-primary-soft);
@@ -237,7 +237,7 @@
 }
 
 .task-operations__metric--primary .task-operations__metric-icon {
-  color: var(--to-primary);
+  color: var(--color-primary-strong);
   background: var(--to-primary-soft);
 }
 
@@ -349,7 +349,7 @@
   width: 29px;
   height: 29px;
   place-items: center;
-  color: var(--to-primary);
+  color: var(--color-primary-strong);
   border: 1px solid var(--to-primary-mid);
   border-radius: 50%;
   background: var(--to-primary-soft);
@@ -431,17 +431,17 @@
   box-shadow: var(--to-shadow);
 }
 
-.task-operations__tabs > .t-tabs__nav {
+> [role="tablist"] {
   padding: 0 16px;
   border-bottom: 1px solid var(--to-line);
   background: var(--to-surface);
 }
 
-.task-operations__tabs > .t-tabs__content {
+.task-operations__tabs > [role="tabpanel"] {
   padding: 0;
 }
 
-.task-operations__tabs .t-tab-panel {
+.task-operations__tabs [role="tabpanel"] > div {
   min-width: 0;
 }
 
@@ -461,6 +461,18 @@
 .task-operations [role="tab"]:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--to-primary) 28%, transparent);
   outline-offset: 2px;
+}
+
+/* 高度下限已由 styles.css 的 `.rag-tabs [role="tab"]`（min-height: var(--control-min-h)）
+   统一保证；这里只补横向：375 视口下 "All"/"Failed" 这类短标签本来就不够宽。
+   历史背景：迁到兼容层之前，真正的点击目标是 label 里自绘的 <span role="tab">，
+   而 styles.css 窄屏段那条 .t-tabs__nav-item { min-width: 44px } 对它们完全空转。 */
+.task-operations [role="tab"] {
+  display: inline-flex;
+  min-width: var(--control-min-h);
+  min-height: var(--control-min-h);
+  align-items: center;
+  justify-content: center;
 }
 
 .task-operations__task-identity,
@@ -909,7 +921,7 @@
   width: 28px;
   height: 28px;
   place-items: center;
-  color: var(--to-primary);
+  color: var(--color-primary-strong);
   border: 1px solid var(--to-primary-mid);
   border-radius: 50%;
   background: var(--to-primary-soft);
@@ -973,7 +985,7 @@
 }
 
 .task-operations__mutation-icon--retry {
-  color: var(--to-primary);
+  color: var(--color-primary-strong);
   background: var(--to-primary-soft);
 }
 
@@ -1010,7 +1022,7 @@
 
 .task-operations__mutation-boundary svg {
   flex: 0 0 auto;
-  color: var(--to-primary);
+  color: var(--color-primary-strong);
   font-size: 16px;
 }
 
@@ -1144,24 +1156,11 @@
     grid-template-columns: 1fr;
   }
 
-  /* 375px 下 6 个 tab 比视口宽 43px，而 TDesign 的 `t-tabs__nav-wrap`（t-is-smooth）
-   * 自己是 overflow:hidden —— 于是最后那个 tab 被**裁掉且滚不到**（实测：nav-wrap
-   * over=43px、nav-item over=43px、span "Activity" over=26px，见
-   * frontend/output/visual-quality/baseline2.json）。
-   * 只在外层 .t-tabs__nav 上设 overflow-x 不生效，因为溢出发生在更里面的 nav-wrap 上，
-   * 这里对真正的溢出元素放开滚动。 */
-  .task-operations__tabs > .t-tabs__nav {
+  /* 375px 下 6 个 tab 比视口宽 43px（历史实测见 frontend/output/visual-quality/baseline2.json：
+   * 当时溢出发生在 TDesign 内层 nav-wrap 上，外层设 overflow 不生效）。
+   * 迁到兼容层后 [role="tablist"] 自己就是那个 flex 容器，所以放开它就够了。 */
+  > [role="tablist"] {
     overflow-x: auto;
-  }
-
-  .task-operations__tabs .t-tabs__nav-wrap,
-  .task-operations__tabs .t-tabs__nav-wrap.t-is-smooth {
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .task-operations__tabs .t-tabs__nav-item {
-    flex: 0 0 auto;
   }
 
   .task-operations__drawer-header h2 {

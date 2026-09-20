@@ -343,8 +343,8 @@ function ImpactPanel({ impact, error }: { impact: ReleaseImpact | null; error: E
       <PageState
         compact
         status="error"
-        title="Impact 读取失败"
-        description={safeReleaseDisplayText(error.message) || "Impact authority 无法安全读取。"}
+        title="影响面读取失败"
+        description={safeReleaseDisplayText(error.message) || "影响面权威无法安全读取。"}
       />
     );
   }
@@ -354,7 +354,7 @@ function ImpactPanel({ impact, error }: { impact: ReleaseImpact | null; error: E
         compact
         status="loading"
         title="正在读取影响面"
-        description="Impact 默认延迟加载，避免打开详情时请求大体量证据。"
+        description="影响面默认延迟加载，避免打开详情时请求大体量证据。"
       />
     );
   }
@@ -402,8 +402,8 @@ function AuditPanel({ audit, error }: { audit: ReleaseAuditPage | null; error: E
       <PageState
         compact
         status="error"
-        title="Audit 读取失败"
-        description={safeReleaseDisplayText(error.message) || "Audit authority 无法安全读取。"}
+        title="审计读取失败"
+        description={safeReleaseDisplayText(error.message) || "审计权威无法安全读取。"}
       />
     );
   }
@@ -413,7 +413,7 @@ function AuditPanel({ audit, error }: { audit: ReleaseAuditPage | null; error: E
         compact
         status="loading"
         title="正在读取审计事件"
-        description="Audit 默认延迟加载，仅在打开该标签时读取。"
+        description="审计默认延迟加载，仅在打开该标签时读取。"
       />
     );
   }
@@ -675,7 +675,7 @@ export default function ReleaseDetailDrawer({
                             <PageState
                               compact
                               status="error"
-                              title="Certification authority 未返回"
+                              title="质量认证权威未返回"
                               description="服务端没有返回可验证的 Release 质量认证事实。"
                             />
                           ))

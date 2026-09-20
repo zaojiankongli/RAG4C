@@ -72,7 +72,7 @@
   place-items: center;
   border: 1px solid rgb(49 100 244 / 24%);
   border-radius: 11px;
-  color: var(--ks-primary);
+  color: var(--color-primary-strong);
   background: linear-gradient(135deg, rgb(49 100 244 / 10%), rgb(14 116 144 / 11%));
   box-shadow: inset 0 0 0 5px rgb(49 100 244 / 3%);
   font-size: 24px;
@@ -83,7 +83,7 @@
 .knowledge-serving__eyebrow {
   display: block;
   overflow: hidden;
-  color: var(--ks-primary);
+  color: var(--color-eyebrow);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 10px;
   font-weight: 760;
@@ -183,7 +183,7 @@
 }
 .knowledge-serving__state-banner span:not(.knowledge-serving__eyebrow) {
   overflow: hidden;
-  color: var(--ks-secondary);
+  color: var(--color-text-secondary);
   font-size: 12px;
   line-height: 18px;
   text-overflow: ellipsis;
@@ -249,7 +249,7 @@
   height: 28px;
   place-items: center;
   border-radius: 7px;
-  color: var(--ks-primary);
+  color: var(--color-primary-strong);
   background: rgb(49 100 244 / 9%);
   font-size: 16px;
 }
@@ -363,7 +363,7 @@
   gap: 2px;
 }
 .knowledge-serving__rail-code {
-  color: var(--ks-primary);
+  color: var(--color-primary-strong);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
   font-weight: 750;
@@ -597,7 +597,7 @@
   text-align: center;
 }
 .knowledge-serving__empty svg {
-  color: var(--ks-primary);
+  color: var(--color-primary-strong);
   font-size: 22px;
 }
 .knowledge-serving__empty strong {
@@ -792,7 +792,7 @@
   border-radius: 7px;
 }
 .knowledge-serving__pipeline-sequence {
-  color: var(--ks-primary);
+  color: var(--color-primary-strong);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
   font-weight: 750;
@@ -837,7 +837,7 @@
   height: 24px;
   place-items: center;
   border-radius: 50%;
-  color: var(--ks-primary);
+  color: var(--color-primary-strong);
   background: rgb(49 100 244 / 9%);
 }
 .knowledge-serving__drawer-footer-note {
@@ -867,7 +867,7 @@
   height: 36px;
   place-items: center;
   border-radius: 8px;
-  color: var(--ks-primary);
+  color: var(--color-primary-strong);
   background: rgb(49 100 244 / 9%);
   font-size: 18px;
 }
@@ -914,7 +914,7 @@
   background: rgb(49 100 244 / 4%);
 }
 .knowledge-serving__zero-write-callout > svg {
-  color: var(--ks-primary);
+  color: var(--color-primary-strong);
   font-size: 18px;
 }
 .knowledge-serving__zero-write-callout > div {
@@ -958,7 +958,7 @@
   background: var(--ks-surface);
 }
 .knowledge-serving__preview-stages > div > span {
-  color: var(--ks-primary);
+  color: var(--color-primary-strong);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 9px;
   font-weight: 750;

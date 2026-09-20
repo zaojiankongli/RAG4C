@@ -1,55 +1,14 @@
 /* ============================================================
- * 八奈见杏菜（Anko）二次元动漫主题 —— Tailwind v4 design tokens
+ * 八奈见杏菜（Anko）二次元动漫主题
  * 色板灵感：樱花粉 / 珊瑚橙 / 奶白（《败犬女主太多了！》Anko 印象色）
  * 通过 data-theme="anime" 启用；与既有 light/dark 并存，可扩展。
+ *
+ * 语义 token 一律取 styles.css 的 `html[data-theme="anime"]` 块（单一真源）。
+ * 这里曾有一份 32 个 `--color-anko-*` 的 Tailwind @theme 色板，全仓零引用
+ * （既没有 var() 使用点，也没有 anko-* 工具类），却会被 Tailwind 原样注入 :root，
+ * 且其中 #ff7fa5 / #f06292 正是压白底只有 2.4~3.1:1 的那批粉——留着就是等人捡起来用。
  * ============================================================ */
 @import "tailwindcss";
-
-@theme {
-  /* 品牌主色（粉 → 橙 渐变系） */
-  --color-anko-pink: #ff7fa5;
-  --color-anko-pink-deep: #f06292;
-  --color-anko-pink-soft: #ffe4ec;
-  --color-anko-pink-bg: #fff0f4;
-  --color-anko-coral: #ff9e7d;
-  --color-anko-orange: #ffb35c;
-  --color-anko-lavender: #b39ddb;
-  --color-anko-purple: #8b5cf6;
-
-  /* 语义色（二次元柔化） */
-  --color-anko-primary: #ff7fa5;
-  --color-anko-primary-hover: #f06292;
-  --color-anko-bg: #fff9fb;
-  --color-anko-surface: #ffffff;
-  --color-anko-surface-soft: #fff4f7;
-  --color-anko-border: #ffe0e8;
-  --color-anko-text: #3d2c35;
-  --color-anko-text-secondary: #7a6470;
-  --color-anko-text-tertiary: #a08a94;
-  --color-anko-success: #4caf7d;
-  --color-anko-warning: #ff9800;
-  --color-anko-danger: #ff5c7a;
-
-  /* 渐变（用于按钮/卡片/导航高亮） */
-  --color-anko-gradient-from: #ff9e7d;
-  --color-anko-gradient-to: #ff7fa5;
-
-  /* 圆角（二次元圆润） */
-  --radius-anko-sm: 10px;
-  --radius-anko-md: 14px;
-  --radius-anko-lg: 20px;
-  --radius-anko-xl: 28px;
-  --radius-anko-full: 9999px;
-
-  /* 字体 */
-  --font-anko: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
-
-  /* 阴影（柔和粉调） */
-  --shadow-anko-sm: 0 2px 8px rgba(255, 127, 165, 0.08);
-  --shadow-anko-md: 0 4px 16px rgba(255, 127, 165, 0.12);
-  --shadow-anko-lg: 0 8px 32px rgba(255, 127, 165, 0.18);
-  --shadow-anko-glow: 0 0 0 4px rgba(255, 127, 165, 0.15);
-}
 
 /* 二次元主题启用开关：html[data-theme="anime"] 时挂载覆盖类 */
 [data-theme="anime"] body {
@@ -100,7 +59,7 @@ html[data-theme="anime"] body .app-sider .brand-title {
 }
 
 html[data-theme="anime"] body .app-sider .brand-sub {
-  color: #a08a94;
+  color: #6b5560;
   font-size: 12px;
 }
 
@@ -134,7 +93,7 @@ html[data-theme="anime"] body .app-sider .t-menu__item.t-is-active {
 }
 
 html[data-theme="anime"] body .app-sider .t-menu__group-title {
-  color: #c9a8b5;
+  color: #7a5f6c;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 1px;
@@ -231,7 +190,7 @@ html[data-theme="anime"] body .app-sider .t-menu__group-title {
   background: #fff0f4;
   border: 1px solid #ffe0e8;
   border-radius: 9999px;
-  color: #d4627f;
+  color: #b03058;
   transition: all 0.2s ease;
 }
 
@@ -285,7 +244,7 @@ html[data-theme="anime"] body .app-sider .t-menu__group-title {
 }
 
 [data-theme="anime"] .page-state .page-state-desc {
-  color: #a08a94;
+  color: #6b5560;
 }
 
 [data-theme="anime"] .page-state .page-state-extra .t-button--theme-primary {
@@ -313,7 +272,7 @@ html[data-theme="anime"] body .app-sider .t-menu__group-title {
 [data-theme="anime"] .t-tag--theme-success {
   background: #ffe4ec !important;
   border-color: #ffc2d4 !important;
-  color: #d4627f !important;
+  color: #b03058 !important;
 }
 
 [data-theme="anime"] .t-tag--theme-warning {
@@ -331,4 +290,24 @@ html[data-theme="anime"] body .app-sider .t-menu__group-title {
 [data-theme="anime"] a.t-link,
 [data-theme="anime"] .t-link {
   color: #e05a80 !important;
+}
+
+/* anime 是 13 个含动效声明的 CSS 里唯一没有 reduced-motion 兜底的一个
+   （与 findings §14 同源：第三主题总是最后被照顾到）。
+   这里**不**照抄 enterprise-admin 那种 `.page * { transform: none }` 的写法：
+   全站 blanket 取消 transform 会误伤用 translate 定位的元素。
+   动效时长按 house 模式归零，位移只中和真正会动的那一处 welcome-card:hover。
+   本文件在 main.tsx 里最后加载，故同特异性下这条覆盖能赢上面的 hover 规则。 */
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="anime"] *,
+  [data-theme="anime"] *::before,
+  [data-theme="anime"] *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+    animation-duration: 0.01ms !important;
+  }
+
+  [data-theme="anime"] .query-page .welcome-card:hover {
+    transform: none !important;
+  }
 }

@@ -10,6 +10,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
+from core import catalog_schema
 from tests.test_enterprise_automation_workflows_migration import (
     _upgrade as upgrade_0035,
     alembic_config,
@@ -190,10 +191,13 @@ def _indexes(inspector, table: str):
     }
 
 
-def test_0036_is_head_and_follows_0035() -> None:
+def test_0036_precedes_the_current_catalog_head_and_follows_0035() -> None:
     migration = migration_module()
     scripts = ScriptDirectory.from_config(alembic_config("sqlite://"))
-    assert scripts.get_current_head() == REVISION
+    assert scripts.get_current_head() == catalog_schema.HEAD_REVISION
+    script = scripts.get_revision(REVISION)
+    assert script is not None
+    assert script.down_revision == DOWN_REVISION
     assert migration.revision == REVISION
     assert migration.down_revision == DOWN_REVISION
 

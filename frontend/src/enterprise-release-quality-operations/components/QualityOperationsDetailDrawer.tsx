@@ -175,6 +175,8 @@ const ALERT_TYPE_LABELS: Record<QualityOperationsAlert["alert_type"], string> = 
   waiver_expiring: "Waiver expiring",
   waiver_expired: "Waiver expired",
   quality_gate_blocked: "Quality gate blocked",
+  // 整张 ALERT_TYPE_LABELS 是纯英文 chrome（C 类，见 docs/42 §11.9）：
+  // 半中半英的标签映射比全英文更糟，要改就整族一起改，不在本轮逐条动。
   quality_authority_unavailable: "Quality authority unavailable",
 };
 
@@ -337,6 +339,7 @@ function authorityTitle(authority: QualityAuthorityProjection | null): string {
 }
 
 function certificationLabel(authority: QualityAuthorityProjection): string {
+  // 三条返回同属纯英文标签族（docs/42 §11.9）：整族一起改，不单独中文化第一条。
   if (authority.state === "unavailable") return "Quality authority unavailable";
   if (authority.gate_state === "blocked") return "Quality gate blocked";
   if (authority.certification_valid_until === null) return "Certification unavailable";
@@ -556,13 +559,13 @@ export default function QualityOperationsDetailDrawer({
         {authority?.state === "unavailable" || !authority ? (
           <>
             <StateUnavailable
-              title="Quality authority unavailable"
+              title="质量权威不可用"
               description={safeText(
                 authority?.unavailable_reason,
                 "服务端没有返回可验证的质量权威。",
               )}
             />
-            <p style={{ color: COLORS.muted, margin: "12px 0 0" }}>当前 authority 不可用</p>
+            <p style={{ color: COLORS.muted, margin: "12px 0 0" }}>当前质量权威不可用</p>
           </>
         ) : null}
         <dl style={{ ...factGridStyle, marginTop: 16 }}>
@@ -744,18 +747,18 @@ export default function QualityOperationsDetailDrawer({
       return (
         <Empty
           type="network-error"
-          title="当前没有可验证的 Certification authority"
+          title="当前没有可验证的质量认证权威"
           description="Certification ID 或有效期未返回，不以当前 Gate 状态猜测 Certification。"
         />
       );
     }
     return (
       <div style={bodyStyle} data-testid="quality-operations-detail-certification">
-        <section style={sectionStyle} aria-label="Certification authority">
+        <section style={sectionStyle} aria-label="质量认证权威">
           <div style={sectionHeadingStyle}>
             <div>
               <p style={kickerStyle}>STAGE 20 AUTHORITY</p>
-              <h3 style={{ ...headingStyle, fontSize: 18 }}>Certification authority</h3>
+              <h3 style={{ ...headingStyle, fontSize: 18 }}>质量认证权威</h3>
             </div>
             <Tag theme={severityTheme(authority.severity)} variant="light-outline">
               {certificationLabel(authority)}

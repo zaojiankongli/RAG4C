@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -46,12 +47,12 @@ const RESOURCE_ITEMS: ReadonlyArray<{
   label: string;
   description: string;
 }> = [
-  { value: "overview", label: "Overview", description: "Knowledge Base authority" },
+  { value: "overview", label: "Overview", description: "知识库权威" },
   { value: "documents", label: "Documents", description: "文档与解析处理" },
   { value: "taxonomy", label: "Taxonomy", description: "目录与标签治理" },
   { value: "sources", label: "Sources", description: "连接器与同步运行" },
   { value: "serving", label: "Serving", description: "知识服务可靠性" },
-  { value: "governance", label: "Governance", description: "Dataset、QA 与版本" },
+  { value: "governance", label: "Governance", description: "数据集、问答与版本" },
   { value: "releases", label: "Releases", description: "不可变发布与 Channel" },
 ];
 
@@ -150,6 +151,14 @@ export default function KnowledgeBaseResourceShell({
     "idle",
   );
   const [factsOpen, setFactsOpen] = useState(false);
+  // 这里只有一份面板：内容随 section 变，所以**所有** tab 的 aria-controls 都指向同一个
+  // panelId。若按 item.value 各造一个，未选中的 tab 会指向不存在的元素——那不是修好，
+  // 而是把 no-aria-controls 换成另一种坏法（视觉门禁已有 dangling-aria-controls 判定）。
+  // uid 用 useId 兜住同页多实例（App.tsx 里有两处 shell 用法）；React 的 id 含冒号，
+  // 冒号在 CSS 选择器里要转义，而这里只经 getElementById/aria-controls 使用，去掉更省心。
+  const uid = useId().replace(/[^A-Za-z0-9_-]/g, "");
+  const panelId = `kbs-resource-panel-${uid}`;
+  const resourceTabId = (value: string) => `kbs-resource-tab-${uid}-${value}`;
   const scope = useMemo(
     () => authorityScope(workspace, { datasetId, tenantId, actorToken }),
     [actorToken, datasetId, tenantId, workspace],
@@ -343,8 +352,8 @@ export default function KnowledgeBaseResourceShell({
             <span>Release</span>
             <strong>
               {coordinator.releaseContext?.channelName
-                ? `${coordinator.releaseContext.channelName} · Release ${coordinator.releaseContext.servingReleaseNumber ?? "未返回"}`
-                : coordinator.releaseContext?.unavailableReason || "Release authority 读取中"}
+                ? `${coordinator.releaseContext.channelName} · 发布 ${coordinator.releaseContext.servingReleaseNumber ?? "未返回"}`
+                : coordinator.releaseContext?.unavailableReason || "发布权威读取中"}
             </strong>
           </div>
         </div>
@@ -393,6 +402,8 @@ export default function KnowledgeBaseResourceShell({
                     <button
                       type="button"
                       role="tab"
+                      id={resourceTabId(item.value)}
+                      aria-controls={panelId}
                       aria-selected={section === item.value}
                       tabIndex={section === item.value ? 0 : -1}
                       className="knowledge-base-resource-shell__tab-trigger"
@@ -432,7 +443,18 @@ export default function KnowledgeBaseResourceShell({
         </div>
       </div>
 
-      <div className="knowledge-base-resource-shell__content">{children}</div>
+      <div
+        className="knowledge-base-resource-shell__content"
+        {...(compact
+          ? {}
+          : {
+              role: "tabpanel" as const,
+              id: panelId,
+              "aria-labelledby": resourceTabId(section),
+            })}
+      >
+        {children}
+      </div>
 
       <Drawer
         visible={factsOpen}
@@ -488,8 +510,8 @@ export default function KnowledgeBaseResourceShell({
               <dt>Release / Channel</dt>
               <dd>
                 {coordinator.releaseContext?.channelName
-                  ? `${coordinator.releaseContext.channelName} · Effective Release ${coordinator.releaseContext.effectiveReleaseNumber ?? "未返回"} · Serving Release ${coordinator.releaseContext.servingReleaseNumber ?? "未返回"}`
-                  : coordinator.releaseContext?.unavailableReason || "Release authority 未返回"}
+                  ? `${coordinator.releaseContext.channelName} · 生效发布 ${coordinator.releaseContext.effectiveReleaseNumber ?? "未返回"} · 服务中发布 ${coordinator.releaseContext.servingReleaseNumber ?? "未返回"}`
+                  : coordinator.releaseContext?.unavailableReason || "发布权威未返回"}
               </dd>
             </div>
           </dl>

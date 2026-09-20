@@ -13,7 +13,7 @@
 }
 
 .release-quality-kicker {
-  color: var(--rq-brand);
+  color: var(--color-primary-strong);
   font-size: 10px;
   font-weight: 750;
   letter-spacing: 0.12em;
@@ -53,7 +53,7 @@
   border: 1px solid color-mix(in srgb, var(--rq-brand) 22%, var(--rq-border));
   border-radius: 8px;
   background: color-mix(in srgb, var(--rq-brand) 8%, transparent);
-  color: var(--rq-brand);
+  color: var(--color-primary-strong);
 }
 
 .release-quality-gate-strip__body,
@@ -141,7 +141,7 @@
 }
 
 .release-quality-panel__authority-rail span {
-  color: var(--rq-brand);
+  color: var(--color-primary-strong);
   font-family: var(--font-mono, ui-monospace, Consolas, monospace);
   font-size: 10px;
   font-weight: 750;

@@ -66,7 +66,7 @@ export default function GovernanceEvidenceStrip({ summary }: { summary: ServingS
       value: summary?.current_certification_id ? "已认证" : "未返回",
       detail: summary?.current_certification_id
         ? shortId(summary.current_certification_id)
-        : "Certification authority 未返回",
+        : "质量认证权威未返回",
       icon: <CheckCircleIcon />,
       tone: summary?.current_certification_id ? "success" : "default",
     },

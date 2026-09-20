@@ -212,8 +212,10 @@ def api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("RAG4C_ROLLOUT_REPORT_SECRET", REPORT_SECRET)
     from server.app import app as bridge_app
 
-    bridge_app.state.knowledge_auth_engine = engine
-    bridge_app.state.knowledge_auth_settings = settings
+    # 裸赋值会污染进程级 app.state，后续用例拿到内存 sqlite 引擎；monkeypatch 会还原。
+    # 下面四个 knowledge_consistency_* 是本用例新造的属性，仍由 teardown 的 delattr 收尾。
+    monkeypatch.setattr(bridge_app.state, "knowledge_auth_engine", engine)
+    monkeypatch.setattr(bridge_app.state, "knowledge_auth_settings", settings, raising=False)
     bridge_app.state.knowledge_consistency_engine = engine
     bridge_app.state.knowledge_consistency_report_secret = REPORT_SECRET
     bridge_app.state.knowledge_consistency_repair_enabled = False

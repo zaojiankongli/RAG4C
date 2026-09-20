@@ -4,8 +4,8 @@
   --kbr-border: var(--td-component-stroke, #d9e2ef);
   --kbr-text: var(--td-text-color-primary, #17233d);
   --kbr-secondary: var(--td-text-color-secondary, #53657d);
-  --kbr-muted: var(--td-text-color-placeholder, #7b8ba3);
-  --kbr-primary: var(--td-brand-color, #0052d9);
+  --kbr-muted: var(--color-text-tertiary);
+  --kbr-primary: var(--color-accent-solid);
   display: grid;
   min-width: 0;
   max-width: 100%;
@@ -19,7 +19,7 @@
   --kbr-border: var(--td-component-stroke, #364154);
   --kbr-text: var(--td-text-color-primary, #eef3fb);
   --kbr-secondary: var(--td-text-color-secondary, #b8c4d6);
-  --kbr-muted: var(--td-text-color-placeholder, #8f9db2);
+  --kbr-muted: var(--color-text-tertiary);
 }
 
 .knowledge-base-resource-shell__header,
@@ -55,7 +55,7 @@
   border: 1px solid color-mix(in srgb, var(--kbr-primary) 25%, var(--kbr-border));
   border-radius: 8px;
   background: color-mix(in srgb, var(--kbr-primary) 8%, var(--kbr-bg));
-  color: var(--kbr-primary);
+  color: var(--color-primary-strong);
 }
 
 .knowledge-base-resource-shell__copy {
@@ -64,7 +64,7 @@
 
 .knowledge-base-resource-shell__eyebrow {
   display: block;
-  color: var(--kbr-primary);
+  color: var(--color-eyebrow);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.12em;

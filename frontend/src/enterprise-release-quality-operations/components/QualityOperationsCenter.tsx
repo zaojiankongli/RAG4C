@@ -126,7 +126,7 @@ export default function QualityOperationsCenter({
     () => [
       {
         colKey: "authority",
-        title: "Release authority",
+        title: "发布权威",
         minWidth: 230,
         cell: ({ row }) => (
           <button
@@ -278,13 +278,13 @@ export default function QualityOperationsCenter({
           <div className="quality-operations__section-heading">
             <div>
               <span>AT-RISK AUTHORITY</span>
-              <h3>Release quality authority</h3>
+              <h3>发布质量权威</h3>
             </div>
             <Tag variant="outline">{filtered.length} authorities</Tag>
           </div>
 
           {filtered.length === 0 ? (
-            <Empty title="当前筛选范围没有 Release quality authority" />
+            <Empty title="当前筛选范围没有发布质量权威" />
           ) : mobile ? (
             <div
               className="quality-operations__mobile-cards"

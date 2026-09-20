@@ -75,4 +75,27 @@ describe("accessible semantic color tokens", () => {
     expect(contrast(token(dark, "color-warning"), elevated)).toBeGreaterThanOrEqual(4.5);
     expect(contrast(token(dark, "color-danger"), elevated)).toBeGreaterThanOrEqual(4.5);
   });
+
+  it("keeps eyebrow label tokens above AA in every theme", () => {
+    const light = block(":root");
+    const dark = block('html[data-theme="dark"]');
+    const anime = block('html[data-theme="anime"]');
+    const lightSurface = token(light, "color-bg-elevated");
+
+    expect(contrast(token(light, "color-eyebrow"), lightSurface)).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrast(token(light, "color-eyebrow-warning"), token(light, "color-warning-bg")),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrast(token(dark, "color-eyebrow"), token(dark, "color-bg-elevated")),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrast(token(dark, "color-eyebrow-warning"), token(dark, "color-bg-elevated")),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(token(anime, "color-eyebrow"), lightSurface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(token(anime, "color-eyebrow-warning"), lightSurface)).toBeGreaterThanOrEqual(4.5);
+
+    // 品牌主色直接当 10px eyebrow 文字用不达 AA —— 这正是 eyebrow 必须独立成 token 的原因
+    expect(contrast(token(light, "color-primary"), token(light, "color-primary-bg"))).toBeLessThan(4.5);
+  });
 });

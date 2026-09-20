@@ -50,7 +50,7 @@
 .knowledge-taxonomy-eyebrow {
   display: block;
   margin-bottom: 8px;
-  color: var(--taxonomy-brand);
+  color: var(--color-primary-strong);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -97,7 +97,7 @@
 .knowledge-taxonomy-metrics svg {
   grid-row: 1 / span 2;
   align-self: center;
-  color: var(--taxonomy-brand);
+  color: var(--color-primary-strong);
   font-size: 18px;
 }
 
@@ -176,7 +176,10 @@
   display: flex;
   width: 100%;
   height: auto;
-  min-height: 34px;
+  /* 桌面保持 34；窄屏 --control-min-h 升到 44 时跟着抬，否则 375 视口下
+     整行目录按钮只有 36px 高，是触控门禁里最大面积的一处不达标。
+     与 .knowledge-quick-action.t-button 用同一个 max() 写法。 */
+  min-height: max(34px, var(--control-min-h));
   justify-content: space-between;
   padding: 6px 8px;
   border-radius: 6px;
@@ -188,7 +191,7 @@
 }
 
 .knowledge-taxonomy-folder-button.t-button[aria-pressed="true"] {
-  color: var(--taxonomy-brand);
+  color: var(--color-primary-strong);
   background: var(--taxonomy-brand-soft);
   font-weight: 600;
 }
@@ -289,7 +292,7 @@
   flex: 0 0 auto;
   place-items: center;
   border-radius: 7px;
-  color: var(--taxonomy-brand);
+  color: var(--color-primary-strong);
   background: var(--taxonomy-brand-soft);
   font-size: 18px;
 }
@@ -395,7 +398,7 @@
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--taxonomy-brand) 18%, var(--taxonomy-border));
   border-radius: 7px;
-  color: var(--taxonomy-brand);
+  color: var(--color-primary-strong);
   background: var(--taxonomy-brand-soft);
   font-size: 18px;
 }
@@ -435,7 +438,7 @@
 
 .knowledge-taxonomy-document-path svg {
   flex: 0 0 auto;
-  color: var(--taxonomy-brand);
+  color: var(--color-primary-strong);
 }
 
 .knowledge-taxonomy-document-path span {

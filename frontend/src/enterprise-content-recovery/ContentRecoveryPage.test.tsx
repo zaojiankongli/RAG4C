@@ -12,6 +12,7 @@ vi.mock("./components", () => ({
     <section aria-label="恢复中心适配器">
       <span>{controller.entries.items[0]?.document_label}</span>
       <span>{controller.summary.value?.recycled_count}</span>
+      <span>{controller.entries.error}</span>
       <button onClick={() => controller.mutation.restore?.(controller.entries.items[0])}>
         恢复
       </button>
@@ -25,7 +26,7 @@ import EnterpriseContentRecoveryPage from "./ContentRecoveryPage";
 const restore = vi.fn().mockResolvedValue({ state: "applied", operation: "restore" });
 const reload = vi.fn().mockResolvedValue(true);
 
-recoveryHook.useEnterpriseContentRecovery.mockReturnValue({
+const baseHook = {
   active: true,
   load: { status: "ready", error: null, reload },
   summary: {
@@ -111,7 +112,9 @@ recoveryHook.useEnterpriseContentRecovery.mockReturnValue({
     updatePolicy: vi.fn(),
     retry: vi.fn(),
   },
-});
+};
+
+recoveryHook.useEnterpriseContentRecovery.mockReturnValue(baseHook);
 
 describe("EnterpriseContentRecoveryPage adapter", () => {
   it("maps authoritative hook facts into the TDesign controller and serializes restore", async () => {
@@ -153,5 +156,40 @@ describe("EnterpriseContentRecoveryPage adapter", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "审批交接" }));
     expect(onApprovalHandoff).toHaveBeenCalledWith("approval-stage23");
+  });
+
+  it("surfaces the server reason when it is safe to display", () => {
+    recoveryHook.useEnterpriseContentRecovery.mockReturnValue({
+      ...baseHook,
+      entries: { ...baseHook.entries, error: new Error("回收代次已变化，请刷新后重试") },
+    });
+    render(
+      <EnterpriseContentRecoveryPage
+        tenantId="tenant-a"
+        actorToken="actor-token"
+        capabilityReady
+        tenantLabel="星海企业"
+        readOnly={false}
+      />,
+    );
+    expect(screen.getByText("回收代次已变化，请刷新后重试")).toBeTruthy();
+  });
+
+  it("falls back to the fixed label when the message carries a credential", () => {
+    recoveryHook.useEnterpriseContentRecovery.mockReturnValue({
+      ...baseHook,
+      entries: { ...baseHook.entries, error: new Error("Bearer abc.def 已被拒绝") },
+    });
+    render(
+      <EnterpriseContentRecoveryPage
+        tenantId="tenant-a"
+        actorToken="actor-token"
+        capabilityReady
+        tenantLabel="星海企业"
+        readOnly={false}
+      />,
+    );
+    expect(screen.getByText("企业内容恢复权威不可用")).toBeTruthy();
+    expect(screen.queryByText(/Bearer/)).toBeNull();
   });
 });

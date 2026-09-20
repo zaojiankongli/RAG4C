@@ -20,6 +20,7 @@ param(
     [switch]$SkipBackendSuite,
     [switch]$SkipFrontend,
     [switch]$Parallel,
+    [switch]$WithVisual,
     [switch]$List
 )
 
@@ -109,6 +110,115 @@ $gates['frontend-test'] = @{
     Desc = 'vitest 全量（批处理 runner）'
     Run  = { Push-Location $Frontend; try { & $Npm test } finally { Pop-Location } }
 }
+# 视觉质量门禁：默认不跑（要起 vite + 加载 171 个页面，约 4 分钟），显式 -WithVisual 才进。
+#
+# 为什么要接成门禁而不是"脚本躺在 frontend/scripts 里"：R5/R6 造了仪器却没进门禁，
+# 于是 docs/41 里"窄屏触控目标已修"这句话在无人复核的情况下烂了一个循环 ——
+# 那条规则当时挂在 DOM 里根本不存在的 .app-topbar 上（见 docs/42）。
+$gates['frontend-visual'] = @{
+    Desc = 'Playwright 视觉量化（19 路由 × 3 视口 × 3 主题，阈值 + 页面数下界）'
+    Run  = {
+        $Node = (Get-Command node -ErrorAction SilentlyContinue).Source
+        if (-not $Node) { throw '找不到 node.exe，无法跑视觉门禁' }
+        $ViteBin = Join-Path $Frontend 'node_modules\vite\bin\vite.js'
+        if (-not (Test-Path $ViteBin)) { throw "找不到 vite 入口: $ViteBin" }
+        $Report = Join-Path $Frontend 'output\visual-quality\verify-gate.json'
+        if (Test-Path $Report) { Remove-Item $Report -Force }
+
+        $ViteLog = Join-Path $Root '.tmp\verify-vite.log'
+        New-Item -ItemType Directory -Force -Path (Join-Path $Root '.tmp') | Out-Null
+        # 已有 dev server 在 :1420 就直接复用（--strictPort 会因端口占用而起不来，
+        # 那是环境的既有状态，不该判成门禁失败）。
+        $reused = $false
+        try {
+            $pre = Invoke-WebRequest -Uri 'http://localhost:1420/' -UseBasicParsing -TimeoutSec 5
+            if ($pre.StatusCode -eq 200) { $reused = $true }
+        } catch { }
+        $vite = $null
+        if (-not $reused) {
+            $vite = Start-Process -FilePath $Node `
+                -ArgumentList $ViteBin, '--port', '1420', '--strictPort' `
+                -WorkingDirectory $Frontend -RedirectStandardOutput $ViteLog `
+                -RedirectStandardError "$ViteLog.err" -PassThru -WindowStyle Hidden
+        }
+        try {
+            $ready = $reused
+            $deadline = (Get-Date).AddSeconds(90)
+            while ((Get-Date) -lt $deadline) {
+                if ($ready) { break }
+                Start-Sleep -Seconds 2
+                if ($vite -and $vite.HasExited) { break }
+                try {
+                    $probe = Invoke-WebRequest -Uri 'http://localhost:1420/' -UseBasicParsing -TimeoutSec 10
+                    if ($probe.StatusCode -eq 200) { $ready = $true; break }
+                } catch { }
+            }
+            if (-not $ready) {
+                Get-Content "$ViteLog.err" -Tail 10 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
+                throw 'vite dev server 90s 内未就绪（视觉门禁依赖 :1420）'
+            }
+            if ($reused) { Write-Host '  复用已在跑的 vite dev server（:1420）' }
+            # 视觉门禁对后端是否在线敏感：空库/断连时表格与徽标根本不渲染，数字天然更好看。
+            # 不声明模式，就等于允许"空态的 0 违规"去冒充"数据态的 0 违规"。
+            $apiMode = '断开（测量的是空态/错误态，不代表数据密集态）'
+            try {
+                $api = Invoke-WebRequest -Uri 'http://127.0.0.1:8010/api/health' -UseBasicParsing -TimeoutSec 5
+                if ($api.StatusCode -eq 200) { $apiMode = '后端在线（数据态可渲染）' }
+            } catch { }
+            Write-Host "  后端状态 : $apiMode"
+            if ($apiMode -like '断开*') { Write-Host '  提示：先跑 scripts/seed_visual_qa.py 并起 :8010，再复测数据密集态' }
+
+            Push-Location $Frontend
+            try { & $Node 'scripts\visual-quality.mjs' 'verify-gate' } finally { Pop-Location }
+            if (-not (Test-Path $Report)) { throw "视觉门禁没有产出报告: $Report" }
+
+            $t = (Get-Content $Report -Raw -Encoding UTF8 | ConvertFrom-Json).totals
+            # 页面数下界：指标"变好"绝不允许来自"量得更少"。
+            if ($t.pages -lt 170) { throw "覆盖页数异常: $($t.pages) < 170（19 路由 × 3 视口 × 3 主题）" }
+            Write-Host ("  实测: 对比度 {0} / 部件对比度 {1}（候选 {3}）/ 触控 {2} / 溢出 {4} / 裁切 {5}" -f `
+                $t.contrastViolations, $t.componentContrastViolations, $t.tinyTargets, `
+                $t.componentContrastCandidates, $t.overflowingElements, $t.clippedElements)
+            Write-Host ("  如实上报跳过: 渐变背景 {0} / 部件无有效边框 {1} / 混排白名单(专名) {2}" -f `
+                $t.contrastSkippedGradient, $t.componentContrastSkipped, $t.mixedLanguageProperNouns)
+            Write-Host ("  控制台错误 {0}（已知盲区 {1} = /enterprise/* 401，本地无 dev 身份通道；非盲区 {2}）/ HTTP>=400 {3}" -f `
+                $t.consoleErrors, $t.consoleErrorsBlindSpot, $t.consoleErrorsUnexpected, $t.httpFailures)
+            $fails = @()
+            if ($t.overflowingElements -ne 0) { $fails += "横向溢出 $($t.overflowingElements) 处（基线 0）" }
+            if ($t.clippedElements -ne 0) { $fails += "内容被裁切 $($t.clippedElements) 处（基线 0）" }
+            if ($t.contrastViolations -gt 12) { $fails += "文字对比度违规 $($t.contrastViolations) > 12" }
+            if ($t.tinyTargets -gt 70) { $fails += "触控目标不足 $($t.tinyTargets) > 70" }
+            # 控制台错误按"是否属于已登记的 /enterprise/* 401 盲区"拆开。
+            # R10 补上 route 归因后复跑，实测 18 条 401 全部来自 /consistency（不在裁定范围内），
+            # /enterprise/* 反而 0 条——因为它在无 actorToken 时直接不发请求。
+            # 所以这里保持"非盲区必须为 0"，既不放宽白名单也不建身份通道，让门禁如实红。
+            if ($t.consoleErrorsUnexpected -ne 0) { $fails += "非盲区控制台错误 $($t.consoleErrorsUnexpected) 条（要求 0）" }
+            # 1.4.11：396 是 R9 基线（HEAD 744）。R10 把「控件描边」与「结构性引导线」拆成
+            # 两个 token 并让 TDesign level-2 桥到控件描边后，实测 0 条，故按实测收阈。
+            # 收阈的前提是分母没塌：本轮判定 594 个部件（> 旧违规数 396），
+            # 因此"0 违规"不能用"量得更少"解释；下方 candidates 下界把这件事钉成契约。
+            if ($t.componentContrastViolations -gt 0) { $fails += "部件对比度违规 $($t.componentContrastViolations) > 基线 0" }
+            # 分母下界：与 pages>=170 同构——指标"变好"绝不允许来自"量得更少"。
+            # 3243 是 R10 实测候选数。R12 按新基线重导出为 2700：/config 的 9 个 TDesign 复合
+            # InputNumber 换成 facade 原生控件后候选 3234 -> 2865，而逐路由核对**只有 /config 变了**
+            # （每次加载 138 -> 97），减掉的是复合组件自带的带边框子元素，不是"少扫了"——
+            # 同一路由 formControls 反而 55 -> 57、无可访问名 9 -> 0（findings §31）。
+            if ($t.componentContrastCandidates -lt 2700) { $fails += "部件对比度候选数 $($t.componentContrastCandidates) < 2700（分母疑似塌陷，违规数不可信）" }
+            # 真正让"0 违规"有意义的是**判定数** = 候选 - 无边框跳过 - 填充可辨识豁免。
+            # R11 594 -> R12 405，仍高于当初收阈依据的旧违规基线 396，所以守住 380。
+            $ccJudged = $t.componentContrastCandidates - $t.componentContrastSkipped - $t.componentContrastIdentifiedByFill
+            if ($ccJudged -lt 380) { $fails += "部件对比度实际判定数 $ccJudged < 380（判定面塌陷，0 违规不可信）" }
+            # 4.1.2/3.3.2 可访问名：R12 实测 0（分母 formControls 963，取 900 留 ~7% 余量）。
+            # 违规数与分母必须一起判，否则"0"只是"没量到"。
+            if ($t.missingAccessibleNames -gt 0) { $fails += "无可见名称的表单控件 $($t.missingAccessibleNames) > 基线 0" }
+            if ($t.formControls -lt 900) { $fails += "表单控件总数 $($t.formControls) < 900（分母疑似塌陷，可访问名指标不可信）" }
+            # ARIA tabs 结构**故意不设阈**：实测 327/327 全坏，且因 /enterprise/* 身份盲区，
+            # 门禁只覆盖到 12 个缺陷文件里的 3 个（findings §30）。锁 327 = 冻结已知全坏，锁 0 = 假绿。
+            if ($fails.Count) { throw ($fails -join '; ') }
+        } finally {
+            if ($vite -and -not $vite.HasExited) { Stop-Process -Id $vite.Id -Force -ErrorAction SilentlyContinue }
+        }
+    }
+}
 $gates['server-health'] = @{
     Desc = '启动即健康（本地 SQLite catalog 起 uvicorn 并探 /api/health）'
     Run  = {
@@ -186,6 +296,8 @@ if ($Only) {
 } else {
     if ($SkipBackendSuite) { $selected = $selected | Where-Object { $_ -ne 'backend-test' } }
     if ($SkipFrontend) { $selected = $selected | Where-Object { $_ -notlike 'frontend-*' } }
+    # 视觉门禁要起 vite + 加载 171 页，默认不进"一条命令全部门禁"；-WithVisual 显式开启。
+    if (-not $WithVisual) { $selected = $selected | Where-Object { $_ -ne 'frontend-visual' } }
 }
 
 Write-Host "仓库根 : $Root"

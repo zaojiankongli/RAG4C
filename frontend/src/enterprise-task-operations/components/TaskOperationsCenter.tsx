@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Tabs } from "tdesign-react";
+import { Alert } from "tdesign-react";
+import { Tabs } from "../../ui/index";
 import { TimeIcon } from "tdesign-icons-react";
 
 import type {
@@ -32,31 +33,6 @@ function fallbackDetail(task: TaskOperation) {
   return { ...task, events: [] };
 }
 
-function TaskTabLabel({
-  label,
-  active,
-  onActivate,
-}: {
-  label: string;
-  active: boolean;
-  onActivate: () => void;
-}) {
-  return (
-    <span
-      role="tab"
-      tabIndex={0}
-      aria-selected={active}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onActivate();
-        }
-      }}
-    >
-      {label}
-    </span>
-  );
-}
 
 function ActivityPanel({ controller }: { controller: TaskOperationsController }) {
   const status = controller.activity.status;
@@ -278,16 +254,15 @@ export default function TaskOperationsCenter({
       <div className="task-operations__content-grid">
         <div className="task-operations__main-column">
           <Tabs
-            className="task-operations__tabs"
-            value={tab}
-            onChange={(next) => setTab(String(next) as TaskOperationsTab)}
-            theme="card"
+            className="rag-tabs rag-tabs--card task-operations__tabs"
+            aria-label="任务运行工作面"
+            keepAlive
+            activeKey={tab}
+            onChange={(next: any) => setTab(String(next) as TaskOperationsTab)}
           >
             <Tabs.TabPanel
               value="all"
-              label={
-                <TaskTabLabel label="All" active={tab === "all"} onActivate={() => setTab("all")} />
-              }
+              label="All"
               destroyOnHide
             >
               <TaskStateNotice
@@ -309,13 +284,7 @@ export default function TaskOperationsCenter({
             </Tabs.TabPanel>
             <Tabs.TabPanel
               value="running"
-              label={
-                <TaskTabLabel
-                  label="Running"
-                  active={tab === "running"}
-                  onActivate={() => setTab("running")}
-                />
-              }
+              label="Running"
               destroyOnHide
             >
               <TaskStateNotice
@@ -339,13 +308,7 @@ export default function TaskOperationsCenter({
             </Tabs.TabPanel>
             <Tabs.TabPanel
               value="failed"
-              label={
-                <TaskTabLabel
-                  label="Failed"
-                  active={tab === "failed"}
-                  onActivate={() => setTab("failed")}
-                />
-              }
+              label="Failed"
               destroyOnHide
             >
               <TaskStateNotice
@@ -369,13 +332,7 @@ export default function TaskOperationsCenter({
             </Tabs.TabPanel>
             <Tabs.TabPanel
               value="completed"
-              label={
-                <TaskTabLabel
-                  label="Completed"
-                  active={tab === "completed"}
-                  onActivate={() => setTab("completed")}
-                />
-              }
+              label="Completed"
               destroyOnHide
             >
               <TaskStateNotice
@@ -399,13 +356,7 @@ export default function TaskOperationsCenter({
             </Tabs.TabPanel>
             <Tabs.TabPanel
               value="activity"
-              label={
-                <TaskTabLabel
-                  label="Activity"
-                  active={tab === "activity"}
-                  onActivate={() => setTab("activity")}
-                />
-              }
+              label="Activity"
               destroyOnHide
             >
               <ActivityPanel controller={controller} />

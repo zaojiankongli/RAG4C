@@ -2,11 +2,13 @@
   --workspace-bg: var(--td-bg-color-container, #ffffff);
   --workspace-subtle: var(--td-bg-color-secondarycontainer, #f3f6fb);
   --workspace-border: var(--td-component-stroke, #d9e1ec);
-  --workspace-border-strong: #b9c7da;
+  /* 控件边界走全局 control token：它本身按主题取值，dark 不需要再覆写一次
+     （旧的 #b9c7da / #506079 两个硬编码值压底色只有 1.7 / 2.7:1，不过 1.4.11）。 */
+  --workspace-border-strong: var(--color-border-control);
   --workspace-text: var(--td-text-color-primary, #17233d);
   --workspace-secondary: var(--td-text-color-secondary, #53657d);
-  --workspace-muted: var(--td-text-color-placeholder, #7b8ba3);
-  --workspace-primary: var(--td-brand-color, #0052d9);
+  --workspace-muted: var(--color-text-tertiary);
+  --workspace-primary: var(--color-accent-solid);
   display: grid;
   min-width: 0;
   max-width: 100%;
@@ -18,10 +20,9 @@
   --workspace-bg: var(--td-bg-color-container, #171b24);
   --workspace-subtle: var(--td-bg-color-secondarycontainer, #202632);
   --workspace-border: var(--td-component-stroke, #364154);
-  --workspace-border-strong: #506079;
   --workspace-text: var(--td-text-color-primary, #eef3fb);
   --workspace-secondary: var(--td-text-color-secondary, #b8c4d6);
-  --workspace-muted: var(--td-text-color-placeholder, #8f9db2);
+  --workspace-muted: var(--color-text-tertiary);
 }
 
 .enterprise-workspace-center__header {
@@ -44,7 +45,7 @@
   border: 1px solid color-mix(in srgb, var(--workspace-primary) 32%, var(--workspace-border));
   border-radius: 5px;
   background: color-mix(in srgb, var(--workspace-primary) 9%, var(--workspace-bg));
-  color: var(--workspace-primary);
+  color: var(--color-primary-strong);
   font-size: 20px;
 }
 
@@ -53,7 +54,7 @@
 }
 
 .enterprise-workspace-center__header > div:nth-child(2) > span {
-  color: var(--workspace-primary);
+  color: var(--color-primary-strong);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -178,7 +179,7 @@
   place-items: center;
   border-radius: 4px;
   background: color-mix(in srgb, var(--workspace-primary) 8%, var(--workspace-subtle));
-  color: var(--workspace-primary);
+  color: var(--color-primary-strong);
 }
 
 .enterprise-workspace-name-cell > span:nth-child(2),
@@ -677,7 +678,7 @@
   flex: 1;
 }
 .workspace-authorization-mode-row span {
-  color: var(--workspace-primary);
+  color: var(--color-primary-strong);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;

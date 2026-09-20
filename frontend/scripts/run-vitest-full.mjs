@@ -105,10 +105,17 @@ for (let index = 0; index < shards.length; index += 1) {
     },
   );
   if (result.error || result.status !== 0) {
+    // 汇总里只带 batch 号是不够的：上面 stdio:"inherit" 的 vitest 明细会被调用方的
+    // `| tail` 截掉，于是"哪一批失败了"看得到、"哪个用例失败了"查不到
+    // （R7 就是靠反推分批才定位到批 85）。这里把成员与找回方式一起打出来。
+    console.error(`\n[batch ${index + 1} failed] 该批文件：`);
+    for (const file of shard.files) console.error(`  ${file}`);
+    console.error("用例级明细见上方 vitest 输出；若被截断，单独重跑上面这些文件即可。");
     failures.push({
       batch: index + 1,
       status: result.status,
       signal: result.signal,
+      files: shard.files,
       error: result.error?.message ?? null,
     });
   }

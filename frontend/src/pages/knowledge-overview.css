@@ -1,12 +1,12 @@
 .knowledge-overview-page {
-  --knowledge-blue: var(--td-brand-color, #0052d9);
+  --knowledge-blue: var(--color-accent-solid);
   --knowledge-blue-soft: var(--td-brand-color-light, #e8f3ff);
   --knowledge-canvas: var(--td-bg-color-page, #f5f7fa);
   --knowledge-surface: var(--td-bg-color-container, #ffffff);
   --knowledge-surface-hover: var(--td-bg-color-container-hover, #f3f6fb);
   --knowledge-text: var(--td-text-color-primary, #1d2129);
   --knowledge-text-secondary: var(--td-text-color-secondary, #4e5969);
-  --knowledge-text-muted: var(--td-text-color-placeholder, #86909c);
+  --knowledge-text-muted: var(--color-text-tertiary);
   --knowledge-border: var(--td-border-level-1-color, #e5e6eb);
   --knowledge-success: var(--td-success-color, #00a870);
   --knowledge-warning: var(--td-warning-color, #ed7b2f);
@@ -58,7 +58,7 @@
 }
 
 .knowledge-command-kicker > span:first-child {
-  color: var(--knowledge-blue);
+  color: var(--color-primary-strong);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -218,7 +218,7 @@
 .knowledge-lifeline li.is-complete::before {
   border-color: color-mix(in srgb, var(--knowledge-success) 42%, transparent);
   background: color-mix(in srgb, var(--knowledge-success) 11%, var(--knowledge-surface));
-  color: var(--knowledge-success);
+  color: var(--color-success);
 }
 
 .knowledge-lifeline li.is-active::before {
@@ -370,7 +370,7 @@
   gap: 5px;
   min-height: 118px;
   place-content: center;
-  color: var(--knowledge-success);
+  color: var(--color-success);
   text-align: center;
 }
 
@@ -400,7 +400,7 @@
   place-items: center;
   border-radius: 6px;
   background: var(--knowledge-blue-soft);
-  color: var(--knowledge-blue);
+  color: var(--color-primary-strong);
 }
 
 .knowledge-recent-copy {
@@ -434,7 +434,7 @@
 .knowledge-quick-action.t-button {
   justify-content: flex-start;
   width: 100%;
-  min-height: 36px;
+  min-height: max(36px, var(--control-min-h));
 }
 
 .knowledge-quick-action:focus-visible {

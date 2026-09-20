@@ -332,6 +332,11 @@ def test_context_returns_real_tenant_actor_counts_permissions_and_capabilities()
                 "state": "unavailable",
                 "reason": "0036 知识服务可靠性数据库升级尚未就绪：catalog is not at a known pre-0036 or 0036 revision",
             },
+            "enterprise_knowledge_operations_feedback": {
+                "label": "企业知识运营与反馈",
+                "state": "unavailable",
+                "reason": "0037 企业知识运营与反馈数据库升级尚未就绪：catalog is not at a known pre-0037 or 0037 revision",
+            },
         },
     }
 

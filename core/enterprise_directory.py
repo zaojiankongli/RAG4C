@@ -58,6 +58,11 @@ _CAPABILITY_DEFINITIONS = {
         "unavailable",
         "知识服务可靠性权威尚未通过数据库验证",
     ),
+    "enterprise_knowledge_operations_feedback": (
+        "企业知识运营与反馈",
+        "unavailable",
+        "企业知识运营与反馈权威尚未通过数据库验证",
+    ),
 }
 
 
@@ -835,6 +840,7 @@ def enterprise_capabilities(engine: Any) -> dict[str, dict[str, str | None]]:
     from core.catalog_schema import (
         inspect_enterprise_automation_workflows_capability,
         inspect_enterprise_content_recovery_capability,
+        inspect_enterprise_knowledge_operations_feedback_capability,
         inspect_enterprise_knowledge_serving_reliability_capability,
         inspect_enterprise_notification_center_capability,
         inspect_enterprise_task_operations_capability,
@@ -865,6 +871,11 @@ def enterprise_capabilities(engine: Any) -> dict[str, dict[str, str | None]]:
             "enterprise_knowledge_serving_reliability",
             inspect_enterprise_knowledge_serving_reliability_capability,
             "0036 知识服务可靠性数据库升级尚未就绪",
+        ),
+        (
+            "enterprise_knowledge_operations_feedback",
+            inspect_enterprise_knowledge_operations_feedback_capability,
+            "0037 企业知识运营与反馈数据库升级尚未就绪",
         ),
     )
     for key, checker, unavailable_reason in schema_capabilities:

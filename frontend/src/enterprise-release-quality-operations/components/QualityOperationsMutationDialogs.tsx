@@ -167,7 +167,7 @@ const MODE_VALIDATION_MESSAGES = {
   commentUnsafe: "备注包含受保护信息，已拒绝。",
   suppressedUntilRequired: "请填写抑制截止时间。",
   suppressedUntilInvalid: "抑制截止时间必须是未来 ISO 时间。",
-  authorityUnavailable: "服务端 authority 摘要不可用，暂不能排队再认证。",
+  authorityUnavailable: "服务端权威摘要不可用，暂不能排队再认证。",
   revisionUnavailable: "服务端 revision 不可用，暂不能提交。",
   statusUnavailable: "服务端 status 不可用，暂不能提交。",
   callbackUnavailable: "当前操作未配置可用的提交回调。",
@@ -276,9 +276,9 @@ function QueueAuthoritySummary({
 }) {
   if (!authority) {
     return (
-      <section aria-label="服务端 authority 摘要" role="status">
+      <section aria-label="服务端权威摘要" role="status">
         <Tag theme="warning" variant="light-outline">
-          authority unavailable
+          权威不可用
         </Tag>
         <p>{MODE_VALIDATION_MESSAGES.authorityUnavailable}</p>
       </section>
@@ -286,9 +286,9 @@ function QueueAuthoritySummary({
   }
 
   return (
-    <section aria-label="服务端 authority 摘要" role="status">
+    <section aria-label="服务端权威摘要" role="status">
       <Tag theme="primary" variant="light-outline">
-        服务端 authority 摘要
+        服务端权威摘要
       </Tag>
       <dl>
         {queueAuthorityRows(authority).map(([label, value]) => (

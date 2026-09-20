@@ -255,7 +255,7 @@ export function useEnterpriseAutomation(
       results.find((r) => r.status === "rejected")?.status === "rejected"
         ? err(
             (results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason,
-            "authority unavailable",
+            "企业自动化权威不可用",
           )
         : null,
     );

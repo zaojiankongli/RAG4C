@@ -83,10 +83,10 @@ for (const theme of ["light", "dark"]) {
       colorScheme: theme,
       locale: "zh-CN",
     });
-    // 主题是 localStorage 持久化的（useThemeMode.ts），colorScheme 只影响
-    // 系统偏好；两个都设才能确保拍到的确实是目标主题。
+    // 应用只读 rag4c.theme_mode（useThemeMode.ts:4）；此前这里写的
+    // rag4c.theme 是个没有任何消费者的死 key，于是拍到的主题归属并不可信。
     await ctx.addInitScript((t) => {
-      window.localStorage.setItem("rag4c.theme", t);
+      window.localStorage.setItem("rag4c.theme_mode", t);
       // 关掉新手引导再拍。引导是一层 fixed inset-0 z-[9999] 的全屏遮罩，
       // 不置这个标记时每张截图拍到的都是引导弹窗而不是页面本身
       // （实测 36/36 张全部如此，见 docs/41）。

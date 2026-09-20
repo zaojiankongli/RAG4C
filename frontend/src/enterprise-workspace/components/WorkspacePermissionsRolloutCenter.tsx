@@ -133,7 +133,7 @@ function workspaceAuthorizationErrorMessage(error: unknown): string {
     workspace_authorization_workspace_revision_conflict:
       "Workspace revision 已变化，请刷新 Workspace 事实后重试。",
     workspace_authorization_model_conflict:
-      "权限模型版本或指纹已变化，请刷新 authority evidence 后重试。",
+      "权限模型版本或指纹已变化，请刷新授权事实后重试。",
     workspace_authorization_approval_required: "服务端要求该模式变更先经过企业审批。",
     workspace_authorization_workspace_archived: "Archived Workspace 不能启用授权。",
     workspace_authorization_unavailable: "Workspace 授权服务暂不可用，请稍后重试。",
@@ -142,7 +142,7 @@ function workspaceAuthorizationErrorMessage(error: unknown): string {
   if (error.message.trim()) return `服务端拒绝了 Workspace 授权变更：${error.message}`;
   if (error.status === 403) return "当前身份无权管理 Workspace 授权模式。";
   if (error.status === 404) return "Workspace 授权策略不存在，无法继续变更。";
-  if (error.status === 409) return "Workspace 授权状态已变化，请刷新 authority evidence 后重试。";
+  if (error.status === 409) return "Workspace 授权状态已变化，请刷新授权事实后重试。";
   if (error.status === 422) return "Workspace 授权变更参数无效，请检查输入。";
   if (error.status === 503) return "Workspace 授权服务暂不可用，请稍后重试。";
   return "Workspace 授权变更失败，请查看服务端返回的错误。";

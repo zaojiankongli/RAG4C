@@ -81,7 +81,7 @@ function QualityOperationsPanel({
 }) {
   const qualityError = scopeVerified
     ? qualityOperationsError(operations)
-    : "等待已验证的 Workspace scope";
+    : "等待已验证的工作区作用域";
   const canManageAlerts = Boolean(scopeVerified && operations.active && !readOnly);
   const acknowledgeAlert = canManageAlerts ? onAcknowledgeRequest : undefined;
   const queueRecertification =

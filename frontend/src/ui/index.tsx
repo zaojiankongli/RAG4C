@@ -483,16 +483,73 @@ export const Select: any = React.forwardRef<any, any>(function Select(
     />
   );
 });
-export const InputNumber: any = TInputNumber;
-export const Switch: any = ({ checked, onChange, ...props }: any) =>
+/* InputNumber 原先是 TDesign 的直连别名，也是本文件里唯一一个绕过 facade 的表单控件
+   （另两个直连别名 Statistic / ConfigProvider 不是表单控件，不受影响）。
+   后果与下面 Switch 同族，但更隐蔽、且无法靠"转发 props"修好：
+   TDesign 把 restProps 摊到外层 div（tdesign-react/esm/input/Input.js:407-411），
+   而内层 `input.t-input__inner` 的属性表是写死闭合的（同文件 233-253：无 aria-*、无 id、无展开），
+   整个 input/ 目录 grep "aria" 命中数为 0——调用方写的 `aria-label` 物理上到不了真正的输入框。
+   视觉门禁实测：/config 残留的 81 个无可访问名控件全部是 `input.t-input__inner`，
+   即 9 个实例 × 9 次页面加载（3 主题 × 3 视口）。
+   兜底分支必须沿用 TDesign 的 `onChange(value)` 签名，不能退回原生 `onChange(event)`；
+   `size="small"` 靠 ariaDataProps 过滤掉——原生 input 的 size 是字符宽度，会直接改坏布局。 */
+export const InputNumber: any = ({
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  disabled,
+  style,
+  className,
+  ...props
+}: any) =>
   !canRenderTDesign() ? (
     <input
+      type="number"
+      {...ariaDataProps(props)}
+      className={["rag-input", className].filter(Boolean).join(" ")}
+      style={style}
+      min={min}
+      max={max}
+      step={step}
+      disabled={Boolean(disabled)}
+      value={value ?? ""}
+      onChange={(event) => {
+        const raw = event.target.value;
+        onChange?.(raw === "" ? undefined : Number(raw));
+      }}
+    />
+  ) : (
+    <TInputNumber
+      {...props}
+      className={className}
+      style={style}
+      min={min}
+      max={max}
+      step={step}
+      disabled={disabled}
+      value={value}
+      onChange={onChange}
+    />
+  );
+export const Switch: any = ({ checked, onChange, disabled, ...props }: any) =>
+  !canRenderTDesign() ? (
+    /* 兜底分支原先只取 checked/onChange，其余全部静默丢弃，两个后果：
+       1) `aria-label` 丢失 → 视觉门禁实测 /config 270 个里的 189 个"无可访问名控件"全部来自这里
+          （调用方写的是 `<Switch aria-label="启用 xxx" />`，作者做对了但被吞掉）；
+       2) `disabled` 丢失 → EngineBoard 的 `disabled={!p.configured}` 失效，
+          未配置的服务提供者开关其实可以点。
+       只转发 aria 与 data 两类前缀属性：`size="small"` 这类不能直接落到原生 checkbox 上。 */
+    <input
       type="checkbox"
+      {...ariaDataProps(props)}
+      disabled={Boolean(disabled)}
       checked={Boolean(checked)}
       onChange={(event) => onChange?.(event.target.checked)}
     />
   ) : (
-    <TSwitch {...props} value={checked} onChange={onChange} />
+    <TSwitch {...props} disabled={disabled} value={checked} onChange={onChange} />
   );
 export const Spin: any = ({ spinning = true, children, tip, size, ...props }: any) =>
   !canRenderTDesign() ? (
@@ -890,31 +947,104 @@ export const Segmented: any = ({ options = [], value, onChange, disabled, ...pro
       })}
     </TRadio.Group>
   );
-export const Tabs: any = ({ items = [], activeKey, defaultActiveKey, onChange, ...props }: any) => {
-  const current = activeKey ?? defaultActiveKey ?? items[0]?.key;
+/**
+ * TDesign 的子元素写法（`<Tabs><Tabs.TabPanel value label>内容</Tabs.TabPanel></Tabs>`）
+ * 在企业模块里有 13 处，而 `items` 数组写法只有 1 处。兼容层若只认 `items`，
+ * 任何"迁到兼容层"的改造都得逐页搬上百行 JSX——回归面太大，没人敢做。
+ * 所以这里同时认两种写法：children 里的 TabPanel 只作数据载体（占位组件自身不渲染），
+ * 由 Tabs 解析成 items。迁移一个页面因此只是换一行 import。
+ */
+const TabPanelPlaceholder: any = () => null;
+const collectTabItems = (children: any) =>
+  React.Children.toArray(children)
+    .filter((child: any) => child?.type === TabPanelPlaceholder)
+    .map((child: any) => ({
+      key: child.props.value ?? child.key,
+      label: child.props.label,
+      children: child.props.children,
+      disabled: child.props.disabled,
+    }));
+
+export const Tabs: any = ({
+  items = [],
+  children,
+  activeKey,
+  defaultActiveKey,
+  onChange,
+  keepAlive,
+  ...props
+}: any) => {
+  const resolved = items.length ? items : collectTabItems(children);
+  const current = activeKey ?? defaultActiveKey ?? resolved[0]?.key;
+  // React 的 useId 带冒号，冒号在 CSS 选择器里需要转义；这里只经 getElementById 用，去掉更省心。
+  const uid = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
+  const tabId = (key: any) => `rag-tab-${uid}-${key}`;
+  const panelId = `rag-tabpanel-${uid}`;
+  const keys = resolved.map((item: any) => item.key);
+  // TDesign 的 TabPanel 是"首次激活才挂载、之后留在 DOM 里 display:none"
+  // （tdesign-react/esm/tabs/TabPanel.js:34-43）。keepAlive 让迁过来的页面不改掉这个行为，
+  // 否则切走即卸载 → 切回重新发请求、丢滚动与筛选态。默认关，保住既有调用点。
+  const [visited, setVisited] = useState<any[]>(() => [current]);
+  if (keepAlive && !visited.includes(current)) {
+    // 渲染期更新：React 会立刻用新 state 重跑本组件，不会先把"面板还没挂载"这一帧提交出去。
+    setVisited([...visited, current]);
+  }
   if (!canRenderTDesign())
     return (
       <div className={props.className}>
-        <div role="tablist">
-          {items.map((item: any) => (
+        <div role="tablist" {...ariaDataProps(props)}>
+          {resolved.map((item: any) => (
             <button
               type="button"
               role="tab"
+              id={tabId(item.key)}
               data-key={item.key}
               aria-selected={current === item.key}
+              // 只渲染一份面板（内容随 current 变），所以**所有** tab 都指向同一个 panelId。
+              // 按 key 各造一个 panel id 会让未选中的 tab 指向不存在的元素。
+              aria-controls={panelId}
+              // roving tabindex：一组 tablist 在读屏里只应有一个 Tab 停留点。
+              tabIndex={current === item.key ? 0 : -1}
+              // TDesign 分支一直支持 item.disabled，兜底分支原先漏了，两分支对齐。
+              disabled={Boolean(item.disabled)}
               key={item.key}
               onClick={() => onChange?.(item.key)}
+              onKeyDown={(event) => {
+                const index = keys.indexOf(item.key);
+                const last = keys.length - 1;
+                let nextIndex: number | null = null;
+                if (event.key === "ArrowRight") nextIndex = index >= last ? 0 : index + 1;
+                else if (event.key === "ArrowLeft") nextIndex = index <= 0 ? last : index - 1;
+                else if (event.key === "Home") nextIndex = 0;
+                else if (event.key === "End") nextIndex = last;
+                if (nextIndex === null) return;
+                event.preventDefault();
+                const nextKey = keys[nextIndex];
+                onChange?.(nextKey);
+                // 焦点得跟着"当前 tab"走，否则 roving tabindex 会把焦点掉回 body。
+                requestAnimationFrame(() => document.getElementById(tabId(nextKey))?.focus());
+              }}
             >
               {item.label}
             </button>
           ))}
         </div>
-        {items.find((item: any) => item.key === current)?.children}
+        <div role="tabpanel" id={panelId} aria-labelledby={tabId(current)} tabIndex={0}>
+          {keepAlive
+            ? resolved
+                .filter((item: any) => visited.includes(item.key))
+                .map((item: any) => (
+                  <div key={item.key} hidden={item.key !== current}>
+                    {item.children}
+                  </div>
+                ))
+            : resolved.find((item: any) => item.key === current)?.children}
+        </div>
       </div>
     );
   return (
     <TTabs {...props} value={activeKey} defaultValue={defaultActiveKey} onChange={onChange}>
-      {items.map((item: any) => (
+      {resolved.map((item: any) => (
         <TTabs.TabPanel key={item.key} value={item.key} label={item.label} disabled={item.disabled}>
           {item.children}
         </TTabs.TabPanel>
@@ -922,6 +1052,7 @@ export const Tabs: any = ({ items = [], activeKey, defaultActiveKey, onChange, .
     </TTabs>
   );
 };
+Tabs.TabPanel = TabPanelPlaceholder;
 export const Drawer: any = ({
   open,
   title,

@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:17.8-alpine
+    container_name: postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: rag4c
+      POSTGRES_DB: rag4c
+      POSTGRES_PASSWORD: ChangeMe_StrongPwd
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: Asia/Shanghai
+    volumes:
+      - /usr/local/service/postgres/data:/var/lib/postgresql/data
+      - /usr/local/service/postgres/init:/docker-entrypoint-initdb.d:ro
+      - /usr/local/service/postgres/conf:/etc/postgresql/conf.d:ro
+    shm_size: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag4c -d rag4c -h 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    networks:
+      - pgnet
+
+networks:
+  pgnet:
+    name: rag4c-pgnet
+    driver: bridge

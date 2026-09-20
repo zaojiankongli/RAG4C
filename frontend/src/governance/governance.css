@@ -32,7 +32,7 @@
 
 .governance-authority-content > svg {
   flex: 0 0 auto;
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   font-size: 20px;
 }
 
@@ -318,7 +318,7 @@
 }
 
 .governance-version-empty > svg {
-  color: var(--color-primary);
+  color: var(--color-primary-strong);
   font-size: 30px;
 }
 

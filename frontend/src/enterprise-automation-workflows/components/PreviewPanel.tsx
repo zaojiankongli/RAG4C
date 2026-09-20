@@ -52,12 +52,12 @@ export default function AutomationPreviewPanel({
         </li>
         <li>
           <strong>EVIDENCE</strong>
-          <span>追加 immutable event</span>
+          <span>追加不可变事件</span>
         </li>
       </ol>
       <div className="automation-workflows__preview-note">
         <ArrowRightIcon aria-hidden="true" />
-        <span>通过预览只验证 schema 与 digest fence；发布仍需由上层 authority 完成。</span>
+        <span>通过预览只验证 schema 与摘要是否一致；发布仍需由上层权威完成。</span>
       </div>
     </section>
   );

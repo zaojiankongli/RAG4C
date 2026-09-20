@@ -8130,3 +8130,783 @@ __all__.extend(
         "TenantKnowledgeServingEvent",
     ]
 )
+
+# ---------------------------------------------------------------------------
+# Enterprise Knowledge Operations & Feedback (Stage 27)
+# ---------------------------------------------------------------------------
+
+OPERATIONS_PROFILE_TABLE = "tenant_knowledge_operations_profiles"
+OPERATIONS_SESSION_TABLE = "tenant_knowledge_conversation_sessions"
+OPERATIONS_QUERY_TABLE = "tenant_knowledge_query_facts"
+OPERATIONS_FEEDBACK_TABLE = "tenant_knowledge_feedback_facts"
+OPERATIONS_CASE_TABLE = "tenant_knowledge_review_cases"
+OPERATIONS_EVENT_TABLE = "tenant_knowledge_review_events"
+OPERATIONS_CANDIDATE_TABLE = "tenant_knowledge_improvement_candidates"
+
+
+class TenantKnowledgeOperationsProfile(Base):
+    """Operator-owned Tenant/Dataset knowledge operations profile."""
+
+    __tablename__ = OPERATIONS_PROFILE_TABLE
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "id", name="uq_tenant_knowledge_operations_profiles_scope_id"
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            "dataset_id",
+            name="uq_tenant_knowledge_operations_profiles_scope_id_dataset",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "dataset_id",
+            name="uq_tenant_knowledge_operations_profiles_dataset_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "active_profile_key",
+            name="uq_tenant_knowledge_operations_profiles_active_key",
+        ),
+        CheckConstraint(
+            "status IN ('draft','active','paused','archived')",
+            name="ck_tenant_knowledge_operations_profiles_status",
+        ),
+        CheckConstraint(
+            "revision > 0", name="ck_tenant_knowledge_operations_profiles_revision"
+        ),
+        CheckConstraint(
+            "retention_days BETWEEN 1 AND 3650 AND sampling_basis_points BETWEEN 0 AND 10000 "
+            "AND review_sla_minutes BETWEEN 1 AND 10080",
+            name="ck_tenant_knowledge_operations_profiles_policy",
+        ),
+        CheckConstraint(
+            "active_profile_key IS NULL OR active_profile_key=dataset_id",
+            name="ck_tenant_knowledge_operations_profiles_active_identity",
+        ),
+        CheckConstraint(
+            "(status='active' AND active_profile_key IS NOT NULL) OR "
+            "(status<>'active' AND active_profile_key IS NULL)",
+            name="ck_tenant_knowledge_operations_profiles_active_key",
+        ),
+        CheckConstraint(
+            "(status='archived' AND archived_at IS NOT NULL AND archived_by IS NOT NULL) OR "
+            "(status<>'archived' AND archived_at IS NULL AND archived_by IS NULL)",
+            name="ck_tenant_knowledge_operations_profiles_lifecycle",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id"],
+            ["tenants.id"],
+            name="fk_tenant_knowledge_operations_profiles_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "workspace_id"],
+            ["tenant_workspaces.tenant_id", "tenant_workspaces.id"],
+            name="fk_tenant_knowledge_operations_profiles_workspace",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "dataset_id"],
+            ["datasets.tenant_id", "datasets.id"],
+            name="fk_tenant_knowledge_operations_profiles_dataset",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by"],
+            ["tenant_members.tenant_id", "tenant_members.account_id"],
+            name="fk_tenant_knowledge_operations_profiles_creator",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "updated_by"],
+            ["tenant_members.tenant_id", "tenant_members.account_id"],
+            name="fk_tenant_knowledge_operations_profiles_updater",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "archived_by"],
+            ["tenant_members.tenant_id", "tenant_members.account_id"],
+            name="fk_tenant_knowledge_operations_profiles_archiver",
+        ),
+        Index(
+            "ix_tenant_knowledge_operations_profiles_tenant_status_updated",
+            "tenant_id",
+            "status",
+            "updated_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = _pk()
+    tenant_id: Mapped[str] = mapped_column(String(64))
+    workspace_id: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    dataset_id: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(16), default="draft", server_default="'draft'")
+    retention_days: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    sampling_basis_points: Mapped[int] = mapped_column(
+        Integer, default=10000, server_default="10000"
+    )
+    safe_preview_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    review_sla_minutes: Mapped[int] = mapped_column(Integer, default=60, server_default="60")
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    active_profile_key: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    created_at: Mapped[datetime] = mapped_column(_datetime6(), default=datetime.utcnow)
+    created_by: Mapped[str] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(
+        _datetime6(), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    updated_by: Mapped[str] = mapped_column(String(64))
+    archived_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
+    archived_by: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+
+
+class TenantKnowledgeConversationSession(Base):
+    """Privacy-safe session envelope; it stores digests instead of transcripts."""
+
+    __tablename__ = OPERATIONS_SESSION_TABLE
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "id", name="uq_tenant_knowledge_conversation_sessions_scope_id"
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "id",
+            name="uq_tenant_knowledge_conversation_sessions_profile_scope",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "session_key_digest",
+            name="uq_tenant_knowledge_conversation_sessions_session_key",
+        ),
+        CheckConstraint(
+            "channel_code IN ('web','api','wecom','dingtalk','custom')",
+            name="ck_tenant_knowledge_conversation_sessions_channel",
+        ),
+        CheckConstraint(
+            "length(session_key_digest)=64 AND lower(session_key_digest)=session_key_digest "
+            "AND length(session_digest)=64 AND lower(session_digest)=session_digest "
+            "AND (actor_subject_digest IS NULL OR (length(actor_subject_digest)=64 "
+            "AND lower(actor_subject_digest)=actor_subject_digest))",
+            name="ck_tenant_knowledge_conversation_sessions_digests",
+        ),
+        CheckConstraint(
+            "query_count >= 0 AND feedback_count >= 0",
+            name="ck_tenant_knowledge_conversation_sessions_counts",
+        ),
+        CheckConstraint(
+            "expires_at IS NULL OR expires_at>started_at",
+            name="ck_tenant_knowledge_conversation_sessions_expiry",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "profile_id"],
+            [
+                "tenant_knowledge_operations_profiles.tenant_id",
+                "tenant_knowledge_operations_profiles.id",
+            ],
+            name="fk_tenant_knowledge_conversation_sessions_profile",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "profile_id", "dataset_id"],
+            [
+                "tenant_knowledge_operations_profiles.tenant_id",
+                "tenant_knowledge_operations_profiles.id",
+                "tenant_knowledge_operations_profiles.dataset_id",
+            ],
+            name="fk_tenant_knowledge_conversation_sessions_profile_dataset",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "dataset_id"],
+            ["datasets.tenant_id", "datasets.id"],
+            name="fk_tenant_knowledge_conversation_sessions_dataset",
+        ),
+        Index(
+            "ix_tenant_knowledge_conversation_sessions_profile_observed",
+            "tenant_id",
+            "profile_id",
+            "last_observed_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = _pk()
+    tenant_id: Mapped[str] = mapped_column(String(64))
+    profile_id: Mapped[str] = mapped_column(String(64))
+    dataset_id: Mapped[str] = mapped_column(String(64))
+    session_key_digest: Mapped[str] = mapped_column(String(64))
+    channel_code: Mapped[str] = mapped_column(String(16))
+    actor_subject_digest: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    query_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    feedback_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    started_at: Mapped[datetime] = mapped_column(_datetime6())
+    last_observed_at: Mapped[datetime] = mapped_column(_datetime6())
+    expires_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
+    session_digest: Mapped[str] = mapped_column(String(64))
+
+
+class TenantKnowledgeQueryFact(Base):
+    """Immutable production query outcome fact without raw question or answer bodies."""
+
+    __tablename__ = OPERATIONS_QUERY_TABLE
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "id", name="uq_tenant_knowledge_query_facts_scope_id"
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "id",
+            name="uq_tenant_knowledge_query_facts_profile_scope",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "session_id",
+            "id",
+            name="uq_tenant_knowledge_query_facts_profile_session_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "dataset_id",
+            "id",
+            name="uq_tenant_knowledge_query_facts_profile_dataset_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "session_id",
+            "request_id_digest",
+            name="uq_tenant_knowledge_query_facts_request",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "fact_digest",
+            name="uq_tenant_knowledge_query_facts_digest",
+        ),
+        CheckConstraint(
+            "route_code IN ('rag','cache','fallback','abstain','changed')",
+            name="ck_tenant_knowledge_query_facts_route",
+        ),
+        CheckConstraint(
+            "outcome_code IN ('answered','abstained','cancelled','failed','knowledge_changed')",
+            name="ck_tenant_knowledge_query_facts_outcome",
+        ),
+        CheckConstraint(
+            "length(request_id_digest)=64 AND lower(request_id_digest)=request_id_digest "
+            "AND length(query_digest)=64 AND lower(query_digest)=query_digest "
+            "AND length(answer_digest)=64 AND lower(answer_digest)=answer_digest "
+            "AND length(fact_digest)=64 AND lower(fact_digest)=fact_digest "
+            "AND (trace_digest IS NULL OR (length(trace_digest)=64 "
+            "AND lower(trace_digest)=trace_digest))",
+            name="ck_tenant_knowledge_query_facts_digests",
+        ),
+        CheckConstraint(
+            "safe_query_preview IS NULL OR length(safe_query_preview)<=160",
+            name="ck_tenant_knowledge_query_facts_preview",
+        ),
+        CheckConstraint(
+            "retrieval_count >= 0 AND citation_count >= 0 AND citation_count<=retrieval_count "
+            "AND retrieval_ms >= 0 AND generation_ms >= 0 AND total_ms >= 0 "
+            "AND serving_generation >= 0",
+            name="ck_tenant_knowledge_query_facts_metrics",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "profile_id"],
+            [
+                "tenant_knowledge_operations_profiles.tenant_id",
+                "tenant_knowledge_operations_profiles.id",
+            ],
+            name="fk_tenant_knowledge_query_facts_profile",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "profile_id", "dataset_id"],
+            [
+                "tenant_knowledge_operations_profiles.tenant_id",
+                "tenant_knowledge_operations_profiles.id",
+                "tenant_knowledge_operations_profiles.dataset_id",
+            ],
+            name="fk_tenant_knowledge_query_facts_profile_dataset",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "profile_id", "session_id"],
+            [
+                "tenant_knowledge_conversation_sessions.tenant_id",
+                "tenant_knowledge_conversation_sessions.profile_id",
+                "tenant_knowledge_conversation_sessions.id",
+            ],
+            name="fk_tenant_knowledge_query_facts_session",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "dataset_id"],
+            ["datasets.tenant_id", "datasets.id"],
+            name="fk_tenant_knowledge_query_facts_dataset",
+        ),
+        Index(
+            "ix_tenant_knowledge_query_facts_session_observed",
+            "tenant_id",
+            "profile_id",
+            "session_id",
+            "observed_at",
+            "id",
+        ),
+        Index(
+            "ix_tenant_knowledge_query_facts_outcome_observed",
+            "tenant_id",
+            "outcome_code",
+            "observed_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = _pk()
+    tenant_id: Mapped[str] = mapped_column(String(64))
+    profile_id: Mapped[str] = mapped_column(String(64))
+    session_id: Mapped[str] = mapped_column(String(64))
+    dataset_id: Mapped[str] = mapped_column(String(64))
+    request_id_digest: Mapped[str] = mapped_column(String(64))
+    query_digest: Mapped[str] = mapped_column(String(64))
+    answer_digest: Mapped[str] = mapped_column(String(64))
+    safe_query_preview: Mapped[Optional[str]] = mapped_column(String(160), default=None)
+    route_code: Mapped[str] = mapped_column(String(16))
+    outcome_code: Mapped[str] = mapped_column(String(24))
+    retrieval_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    citation_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    retrieval_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    generation_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    total_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    cached: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    retry_used: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    serving_generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    trace_digest: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    fact_digest: Mapped[str] = mapped_column(String(64))
+    observed_at: Mapped[datetime] = mapped_column(_datetime6())
+
+
+class TenantKnowledgeFeedbackFact(Base):
+    """Immutable feedback observation bound to one query fact."""
+
+    __tablename__ = OPERATIONS_FEEDBACK_TABLE
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "id", name="uq_tenant_knowledge_feedback_facts_scope_id"
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "feedback_digest",
+            name="uq_tenant_knowledge_feedback_facts_digest_identity",
+        ),
+        CheckConstraint(
+            "feedback_kind IN ('helpful','unhelpful','correction','unsafe','incomplete')",
+            name="ck_tenant_knowledge_feedback_facts_kind",
+        ),
+        CheckConstraint(
+            "source_code IN ('explicit','operator','policy','implicit')",
+            name="ck_tenant_knowledge_feedback_facts_source",
+        ),
+        CheckConstraint(
+            "reason_code IN ('wrong_answer','no_citation','outdated','incomplete','unsafe',"
+            "'refused','latency','other')",
+            name="ck_tenant_knowledge_feedback_facts_reason",
+        ),
+        CheckConstraint(
+            "length(feedback_digest)=64 AND lower(feedback_digest)=feedback_digest",
+            name="ck_tenant_knowledge_feedback_facts_digest",
+        ),
+        CheckConstraint(
+            "safe_comment_preview IS NULL OR length(safe_comment_preview)<=160",
+            name="ck_tenant_knowledge_feedback_facts_preview",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "profile_id", "session_id", "query_fact_id"],
+            [
+                "tenant_knowledge_query_facts.tenant_id",
+                "tenant_knowledge_query_facts.profile_id",
+                "tenant_knowledge_query_facts.session_id",
+                "tenant_knowledge_query_facts.id",
+            ],
+            name="fk_tenant_knowledge_feedback_facts_query",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "actor_id"],
+            ["tenant_members.tenant_id", "tenant_members.account_id"],
+            name="fk_tenant_knowledge_feedback_facts_actor",
+        ),
+        Index(
+            "ix_tenant_knowledge_feedback_facts_query_observed",
+            "tenant_id",
+            "profile_id",
+            "query_fact_id",
+            "observed_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = _pk()
+    tenant_id: Mapped[str] = mapped_column(String(64))
+    profile_id: Mapped[str] = mapped_column(String(64))
+    session_id: Mapped[str] = mapped_column(String(64))
+    query_fact_id: Mapped[str] = mapped_column(String(64))
+    feedback_kind: Mapped[str] = mapped_column(String(16))
+    source_code: Mapped[str] = mapped_column(String(16))
+    reason_code: Mapped[str] = mapped_column(String(32))
+    safe_comment_preview: Mapped[Optional[str]] = mapped_column(String(160), default=None)
+    feedback_digest: Mapped[str] = mapped_column(String(64))
+    actor_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    observed_at: Mapped[datetime] = mapped_column(_datetime6())
+
+
+class TenantKnowledgeReviewCase(Base):
+    """Revision-fenced human review case over one immutable query fact."""
+
+    __tablename__ = OPERATIONS_CASE_TABLE
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_tenant_knowledge_review_cases_scope_id"),
+        UniqueConstraint(
+            "tenant_id", "profile_id", "id", name="uq_tenant_knowledge_review_cases_profile_scope"
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "case_key",
+            name="uq_tenant_knowledge_review_cases_case_key",
+        ),
+        CheckConstraint(
+            "priority IN ('low','medium','high','critical')",
+            name="ck_tenant_knowledge_review_cases_priority",
+        ),
+        CheckConstraint(
+            "issue_type IN ('no_recall','weak_recall','citation_gap','wrong_answer',"
+            "'outdated_knowledge','unsafe_answer','refused','latency')",
+            name="ck_tenant_knowledge_review_cases_issue",
+        ),
+        CheckConstraint(
+            "status IN ('open','triaged','investigating','resolved','dismissed')",
+            name="ck_tenant_knowledge_review_cases_status",
+        ),
+        CheckConstraint("revision > 0", name="ck_tenant_knowledge_review_cases_revision"),
+        CheckConstraint(
+            "resolution_code IS NULL OR safe_resolution_summary IS NOT NULL",
+            name="ck_tenant_knowledge_review_cases_resolution",
+        ),
+        CheckConstraint(
+            "(status IN ('resolved','dismissed') AND closed_at IS NOT NULL "
+            "AND closed_by IS NOT NULL) OR "
+            "(status NOT IN ('resolved','dismissed') AND closed_at IS NULL "
+            "AND closed_by IS NULL)",
+            name="ck_tenant_knowledge_review_cases_closure",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "profile_id"],
+            [
+                "tenant_knowledge_operations_profiles.tenant_id",
+                "tenant_knowledge_operations_profiles.id",
+            ],
+            name="fk_tenant_knowledge_review_cases_profile",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "profile_id", "dataset_id"],
+            [
+                "tenant_knowledge_operations_profiles.tenant_id",
+                "tenant_knowledge_operations_profiles.id",
+                "tenant_knowledge_operations_profiles.dataset_id",
+            ],
+            name="fk_tenant_knowledge_review_cases_profile_dataset",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "profile_id", "dataset_id", "query_fact_id"],
+            [
+                "tenant_knowledge_query_facts.tenant_id",
+                "tenant_knowledge_query_facts.profile_id",
+                "tenant_knowledge_query_facts.dataset_id",
+                "tenant_knowledge_query_facts.id",
+            ],
+            name="fk_tenant_knowledge_review_cases_query",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "dataset_id"],
+            ["datasets.tenant_id", "datasets.id"],
+            name="fk_tenant_knowledge_review_cases_dataset",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "assignee_id"],
+            ["tenant_members.tenant_id", "tenant_members.account_id"],
+            name="fk_tenant_knowledge_review_cases_assignee",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by"],
+            ["tenant_members.tenant_id", "tenant_members.account_id"],
+            name="fk_tenant_knowledge_review_cases_creator",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "updated_by"],
+            ["tenant_members.tenant_id", "tenant_members.account_id"],
+            name="fk_tenant_knowledge_review_cases_updater",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "closed_by"],
+            ["tenant_members.tenant_id", "tenant_members.account_id"],
+            name="fk_tenant_knowledge_review_cases_closer",
+        ),
+        Index(
+            "ix_tenant_knowledge_review_cases_status_due",
+            "tenant_id",
+            "status",
+            "due_at",
+            "id",
+        ),
+        Index(
+            "ix_tenant_knowledge_review_cases_profile_updated",
+            "tenant_id",
+            "profile_id",
+            "updated_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = _pk()
+    tenant_id: Mapped[str] = mapped_column(String(64))
+    profile_id: Mapped[str] = mapped_column(String(64))
+    dataset_id: Mapped[str] = mapped_column(String(64))
+    query_fact_id: Mapped[str] = mapped_column(String(64))
+    case_key: Mapped[str] = mapped_column(String(128))
+    priority: Mapped[str] = mapped_column(String(16))
+    issue_type: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(24), default="open", server_default="'open'")
+    assignee_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    due_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    resolution_code: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    safe_resolution_summary: Mapped[Optional[str]] = mapped_column(String(280), default=None)
+    created_at: Mapped[datetime] = mapped_column(_datetime6(), default=datetime.utcnow)
+    created_by: Mapped[str] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(
+        _datetime6(), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    updated_by: Mapped[str] = mapped_column(String(64))
+    closed_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
+    closed_by: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+
+
+class TenantKnowledgeReviewEvent(Base):
+    """Immutable hash-chained evidence for one review case."""
+
+    __tablename__ = OPERATIONS_EVENT_TABLE
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_tenant_knowledge_review_events_scope_id"),
+        UniqueConstraint(
+            "tenant_id",
+            "case_id",
+            "sequence",
+            name="uq_tenant_knowledge_review_events_case_sequence",
+        ),
+        UniqueConstraint(
+            "tenant_id", "event_digest", name="uq_tenant_knowledge_review_events_digest"
+        ),
+        CheckConstraint(
+            "event_type IN ('case_created','triaged','assigned','status_changed',"
+            "'candidate_linked','resolved','dismissed')",
+            name="ck_tenant_knowledge_review_events_type",
+        ),
+        CheckConstraint("sequence > 0", name="ck_tenant_knowledge_review_events_sequence"),
+        CheckConstraint(
+            "length(event_digest)=64 AND lower(event_digest)=event_digest "
+            "AND (previous_event_digest IS NULL OR (length(previous_event_digest)=64 "
+            "AND lower(previous_event_digest)=previous_event_digest))",
+            name="ck_tenant_knowledge_review_events_digests",
+        ),
+        CheckConstraint(
+            "(sequence=1 AND previous_event_digest IS NULL AND event_type='case_created') OR "
+            "(sequence>1 AND previous_event_digest IS NOT NULL AND event_type<>'case_created')",
+            name="ck_tenant_knowledge_review_events_hash_chain",
+        ),
+        CheckConstraint(
+            "safe_snapshot_json IS NOT NULL", name="ck_tenant_knowledge_review_events_snapshot"
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "case_id"],
+            ["tenant_knowledge_review_cases.tenant_id", "tenant_knowledge_review_cases.id"],
+            name="fk_tenant_knowledge_review_events_case",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "actor_id"],
+            ["tenant_members.tenant_id", "tenant_members.account_id"],
+            name="fk_tenant_knowledge_review_events_actor",
+        ),
+        Index(
+            "ix_tenant_knowledge_review_events_case_occurred",
+            "tenant_id",
+            "case_id",
+            "occurred_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = _pk()
+    tenant_id: Mapped[str] = mapped_column(String(64))
+    case_id: Mapped[str] = mapped_column(String(64))
+    sequence: Mapped[int] = mapped_column(Integer)
+    event_type: Mapped[str] = mapped_column(String(32))
+    previous_event_digest: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    event_digest: Mapped[str] = mapped_column(String(64))
+    actor_id: Mapped[str] = mapped_column(String(64))
+    request_id: Mapped[str] = mapped_column(String(128))
+    safe_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    occurred_at: Mapped[datetime] = mapped_column(_datetime6())
+
+
+class TenantKnowledgeImprovementCandidate(Base):
+    """Governed improvement suggestion; it never mutates knowledge authority itself."""
+
+    __tablename__ = OPERATIONS_CANDIDATE_TABLE
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "id", name="uq_tenant_knowledge_improvement_candidates_scope_id"
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "id",
+            name="uq_tenant_knowledge_improvement_candidates_profile_scope",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "candidate_key",
+            name="uq_tenant_knowledge_improvement_candidates_candidate_key",
+        ),
+        CheckConstraint(
+            "candidate_type IN ('qa_gap','document_gap','source_gap','retrieval_tuning',"
+            "'citation_policy','refusal_policy')",
+            name="ck_tenant_knowledge_improvement_candidates_type",
+        ),
+        CheckConstraint(
+            "status IN ('proposed','accepted','rejected','converted','archived')",
+            name="ck_tenant_knowledge_improvement_candidates_status",
+        ),
+        CheckConstraint(
+            "length(query_cluster_digest)=64 AND lower(query_cluster_digest)=query_cluster_digest",
+            name="ck_tenant_knowledge_improvement_candidates_digest",
+        ),
+        CheckConstraint(
+            "revision > 0", name="ck_tenant_knowledge_improvement_candidates_revision"
+        ),
+        CheckConstraint(
+            "supporting_fact_count >= 0 AND negative_feedback_count >= 0 "
+            "AND negative_feedback_count<=supporting_fact_count",
+            name="ck_tenant_knowledge_improvement_candidates_counts",
+        ),
+        CheckConstraint(
+            "safe_title <> '' AND safe_summary <> '' AND length(safe_title)<=160 "
+            "AND length(safe_summary)<=512",
+            name="ck_tenant_knowledge_improvement_candidates_text",
+        ),
+        CheckConstraint(
+            "target_route_code IN ('knowledge_documents','qa_knowledge','knowledge_sources',"
+            "'retrieval_profile','release_quality','enterprise_tasks')",
+            name="ck_tenant_knowledge_improvement_candidates_route",
+        ),
+        CheckConstraint(
+            "target_resource_id IS NULL OR target_resource_id <> ''",
+            name="ck_tenant_knowledge_improvement_candidates_target",
+        ),
+        CheckConstraint(
+            "(status='proposed' AND decided_at IS NULL AND decided_by IS NULL) OR "
+            "(status<>'proposed' AND decided_at IS NOT NULL AND decided_by IS NOT NULL)",
+            name="ck_tenant_knowledge_improvement_candidates_decision",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "profile_id"],
+            [
+                "tenant_knowledge_operations_profiles.tenant_id",
+                "tenant_knowledge_operations_profiles.id",
+            ],
+            name="fk_tenant_knowledge_improvement_candidates_profile",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "profile_id", "dataset_id"],
+            [
+                "tenant_knowledge_operations_profiles.tenant_id",
+                "tenant_knowledge_operations_profiles.id",
+                "tenant_knowledge_operations_profiles.dataset_id",
+            ],
+            name="fk_tenant_knowledge_improvement_candidates_profile_dataset",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "dataset_id"],
+            ["datasets.tenant_id", "datasets.id"],
+            name="fk_tenant_knowledge_improvement_candidates_dataset",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "linked_case_id"],
+            ["tenant_knowledge_review_cases.tenant_id", "tenant_knowledge_review_cases.id"],
+            name="fk_tenant_knowledge_improvement_candidates_case",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "created_by"],
+            ["tenant_members.tenant_id", "tenant_members.account_id"],
+            name="fk_tenant_knowledge_improvement_candidates_creator",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "updated_by"],
+            ["tenant_members.tenant_id", "tenant_members.account_id"],
+            name="fk_tenant_knowledge_improvement_candidates_updater",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "decided_by"],
+            ["tenant_members.tenant_id", "tenant_members.account_id"],
+            name="fk_tenant_knowledge_improvement_candidates_decider",
+        ),
+        Index(
+            "ix_tenant_knowledge_improvement_candidates_status_updated",
+            "tenant_id",
+            "status",
+            "updated_at",
+            "id",
+        ),
+        Index(
+            "ix_tenant_knowledge_improvement_candidates_profile_type",
+            "tenant_id",
+            "profile_id",
+            "candidate_type",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = _pk()
+    tenant_id: Mapped[str] = mapped_column(String(64))
+    profile_id: Mapped[str] = mapped_column(String(64))
+    dataset_id: Mapped[str] = mapped_column(String(64))
+    candidate_key: Mapped[str] = mapped_column(String(128))
+    candidate_type: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), default="proposed", server_default="'proposed'")
+    query_cluster_digest: Mapped[str] = mapped_column(String(64))
+    supporting_fact_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    negative_feedback_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    safe_title: Mapped[str] = mapped_column(String(160))
+    safe_summary: Mapped[str] = mapped_column(String(512))
+    linked_case_id: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    target_route_code: Mapped[str] = mapped_column(String(64))
+    target_resource_id: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(_datetime6(), default=datetime.utcnow)
+    created_by: Mapped[str] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(
+        _datetime6(), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    updated_by: Mapped[str] = mapped_column(String(64))
+    decided_at: Mapped[Optional[datetime]] = mapped_column(_datetime6(), default=None)
+    decided_by: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+
+
+__all__.extend(
+    [
+        "TenantKnowledgeOperationsProfile",
+        "TenantKnowledgeConversationSession",
+        "TenantKnowledgeQueryFact",
+        "TenantKnowledgeFeedbackFact",
+        "TenantKnowledgeReviewCase",
+        "TenantKnowledgeReviewEvent",
+        "TenantKnowledgeImprovementCandidate",
+    ]
+)

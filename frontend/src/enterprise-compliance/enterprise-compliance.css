@@ -4,7 +4,7 @@
   --compliance-border: var(--td-component-border, #dcdfe6);
   --compliance-text: var(--td-text-color-primary, #1d2129);
   --compliance-secondary: var(--td-text-color-secondary, #4e5969);
-  --compliance-muted: var(--td-text-color-placeholder, #86909c);
+  --compliance-muted: var(--color-text-tertiary);
   --compliance-brand: var(--td-brand-color, #0052d9);
   grid-column: 1 / -1;
   min-width: 0;
@@ -22,14 +22,14 @@
 .compliance-header > svg {
   padding: 8px;
   border-radius: 6px;
-  color: var(--compliance-brand);
+  color: var(--color-primary-strong);
   background: color-mix(in srgb, var(--compliance-brand) 12%, transparent);
   font-size: 36px;
 }
 .compliance-header span,
 .compliance-policy-card header span,
 .compliance-preview-card header span {
-  color: var(--compliance-brand);
+  color: var(--color-primary-strong);
   font-family: var(--font-mono, Consolas, monospace);
   font-size: 10px;
   font-weight: 700;

@@ -369,8 +369,9 @@ def bridge_api(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(catalog, "get_engine", lambda: engine)
     from server.app import app as bridge_app
 
-    bridge_app.state.knowledge_auth_engine = engine
-    bridge_app.state.knowledge_auth_settings = settings
+    # 裸赋值会污染进程级 app.state，后续用例拿到内存 sqlite 引擎；monkeypatch 会还原。
+    monkeypatch.setattr(bridge_app.state, "knowledge_auth_engine", engine)
+    monkeypatch.setattr(bridge_app.state, "knowledge_auth_settings", settings, raising=False)
     return (
         TestClient(
             bridge_app,

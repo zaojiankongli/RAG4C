@@ -688,10 +688,10 @@ export default function App({ themeMode, onToggleTheme }: Props) {
             status={enterpriseIdentityStatus === "loading" ? "loading" : "error"}
             title={
               enterpriseIdentityStatus === "loading"
-                ? "正在读取 Notification Center authority"
-                : "Notification Center authority 暂不可用"
+                ? "正在读取通知中心权威"
+                : "通知中心权威暂不可用"
             }
-            description="仅在服务端 capability 与当前账号身份均可验证后开放通知权威。"
+            description="仅在服务端能力与当前账号身份均可验证后开放通知权威。"
           />
         </div>
       </div>

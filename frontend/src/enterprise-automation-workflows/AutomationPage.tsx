@@ -18,7 +18,7 @@ export interface AutomationPageProps {
   onAutomationHandoff?: (route: AutomationRoute) => void;
 }
 const safeError = (e: Error | null) =>
-  e ? "Enterprise Automation authority is unavailable" : null;
+  e ? "企业自动化权威不可用" : null;
 const SAFE_HANDOFF_KEYS = ["task_id", "source_id", "approval_request_id"] as const;
 const SAFE_HANDOFF_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$/;
 function safeHandoffFacts(revision: AutomationRuleRevision): Record<string, string> {

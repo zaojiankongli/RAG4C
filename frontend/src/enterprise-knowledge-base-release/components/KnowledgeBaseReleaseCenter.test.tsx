@@ -600,7 +600,7 @@ describe("Stage19 Release Center", () => {
         workspaceName="生产知识域"
       />,
     );
-    expect(await screen.findByText("Release authority 无法验证")).toBeTruthy();
+    expect(await screen.findByText("发布权威无法验证")).toBeTruthy();
     expect(screen.queryByText("当前 Channel 没有 Release")).toBeNull();
   });
 

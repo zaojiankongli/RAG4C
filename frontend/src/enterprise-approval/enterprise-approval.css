@@ -1,5 +1,5 @@
 .enterprise-approval-center {
-  --approval-primary: var(--td-brand-color, #0052d9);
+  --approval-primary: var(--color-accent-solid);
   --approval-primary-soft: color-mix(in srgb, var(--approval-primary) 10%, transparent);
   --approval-surface: var(--td-bg-color-container, #fff);
   --approval-subtle: var(--td-bg-color-secondarycontainer, #f3f6f8);
@@ -7,7 +7,7 @@
   --approval-border: var(--td-component-border, #dcdfe6);
   --approval-text: var(--td-text-color-primary, #1d2129);
   --approval-secondary: var(--td-text-color-secondary, #4e5969);
-  --approval-muted: var(--td-text-color-placeholder, #86909c);
+  --approval-muted: var(--color-text-tertiary);
   --approval-success: var(--td-success-color, #2ba471);
   --approval-warning: var(--td-warning-color, #e37318);
   --approval-danger: var(--td-error-color, #d54941);
@@ -25,7 +25,7 @@
   --approval-border: var(--td-component-border, #41454d);
   --approval-text: var(--td-text-color-primary, #f2f3f5);
   --approval-secondary: var(--td-text-color-secondary, #c2c7d0);
-  --approval-muted: var(--td-text-color-placeholder, #8f96a3);
+  --approval-muted: var(--color-text-tertiary);
 }
 
 .approval-center-header {
@@ -42,7 +42,7 @@
   width: 40px;
   height: 40px;
   place-items: center;
-  color: var(--approval-primary);
+  color: var(--color-primary-strong);
   background: var(--approval-primary-soft);
   border: 1px solid color-mix(in srgb, var(--approval-primary) 24%, transparent);
   border-radius: 7px;
@@ -76,7 +76,7 @@
 .approval-eyebrow {
   display: block;
   overflow: hidden;
-  color: var(--approval-primary);
+  color: var(--color-eyebrow);
   font-family: var(--font-mono, Consolas, monospace);
   font-size: 10px;
   font-weight: 700;

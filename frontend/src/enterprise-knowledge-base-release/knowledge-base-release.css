@@ -1,13 +1,15 @@
 .knowledge-base-release-center {
-  --kbr-primary: var(--td-brand-color, #0052d9);
+  --kbr-primary: var(--color-accent-solid);
   --kbr-primary-soft: color-mix(in srgb, var(--kbr-primary) 9%, transparent);
   --kbr-bg: var(--td-bg-color-container, #ffffff);
   --kbr-subtle: var(--td-bg-color-secondarycontainer, #f5f7fa);
   --kbr-border: var(--td-component-stroke, #dfe6f0);
-  --kbr-border-strong: var(--td-border-level-2-color, #c5d0df);
+  /* 原来取 TDesign 的 level-2 描边变量：R10 把它桥到控件描边 token 后，
+     这里的装饰性圆点/虚线跟着变成深灰。结构性引导线走自己的语义 token。 */
+  --kbr-border-strong: var(--color-border-guide);
   --kbr-text: var(--td-text-color-primary, #17233d);
   --kbr-secondary: var(--td-text-color-secondary, #53657d);
-  --kbr-muted: var(--td-text-color-placeholder, #8290a5);
+  --kbr-muted: var(--color-text-tertiary);
   --kbr-success: var(--td-success-color, #2ba471);
   --kbr-warning: var(--td-warning-color, #ed7b2f);
   --kbr-danger: var(--td-error-color, #d54941);
@@ -22,10 +24,9 @@
   --kbr-bg: var(--td-bg-color-container, #171b24);
   --kbr-subtle: var(--td-bg-color-secondarycontainer, #202632);
   --kbr-border: var(--td-component-stroke, #364154);
-  --kbr-border-strong: #506079;
   --kbr-text: var(--td-text-color-primary, #eef3fb);
   --kbr-secondary: var(--td-text-color-secondary, #b8c4d6);
-  --kbr-muted: var(--td-text-color-placeholder, #8f9db2);
+  --kbr-muted: var(--color-text-tertiary);
 }
 
 .knowledge-base-release-center__header,
@@ -55,7 +56,7 @@
   border: 1px solid color-mix(in srgb, var(--kbr-primary) 22%, var(--kbr-border));
   border-radius: 10px;
   background: var(--kbr-primary-soft);
-  color: var(--kbr-primary);
+  color: var(--color-primary-strong);
 }
 
 .knowledge-base-release-center__mark svg {
@@ -80,7 +81,7 @@
 .knowledge-base-release-detail__section-kicker,
 .knowledge-base-release-history__card-kicker {
   display: block;
-  color: var(--kbr-primary);
+  color: var(--color-primary-strong);
   font-size: 10px;
   font-weight: 750;
   letter-spacing: 0.12em;
@@ -645,7 +646,7 @@
   place-items: center;
   border-radius: 7px;
   background: var(--kbr-primary-soft);
-  color: var(--kbr-primary);
+  color: var(--color-primary-strong);
 }
 
 .knowledge-base-release-detail__entry-copy,
@@ -865,7 +866,7 @@
   padding: 4px 7px;
   border: 1px solid var(--kbr-border);
   border-radius: 4px;
-  color: var(--kbr-primary);
+  color: var(--color-primary-strong);
   background: var(--kbr-primary-soft);
   font-size: 10px;
   font-weight: 700;

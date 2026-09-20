@@ -52,7 +52,7 @@
 .rq-evidence-cell dl > div { padding: 7px; border-radius: var(--radius-sm); background: var(--color-bg-sunken); }
 .rq-evidence-cell small { color: var(--color-text-tertiary); font-family: var(--font-mono); }
 .rq-evidence-score { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
-.rq-evidence-score strong { color: var(--color-primary); font-family: var(--font-mono); }
+.rq-evidence-score strong { color: var(--color-primary-strong); font-family: var(--font-mono); }
 .rq-rank-missing { color: var(--color-text-tertiary); }
 .rq-neutral-note, .rq-eval-note { padding: 12px 14px; border: 1px dashed var(--color-border-strong); border-radius: var(--radius-md); color: var(--color-text-secondary); background: var(--color-bg-sunken); }
 .rq-history-filters { display: grid; grid-template-columns: 160px minmax(180px,.7fr) minmax(240px,1fr) auto; gap: 12px; align-items: end; margin: 16px 0; }

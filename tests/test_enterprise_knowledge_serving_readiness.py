@@ -457,13 +457,16 @@ def test_stage26_manifest_and_capability_are_exposed() -> None:
 def test_stage26_empty_capability_is_ready_and_stage25_remains_ready(tmp_path: Path) -> None:
     engine = _engine(tmp_path, "stage26-empty.db")
     try:
+        # 本用例断言的是"在 head 上"的 current 语义，所以升到 head 而不是停在 0036。
+        # 用 manifest.upgrade_catalog 而不是再写一个字面量：R2 的冻结 head 漂移教训。
+        manifest.upgrade_catalog(str(engine.url))
         assert manifest.inspect_enterprise_knowledge_serving_reliability_capability(engine) == (
             "ready",
             (),
         )
         assert manifest.inspect_enterprise_automation_workflows_capability(engine) == ("ready", ())
         state = manifest.inspect_catalog_schema(engine)
-        assert state.revision == REVISION and state.status == "current"
+        assert state.revision == manifest.HEAD_REVISION and state.status == "current"
     finally:
         engine.dispose()
 

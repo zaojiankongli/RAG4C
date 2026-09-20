@@ -1,11 +1,12 @@
 import { useMemo } from "react";
 
 import { useEnterpriseContentRecovery } from "./hooks/useEnterpriseContentRecovery";
-import type {
-  LegalHold as ModelLegalHold,
-  PurgeRequest as ModelPurgeRequest,
-  RecoveryEntry as ModelRecoveryEntry,
-  RecoveryMutationOutcome as ModelMutationOutcome,
+import {
+  sanitizeRecoveryMessage,
+  type LegalHold as ModelLegalHold,
+  type PurgeRequest as ModelPurgeRequest,
+  type RecoveryEntry as ModelRecoveryEntry,
+  type RecoveryMutationOutcome as ModelMutationOutcome,
 } from "./model/recoveryModel";
 import {
   ContentRecoveryCenter,
@@ -26,8 +27,13 @@ export interface EnterpriseContentRecoveryPageProps {
   onApprovalHandoff?: (approvalRequestId: string) => void;
 }
 
+const RECOVERY_ERROR_FALLBACK = "企业内容恢复权威不可用";
+
+// `safeRequest` 抛出的 message 已经过 `sanitizeRecoveryMessage`，但 hook 里还有
+// 不经过 API 层的本地错误，所以这一层再过一次同一把尺子：能安全展示就给原因，
+// 不能才回落到固定串。此前这里无条件返回常量，用户永远看不到服务端给的原因。
 function safeError(error: Error | null): string | null {
-  return error ? "Enterprise Content Recovery authority is unavailable" : null;
+  return error ? sanitizeRecoveryMessage(error.message, RECOVERY_ERROR_FALLBACK) : null;
 }
 
 function entryProjection(entry: ModelRecoveryEntry): RecoveryEntry {

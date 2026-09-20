@@ -267,12 +267,12 @@ export function useEnterpriseKnowledgeServing(
       if (!success)
         setLoadError(
           summaryResult?.status === "rejected"
-            ? errorOf(summaryResult.reason, "Serving authority unavailable")
+            ? errorOf(summaryResult.reason, "知识服务权威不可用")
             : profileResult?.status === "rejected"
-              ? errorOf(profileResult.reason, "Serving authority unavailable")
+              ? errorOf(profileResult.reason, "知识服务权威不可用")
               : errorOf(
                   snapshotsResult?.status === "rejected" ? snapshotsResult.reason : null,
-                  "Serving authority unavailable",
+                  "知识服务权威不可用",
                 ),
         );
       return success;

@@ -1,14 +1,13 @@
 :root {
-  --enterprise-primary: var(--td-brand-color, #3164f4);
+  --enterprise-primary: var(--color-accent-solid);
   --enterprise-primary-soft: color-mix(in srgb, var(--enterprise-primary) 9%, transparent);
   --enterprise-surface: var(--td-bg-color-container, #ffffff);
   --enterprise-surface-subtle: var(--td-bg-color-secondarycontainer, #f5f7fa);
   --enterprise-surface-hover: var(--td-bg-color-container-hover, #f3f6fb);
   --enterprise-border: var(--td-component-border, #dfe3e8);
-  --enterprise-border-strong: var(--td-border-level-2-color, #c9d1dc);
   --enterprise-text: var(--td-text-color-primary, #182230);
   --enterprise-text-secondary: var(--td-text-color-secondary, #526071);
-  --enterprise-text-muted: var(--td-text-color-placeholder, #7d8998);
+  --enterprise-text-muted: var(--color-text-tertiary);
   --enterprise-success: var(--td-success-color, #2ba471);
   --enterprise-warning: var(--td-warning-color, #e37318);
   --enterprise-danger: var(--td-error-color, #d54941);
@@ -22,10 +21,9 @@ html[data-theme="dark"] {
   --enterprise-surface-subtle: var(--td-bg-color-secondarycontainer, #1d1f24);
   --enterprise-surface-hover: var(--td-bg-color-container-hover, #2c2f35);
   --enterprise-border: var(--td-component-border, #41454d);
-  --enterprise-border-strong: var(--td-border-level-2-color, #555b65);
   --enterprise-text: var(--td-text-color-primary, #f2f3f5);
   --enterprise-text-secondary: var(--td-text-color-secondary, #c2c7d0);
-  --enterprise-text-muted: var(--td-text-color-placeholder, #8f96a3);
+  --enterprise-text-muted: var(--color-text-tertiary);
   --enterprise-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
 }
 
@@ -120,7 +118,7 @@ html[data-theme="dark"] {
   width: 34px;
   height: 34px;
   place-items: center;
-  color: var(--enterprise-primary);
+  color: var(--color-primary-strong);
   background: var(--enterprise-primary-soft);
   border: 1px solid color-mix(in srgb, var(--enterprise-primary) 24%, transparent);
   border-radius: 7px;
@@ -163,7 +161,7 @@ html[data-theme="dark"] {
   flex: 0 0 1px;
   width: 1px;
   height: 11px;
-  background: var(--enterprise-border-strong);
+  background: var(--color-border-guide);
 }
 
 .enterprise-workspace-scope__environment {
@@ -207,7 +205,12 @@ html[data-theme="dark"] {
 
 .enterprise-workspace-scope__search .t-input:hover {
   background: var(--enterprise-surface-hover);
-  border-color: var(--enterprise-border-strong);
+  /* 输入框悬停是「控件状态」：静止态 #6b7280、悬停/聚焦品牌色、聚焦多一圈光晕。
+     仍用 --enterprise-primary(=--color-accent-solid) 而不是 --color-primary：
+     企业域要的是一个"三主题都保证有值、且不跟随全局主色族一起被改动"的自身别名。
+     （此处原写"后者在 anime 下还是蓝的"作为理由——那个泄漏已在本轮补上 anime 覆写，
+     理由随之作废，但别名本身该留：它把企业域和全局主色族解耦。） */
+  border-color: var(--enterprise-primary);
 }
 
 .enterprise-workspace-scope__search .t-input.t-is-focused {
@@ -228,7 +231,7 @@ html[data-theme="dark"] {
   line-height: 18px;
   background: var(--enterprise-surface);
   border: 1px solid var(--enterprise-border);
-  border-bottom-color: var(--enterprise-border-strong);
+  border-bottom-color: var(--color-border-guide);
   border-radius: 4px;
   transform: translateY(-50%);
   pointer-events: none;
@@ -244,7 +247,7 @@ html[data-theme="dark"] {
 }
 
 .enterprise-workspace-scope__icon-button.t-button:hover {
-  color: var(--enterprise-primary);
+  color: var(--color-primary-strong);
   background: var(--enterprise-primary-soft);
 }
 
@@ -368,7 +371,7 @@ html[data-theme="dark"] {
   left: 28px;
   right: 0;
   height: 1px;
-  background: var(--enterprise-border-strong);
+  background: var(--color-border-guide);
 }
 
 .enterprise-lifecycle-rail__stage:last-child .enterprise-lifecycle-rail__connector {
@@ -384,7 +387,7 @@ html[data-theme="dark"] {
   place-items: center;
   color: var(--enterprise-text-muted);
   background: var(--enterprise-surface);
-  border: 1px solid var(--enterprise-border-strong);
+  border: 1px solid var(--color-border-guide);
   border-radius: 50%;
 }
 
@@ -478,7 +481,7 @@ html[data-theme="dark"] {
 }
 
 .enterprise-metric-strip__item.t-card:hover {
-  border-color: var(--enterprise-border-strong);
+  border-color: var(--color-border-guide);
   box-shadow: 0 4px 14px rgba(16, 24, 40, 0.07);
   transform: translateY(-1px);
 }

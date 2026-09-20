@@ -154,7 +154,7 @@ describe("QualityOperationsMutationDialogs", () => {
     expect(within(dialog).getByText("release-42")).toBeTruthy();
     expect(within(dialog).getByText("channel-production")).toBeTruthy();
     expect(within(dialog).getByText("baseline-42")).toBeTruthy();
-    expect(within(dialog).getByText("服务端 authority 摘要")).toBeTruthy();
+    expect(within(dialog).getByText("服务端权威摘要")).toBeTruthy();
     expect(within(dialog).getByText(`sha256 · ${"a".repeat(64)}`)).toBeTruthy();
 
     await user.type(within(dialog).getByLabelText("reason"), "证书即将到期，排队再认证");

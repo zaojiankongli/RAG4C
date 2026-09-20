@@ -381,7 +381,7 @@ function ChannelSummary({
         </div>
       ) : readOnly ? (
         <div className="knowledge-base-release-channel-summary__notice" role="status">
-          <span>当前身份仅允许读取 Release authority。</span>
+          <span>当前身份仅允许读取发布权威。</span>
           <Tag variant="light-outline">只读事实</Tag>
         </div>
       ) : null}
@@ -544,8 +544,8 @@ function ReleaseHistory({
       <PageState
         compact
         status="error"
-        title="Release authority 无法验证"
-        description="服务端声明存在 Release，但返回行未通过 ID、digest 或 revision 校验。"
+        title="发布权威无法验证"
+        description="服务端声明存在发布，但返回行未通过 ID、摘要或修订号校验。"
       />
     );
   }
@@ -745,7 +745,7 @@ export default function KnowledgeBaseReleaseCenter({
       channelName: selectedChannel?.name ?? null,
       effectiveReleaseNumber: summary?.effective?.release_number ?? null,
       servingReleaseNumber: summary?.serving?.release_number ?? null,
-      unavailableReason: selectedChannel?.id || summary ? null : "Release Channel authority 未返回",
+      unavailableReason: selectedChannel?.id || summary ? null : "发布通道权威未返回",
     });
     return () => setReleaseContext(null);
   }, [
@@ -879,8 +879,8 @@ export default function KnowledgeBaseReleaseCenter({
       >
         <PageState
           status="loading"
-          title="等待已验证的 Workspace scope"
-          description="Release authority 只在 Workspace → Dataset 作用域验证完成后读取。"
+          title="等待已验证的工作区作用域"
+          description="发布权威只在 Workspace → Dataset 作用域验证完成后读取。"
         />
       </section>
     );

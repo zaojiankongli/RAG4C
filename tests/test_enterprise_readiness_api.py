@@ -49,6 +49,7 @@ ALL_CAPABILITY_GROUPS = [
     "enterprise_task_operations",
     "enterprise_automation_workflows",
     "enterprise_knowledge_serving_reliability",
+    "enterprise_knowledge_operations_feedback",
 ]
 
 ENTERPRISE_MEMBERSHIP_ISSUE_FRAGMENTS = [
@@ -176,6 +177,7 @@ def test_known_older_revision_is_behind_and_reports_unavailable_capabilities() -
             "enterprise_task_operations",
             "enterprise_automation_workflows",
             "enterprise_knowledge_serving_reliability",
+            "enterprise_knowledge_operations_feedback",
         ],
         "mutations_safe": False,
     }
@@ -219,6 +221,7 @@ def test_document_catalog_revision_is_behind_until_enterprise_membership_is_appl
             "enterprise_task_operations",
             "enterprise_automation_workflows",
             "enterprise_knowledge_serving_reliability",
+            "enterprise_knowledge_operations_feedback",
         ],
         "mutations_safe": False,
     }
@@ -261,6 +264,7 @@ def test_enterprise_membership_revision_is_behind_until_access_graph_is_applied(
             "enterprise_task_operations",
             "enterprise_automation_workflows",
             "enterprise_knowledge_serving_reliability",
+            "enterprise_knowledge_operations_feedback",
         ],
         "mutations_safe": False,
     }
@@ -781,6 +785,7 @@ def test_access_graph_revision_is_behind_until_organization_membership_is_applie
             "enterprise_task_operations",
             "enterprise_automation_workflows",
             "enterprise_knowledge_serving_reliability",
+            "enterprise_knowledge_operations_feedback",
         ],
         "mutations_safe": False,
     }
@@ -876,6 +881,7 @@ def test_organization_membership_revision_is_behind_until_dataset_acl_control_is
             "enterprise_task_operations",
             "enterprise_automation_workflows",
             "enterprise_knowledge_serving_reliability",
+            "enterprise_knowledge_operations_feedback",
         ],
         "mutations_safe": False,
     }
@@ -960,6 +966,7 @@ def test_dataset_acl_control_revision_is_behind_until_invitation_lifecycle_is_ap
             "enterprise_task_operations",
             "enterprise_automation_workflows",
             "enterprise_knowledge_serving_reliability",
+            "enterprise_knowledge_operations_feedback",
         ],
         "mutations_safe": False,
     }
@@ -1003,6 +1010,7 @@ def test_oidc_revision_is_behind_until_enterprise_approval_control_is_applied() 
         "enterprise_task_operations",
         "enterprise_automation_workflows",
         "enterprise_knowledge_serving_reliability",
+        "enterprise_knowledge_operations_feedback",
     ]
     assert response.json()["mutations_safe"] is False
 
@@ -1076,6 +1084,7 @@ def test_approval_revision_is_behind_until_workspace_control_is_applied() -> Non
             "enterprise_task_operations",
             "enterprise_automation_workflows",
             "enterprise_knowledge_serving_reliability",
+            "enterprise_knowledge_operations_feedback",
         ],
         "mutations_safe": False,
     }
@@ -1220,6 +1229,7 @@ def test_workspace_control_revision_is_behind_until_authorization_is_applied() -
             "enterprise_task_operations",
             "enterprise_automation_workflows",
             "enterprise_knowledge_serving_reliability",
+            "enterprise_knowledge_operations_feedback",
         ],
         "mutations_safe": False,
     }
@@ -1360,6 +1370,7 @@ def test_0027_revision_is_behind_until_0028_registry_is_applied() -> None:
             "enterprise_task_operations",
             "enterprise_automation_workflows",
             "enterprise_knowledge_serving_reliability",
+            "enterprise_knowledge_operations_feedback",
         ],
         "mutations_safe": False,
     }
@@ -1533,6 +1544,7 @@ def test_0035_revision_is_behind_until_0036_serving_reliability_is_applied() -> 
     response = client.get("/api/enterprise/readiness")
     assert response.status_code == 503
     assert response.json()["missing_capability_groups"] == [
-        "enterprise_knowledge_serving_reliability"
+        "enterprise_knowledge_serving_reliability",
+        "enterprise_knowledge_operations_feedback",
     ]
     assert response.json()["mutations_safe"] is False

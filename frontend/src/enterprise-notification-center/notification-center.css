@@ -75,7 +75,7 @@
   place-items: center;
   border: 1px solid rgba(0, 82, 217, 0.18);
   border-radius: 14px;
-  color: var(--nc-primary);
+  color: var(--color-primary-strong);
   background: linear-gradient(145deg, #e9f2ff, #effdfb);
   box-shadow: 0 9px 24px rgba(0, 82, 217, 0.12);
   font-size: 24px;
@@ -83,7 +83,7 @@
 
 .notification-center__eyebrow {
   display: block;
-  color: var(--nc-primary);
+  color: var(--color-eyebrow);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
   font-size: 10px;
   font-weight: 750;
@@ -137,7 +137,7 @@
 .notification-center__bell-button {
   width: 42px;
   height: 42px;
-  color: var(--nc-primary);
+  color: var(--color-primary-strong);
   background: var(--nc-primary-soft);
 }
 
@@ -195,7 +195,7 @@
   height: 28px;
   place-items: center;
   border-radius: 9px;
-  color: var(--nc-primary);
+  color: var(--color-primary-strong);
   background: var(--nc-primary-soft);
   font-family: var(--font-mono, Consolas, monospace);
   font-size: 10px;

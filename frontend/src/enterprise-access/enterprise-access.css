@@ -2,10 +2,9 @@
   --enterprise-access-surface: var(--td-bg-color-container, #ffffff);
   --enterprise-access-subtle: var(--td-bg-color-secondarycontainer, #f5f7fa);
   --enterprise-access-border: var(--td-component-border, #dcdfe6);
-  --enterprise-access-border-strong: var(--td-border-level-2-color, #c9cdd4);
   --enterprise-access-text: var(--td-text-color-primary, #1d2129);
   --enterprise-access-text-secondary: var(--td-text-color-secondary, #4e5969);
-  --enterprise-access-text-placeholder: var(--td-text-color-placeholder, #86909c);
+  --enterprise-access-text-placeholder: var(--color-text-tertiary);
   --enterprise-access-brand: var(--td-brand-color, #0052d9);
   --enterprise-access-brand-light: var(--td-brand-color-light, #e8f3ff);
   grid-column: 1 / -1;
@@ -29,7 +28,7 @@
   height: 36px;
   border: 1px solid color-mix(in srgb, var(--enterprise-access-brand) 25%, transparent);
   border-radius: 7px;
-  color: var(--enterprise-access-brand);
+  color: var(--color-primary-strong);
   background: var(--enterprise-access-brand-light);
   font-size: 18px;
 }
@@ -41,7 +40,7 @@
 .enterprise-access-graph__eyebrow {
   display: block;
   margin-bottom: 2px;
-  color: var(--enterprise-access-brand);
+  color: var(--color-eyebrow);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
   font-size: 10px;
   font-weight: 700;
@@ -119,7 +118,7 @@
   width: 28px;
   height: 28px;
   border-radius: 5px;
-  color: var(--enterprise-access-brand);
+  color: var(--color-primary-strong);
   background: var(--enterprise-access-brand-light);
   font-size: 15px;
 }
@@ -169,7 +168,7 @@
 }
 
 .enterprise-access-relation-summary > svg {
-  color: var(--enterprise-access-brand);
+  color: var(--color-primary-strong);
 }
 
 .enterprise-access-relation-summary strong {
@@ -447,7 +446,7 @@
 
 .enterprise-access-entity > svg {
   flex: 0 0 auto;
-  color: var(--enterprise-access-brand);
+  color: var(--color-primary-strong);
   font-size: 16px;
 }
 
@@ -507,7 +506,7 @@
   right: 7px;
   width: 14px;
   height: 1px;
-  background: var(--enterprise-access-border-strong);
+  background: var(--color-border-guide);
   content: "";
 }
 
@@ -959,7 +958,9 @@
   width: 100%;
   min-height: 32px;
   box-sizing: border-box;
-  border: 1px solid var(--enterprise-access-border-strong);
+  /* 这三个是真实表单控件（原生 select / text input / 修订输入框），
+     边界走 WCAG 1.4.11 的控件描边 token，不能与装饰性连接线共用一个变量。 */
+  border: 1px solid var(--color-border-control);
   border-radius: 3px;
   color: var(--enterprise-access-text);
   background: var(--enterprise-access-surface);
@@ -1158,7 +1159,7 @@
 }
 
 .enterprise-invitation-delivery-state > svg {
-  color: var(--enterprise-access-brand);
+  color: var(--color-primary-strong);
   font-size: 18px;
 }
 
@@ -1239,13 +1240,13 @@
 .enterprise-invitation-accept-surface__header > svg {
   padding: 8px;
   border-radius: 6px;
-  color: var(--enterprise-access-brand);
+  color: var(--color-primary-strong);
   background: var(--enterprise-access-brand-light);
   font-size: 36px;
 }
 
 .enterprise-invitation-accept-surface__header span {
-  color: var(--enterprise-access-brand);
+  color: var(--color-primary-strong);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
   font-size: 10px;
   font-weight: 700;
@@ -1432,7 +1433,7 @@
 .enterprise-access-acl-approval-boundary > svg {
   flex: 0 0 auto;
   margin-top: 2px;
-  color: var(--enterprise-access-brand);
+  color: var(--color-primary-strong);
 }
 
 .enterprise-access-acl-approval-error {
@@ -1483,7 +1484,7 @@
 }
 
 .enterprise-access-acl-approval-policy__eyebrow {
-  color: var(--td-warning-color, #e37318);
+  color: var(--color-eyebrow-warning);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
   font-size: 10px;
   font-weight: 700;
