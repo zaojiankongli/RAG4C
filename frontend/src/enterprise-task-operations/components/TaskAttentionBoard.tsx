@@ -26,7 +26,7 @@ const metrics: Array<{
   { key: "running_count", label: "正在运行", hint: "当前活跃执行尝试", tone: "primary" },
   { key: "queued_count", label: "队列等待", hint: "尚未领取执行器的任务", tone: "warning" },
   { key: "completed_count", label: "已完成", hint: "权威结果已落库", tone: "success" },
-  { key: "stale_count", label: "陈旧状态", hint: "需要 reconciliation 的记录", tone: "neutral" },
+  { key: "stale_count", label: "陈旧状态", hint: "需要对账的记录", tone: "neutral" },
   { key: "reconciliation_count", label: "对账事项", hint: "待处理状态差异", tone: "neutral" },
 ];
 
