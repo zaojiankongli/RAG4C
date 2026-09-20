@@ -1584,3 +1584,35 @@ def test_0035_revision_is_behind_until_0036_serving_reliability_is_applied() -> 
         "enterprise_answer_evidence_facts",
     ]
     assert response.json()["mutations_safe"] is False
+
+
+def test_head_revision_always_has_a_registered_capability() -> None:
+    """链尾必须存在一个能力组，否则 readiness 整体不可用。
+
+    这是 QA/FAQ 线并入时真实踩到的坑，不是假想守卫：HEAD_REVISION 前进到
+    0039_answer_evidence_facts 而 _CAPABILITIES 止于 0037，于是
+    _REVISION_INDEX[HEAD_REVISION] is None，而 _evaluate_readiness 里能返回
+    ready / behind 的分支都要求 head_index 非空，最后一个"已升到 head"的库
+    和一个"落后"的库会**同样**被判成 malformed（fail-closed，但等于权威接口废掉）。
+    """
+    api = readiness_api()
+
+    assert catalog_schema_manifest.HEAD_REVISION in api._REVISION_INDEX
+
+
+def test_catalog_exactly_at_head_reports_ready() -> None:
+    """上一那条不变量的行为面：结构完整且已在 head 的目录必须是 ready。"""
+    api = readiness_api()
+
+    client = _client(
+        state=CatalogSchemaState(
+            revision=catalog_schema_manifest.HEAD_REVISION,
+            head_revision=api.HEAD_REVISION,
+            status="current",
+        )
+    )
+    body = client.get("/api/enterprise/readiness").json()
+
+    assert body["status"] == "ready"
+    assert body["missing_capability_groups"] == []
+    assert body["mutations_safe"] is True
