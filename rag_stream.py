@@ -224,9 +224,24 @@ def answer_query_stream(
             return
         traces.extend(retrieval.traces)
         chunks: list[RetrievedChunk] = list(retrieval.chunks)
+        qa_hit = False
+        try:
+            from retrieval.qa_retrieval import apply_qa_retrieval
+
+            chunks, qa_traces, qa_hit = apply_qa_retrieval(
+                query,
+                chunks,
+                tenant_id=tenant,
+                dataset_id=dataset,
+                settings=settings or comp.get("settings") if isinstance(comp, dict) else settings,
+            )
+            traces.extend(qa_traces)
+        except Exception as exc:  # noqa: BLE001
+            qa_hit = False
+            traces.append(f"QA 检索跳过: {exc}")
         retrieval_scores = [rc.score for rc in chunks]
         # rerank 没跑成时 score 是 RRF 融合分，与 retrieval_score_threshold 不同尺。
-        scores_comparable = retrieval.reranked
+        scores_comparable = retrieval.reranked or qa_hit
         # 那种情况下改用真实稠密余弦这把尺子；空列表 = 这一路信号本次也没有。
         dense_cosines = dense_cosines_of(chunks)
         yield {

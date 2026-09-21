@@ -1271,6 +1271,78 @@ class KnowledgeContentRepository:
                 )
             )
 
+    def list_qa_retrieval_bundle(
+        self,
+        tenant_id: str,
+        dataset_id: str,
+        *,
+        now: datetime | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Effective QA plus alternatives/negatives for runtime retrieval matching."""
+        moment = _naive_utc(now) or _utc_now()
+        bounded = max(1, min(int(limit), 1000))
+        with Session(self.engine, expire_on_commit=False) as session:
+            self._dataset(session, tenant_id, dataset_id)
+            qa_rows = list(
+                session.scalars(
+                    select(QAKnowledge)
+                    .where(
+                        QAKnowledge.tenant_id == tenant_id,
+                        QAKnowledge.dataset_id == dataset_id,
+                        QAKnowledge.review_status == "approved",
+                        QAKnowledge.lifecycle_state == "active",
+                        QAKnowledge.retrieval_enabled.is_(True),
+                        or_(
+                            QAKnowledge.effective_from.is_(None),
+                            QAKnowledge.effective_from <= moment,
+                        ),
+                        or_(QAKnowledge.expires_at.is_(None), QAKnowledge.expires_at > moment),
+                    )
+                    .order_by(QAKnowledge.created_at, QAKnowledge.id)
+                    .limit(bounded)
+                )
+            )
+            qa_ids = [qa.id for qa in qa_rows]
+            alternatives: dict[str, list[str]] = {qid: [] for qid in qa_ids}
+            negatives: dict[str, list[str]] = {qid: [] for qid in qa_ids}
+            if qa_ids:
+                for alt in session.scalars(
+                    select(QAAlternativeQuestion)
+                    .where(
+                        QAAlternativeQuestion.tenant_id == tenant_id,
+                        QAAlternativeQuestion.dataset_id == dataset_id,
+                        QAAlternativeQuestion.qa_id.in_(qa_ids),
+                    )
+                    .order_by(QAAlternativeQuestion.created_at, QAAlternativeQuestion.id)
+                ):
+                    alternatives.setdefault(alt.qa_id, []).append(alt.question)
+                for neg in session.scalars(
+                    select(QANegativeQuestion)
+                    .where(
+                        QANegativeQuestion.tenant_id == tenant_id,
+                        QANegativeQuestion.dataset_id == dataset_id,
+                        QANegativeQuestion.qa_id.in_(qa_ids),
+                    )
+                    .order_by(QANegativeQuestion.created_at, QANegativeQuestion.id)
+                ):
+                    negatives.setdefault(neg.qa_id, []).append(neg.question)
+            return [
+                {
+                    "qa_id": qa.id,
+                    "question": qa.question,
+                    "answer": qa.answer,
+                    "revision": int(qa.revision or 1),
+                    "origin": qa.origin or "manual",
+                    "source_document_id": qa.source_document_id,
+                    "tenant_id": qa.tenant_id,
+                    "dataset_id": qa.dataset_id,
+                    "alternatives": tuple(alternatives.get(qa.id, ())),
+                    "negatives": tuple(negatives.get(qa.id, ())),
+                }
+                for qa in qa_rows
+            ]
+
     def expire_due(
         self,
         tenant_id: str,

@@ -745,6 +745,12 @@ class PipelineSettings(BaseModel):
     subqueries_on: bool = False
     stepback_on: bool = False
     sentence_window_on: bool = False
+    # ---- QA 权威检索（Catalog FAQ；不投影 Milvus）----
+    # qa_retrieval_on：查询路径把 approved+retrieval_enabled 的 QA 并入证据。
+    # qa_match_min_score / qa_match_top_k：词面匹配阈值与最多注入条数。
+    qa_retrieval_on: bool = True
+    qa_match_min_score: float = 0.55
+    qa_match_top_k: int = 3
     # 子查询 / 后退问题各自检索时向 Milvus 请求的候选数（合并后仍按 top_k 裁剪）
     enhance_candidate_k: int = 8
 

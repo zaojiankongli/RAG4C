@@ -72,7 +72,19 @@ def merge_chunks(*lists: list[RetrievedChunk]) -> list[RetrievedChunk]:
 
 def evidence_chunks(chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
     """把检索结果转成供裁判（eval）使用的证据 chunk dict 列表。"""
-    return [rc.chunk.model_dump(mode="json") for rc in chunks]
+    out: list[dict[str, Any]] = []
+    for rc in chunks:
+        dump = rc.chunk.model_dump(mode="json")
+        try:
+            from retrieval.qa_retrieval import qa_evidence_enrichment
+
+            dump = qa_evidence_enrichment(dump)
+        except Exception:  # noqa: BLE001
+            pass
+        if rc.branch:
+            dump.setdefault("branch", rc.branch)
+        out.append(dump)
+    return out
 
 
 def second_round_can_help(settings: Any) -> bool:

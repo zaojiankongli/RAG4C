@@ -405,10 +405,24 @@ def _answer_sequential(
             )
         traces.extend(retrieval.traces)
         chunks: list[RetrievedChunk] = list(retrieval.chunks)
+        try:
+            from retrieval.qa_retrieval import apply_qa_retrieval
+
+            chunks, qa_traces, qa_hit = apply_qa_retrieval(
+                query,
+                chunks,
+                tenant_id=tenant_id,
+                dataset_id=dataset_id,
+                settings=comp.get("settings") or get_settings(),
+            )
+            traces.extend(qa_traces)
+        except Exception as exc:  # noqa: BLE001 - QA 增强失败不阻断主路径
+            qa_hit = False
+            traces.append(f"QA 检索跳过: {exc}")
         retrieval_scores = [rc.score for rc in chunks]
         # rerank 没跑成时 score 是 RRF 融合分（只由名次决定，不含相似度信息），
         # 拿它跟 retrieval_score_threshold 比会把完美命中也判成"知识库无相关内容"。
-        scores_comparable = retrieval.reranked
+        scores_comparable = retrieval.reranked or qa_hit
         # 那种情况下改用这把尺子：管线预判到 rerank 不会生效时，会让 Milvus
         # 顺带回传命中向量，当场与查询向量算出真实余弦。空列表 = 这一路也没有。
         dense_cosines = dense_cosines_of(chunks)

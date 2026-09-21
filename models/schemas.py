@@ -55,6 +55,7 @@ class RetrievedChunk(BaseModel):
     branch 用于区分该条来自：
     - ``hybrid``：Milvus 混合检索（稠密 + BM25）
     - ``graph`` ：图谱检索（后续 vector_graph_rag 路由使用）
+    - ``qa``    ：Catalog 权威 FAQ（approved + retrieval_enabled，chunk_id 前缀 ``qa::``）
 
     ``dense_cosine`` 与 ``score`` 是**两把不同的尺子**，不可互换、更不可共用
     阈值：``score`` 在 rerank 生效时是重排器归一化后的相关性分，未生效时是
@@ -74,7 +75,7 @@ class RetrievedChunk(BaseModel):
     chunk: Chunk
     score: float
     rank: int
-    branch: Literal["hybrid", "graph"] = "hybrid"
+    branch: Literal["hybrid", "graph", "qa"] = "hybrid"
     #: 查询向量与本 chunk 稠密向量的余弦（仅在检索时显式索取向量才有值）。
     dense_cosine: float | None = None
 
