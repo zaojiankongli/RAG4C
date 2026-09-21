@@ -3,7 +3,7 @@ feature: qa-retrieval-evidence
 status: delivered
 updated: 2026-09-20
 branch: integration/qa-faq-ops
-commits: dc3a94b..working-tree
+commits: dc3a94b..2d6296c
 ---
 
 # QA Retrieval + Evidence Chain（审核后 QA 进入检索与证据）
