@@ -67,6 +67,10 @@ import type {
   DocumentStatus,
 } from "../types/rag";
 import { FONT_SIZE } from "../theme/tokens";
+import {
+  chunkingDecisionAria,
+  formatChunkingDecision,
+} from "../parse-intervention/model/chunkDiagnostics";
 import { formatDuration, isDocumentSelectable } from "../documents/documentModel";
 import ParseInterventionWorkspace from "../parse-intervention/ParseInterventionWorkspace";
 import {
@@ -320,12 +324,6 @@ function projectSummaryFacets(facets: DocumentCatalogSummaryResponse["facets"] |
     tags: Object.fromEntries(facets.tags.map((item) => [item.name, item.documents])),
   };
 }
-
-const CHUNK_MODE_LABELS: Record<string, string> = {
-  recursive: "按固定长度",
-  parent_child: "按章节结构",
-  qa: "表格逐行",
-};
 
 /**
  * 文档管理页 —— 对应后端 server/documents.py 的完整能力：
@@ -1396,12 +1394,18 @@ export default function DocumentsPage({
   const renderParserProfile = (doc: DocumentItem) => {
     const meta = doc.parser_meta ?? {};
     const engine = ENGINE_LABELS[meta.engine ?? ""] ?? (meta.engine || "文本直读");
-    const chunking =
-      CHUNK_MODE_LABELS[meta.chunking_mode ?? ""] ?? (meta.chunking_mode || "待记录");
+    const diag = formatChunkingDecision(meta);
     return (
-      <div className="doc-parser-profile" aria-label={`${doc.name} 解析画像`}>
+      <div
+        className="doc-parser-profile"
+        aria-label={`${doc.name} 解析画像：${chunkingDecisionAria(diag)}`}
+        title={chunkingDecisionAria(diag)}
+      >
         <span>{engine}</span>
-        <small>{chunking}</small>
+        <small>{diag.modeLabel}</small>
+        {diag.reasonCodeLabel ? (
+          <small className="doc-parser-chunk-reason">{diag.reasonCodeLabel}</small>
+        ) : null}
         <small className="doc-parser-duration">
           总耗时 {formatDuration(meta.total_ms ?? meta.parse_ms)}
         </small>

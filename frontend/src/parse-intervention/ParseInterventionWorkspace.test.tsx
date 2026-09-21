@@ -55,6 +55,15 @@ function controller(overrides: Partial<UseParseInterventionResult> = {}): UsePar
         engine: "vision",
         pdf_type: "scanned",
         chunking_mode: "parent_child",
+        chunking_reason: "文本 480 字或存在 8 个版面块，超出简单文档条件（阈值 4000）→ parent_child",
+        chunking_reason_code: "complex_or_structured",
+        chunking_decision: {
+          doc_type: "pdf",
+          text_chars: 480,
+          layout_blocks: 8,
+          simple_max_chars: 4000,
+          configured_mode: "auto",
+        },
         page_count: 2,
         layout_blocks: 8,
         text_chars: 480,
@@ -143,6 +152,12 @@ describe("ParseInterventionWorkspace", () => {
     expect(screen.getByRole("region", { name: "切片列表" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "切片编辑器" })).toBeTruthy();
     expect(screen.getByLabelText("Knowledge Lifeline")).toBeTruthy();
+    expect(screen.getByText("切分策略")).toBeTruthy();
+    expect(screen.getByText("按章节结构")).toBeTruthy();
+    expect(screen.getByText("决策理由")).toBeTruthy();
+    expect(screen.getByText(/文本 480 字或存在 8 个版面块/)).toBeTruthy();
+    expect(screen.getByText("决策依据")).toBeTruthy();
+    expect(screen.getByText(/类型 pdf · 480 字 · 8 版面块 · 阈值 4000/)).toBeTruthy();
     expect(screen.getByText("当前没有原始文档预览能力")).toBeTruthy();
     expect(screen.getByText("当前没有切片 Revision 历史接口")).toBeTruthy();
     expect(screen.getByText("当前 API 不持久化修改原因")).toBeTruthy();

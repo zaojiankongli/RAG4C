@@ -224,6 +224,7 @@ class IngestPipeline:
         self._last_parsed_metadata: dict[str, Any] = {}
         self._last_parse_ms: float = 0.0
         self._last_chunk_decision: str = ""
+        self._last_chunk_decision_meta: dict[str, Any] = {}
         self._last_stage_ms: dict[str, float] = {}
         self._last_counts: dict[str, int] = {}
 
@@ -248,6 +249,25 @@ class IngestPipeline:
             "chunking_mode": self._last_chunk_decision,
             **self._last_counts,
         }
+        decision_meta = self._last_chunk_decision_meta or {}
+        if decision_meta.get("reason"):
+            meta["chunking_reason"] = str(decision_meta["reason"])
+        if decision_meta.get("reason_code"):
+            meta["chunking_reason_code"] = str(decision_meta["reason_code"])
+        facts = decision_meta.get("facts")
+        if isinstance(facts, dict) and facts:
+            # 只保留稳定标量，避免把非 JSON 可序列化对象写进 parser_meta
+            meta["chunking_decision"] = {
+                key: facts[key]
+                for key in (
+                    "doc_type",
+                    "text_chars",
+                    "layout_blocks",
+                    "simple_max_chars",
+                    "configured_mode",
+                )
+                if key in facts
+            }
         if isinstance(router, dict):
             # 只取稳定且对排查有用的字段，避免把整个决策对象塞进库
             for key in ("engine", "pdf_type", "page_count", "confidence"):
@@ -418,11 +438,18 @@ class IngestPipeline:
             chunks: list = []
             next_seq = 0
             # doc 级决策：csv/excel -> qa；短文本无版面 -> recursive；否则 parent_child
-            chunk_decision = self.chunking_router.decide(
+            decision_info = self.chunking_router.explain_decision(
                 resolved_doc_type, text, self._last_layout
             )
-            # 供调用方（状态机）持久化到 parser_meta，让前端能显示实际切分方式
-            self._last_chunk_decision = str(chunk_decision)
+            chunk_decision = str(decision_info["mode"])
+            # 供调用方（状态机）持久化到 parser_meta，让前端能显示实际切分方式与理由
+            self._last_chunk_decision = chunk_decision
+            self._last_chunk_decision_meta = {
+                "mode": chunk_decision,
+                "reason": decision_info.get("reason"),
+                "reason_code": decision_info.get("reason_code"),
+                "facts": decision_info.get("facts") or {},
+            }
             for seg_index, segment in enumerate(segments):
                 # 进度按**段序号**计算。此前误用 next_seq（累计 chunk 数）作分子，
                 # 一旦第一段切出多个 chunk，分数就 >1（被 _notify 夹到 1.0），

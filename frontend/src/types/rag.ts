@@ -390,6 +390,18 @@ export interface DocumentParserMeta {
   chunk_count?: number;
   /** 实际使用的切分方式：recursive / parent_child / qa */
   chunking_mode?: string;
+  /** 路由决策理由（可读中文） */
+  chunking_reason?: string;
+  /** 路由理由代码：explicit_mode / table_doc_type / simple_short_no_layout / complex_or_structured */
+  chunking_reason_code?: string;
+  /** 路由决策事实（阈值/字数/版面块等） */
+  chunking_decision?: {
+    doc_type?: string;
+    text_chars?: number;
+    layout_blocks?: number;
+    simple_max_chars?: number;
+    configured_mode?: string;
+  };
   /** 解析引擎：fast（文本层直取）/ vision（OCR 等） */
   engine?: string;
   /** PDF 分类：text_based / scanned / mixed / image_based 等 */

@@ -1,9 +1,9 @@
 import type { DocumentChunkItem, DocumentItem } from "../../types/rag";
 import { Alert, Tag } from "tdesign-react";
 import { buildChunkOutline, sanitizeSourceFact } from "../model/parseInterventionModel";
+import { formatChunkingDecision } from "../model/chunkDiagnostics";
 
 const ENGINE_LABELS: Record<string, string> = { fast: "快速通道（文字层）", vision: "视觉解析（OCR）", router: "自动分流" };
-const CHUNK_LABELS: Record<string, string> = { recursive: "按固定长度", parent_child: "按章节结构", qa: "表格逐行" };
 const STAGE_LABELS: Record<string, string> = { parse: "解析", split: "切分", contextualize: "上下文增强", embed: "向量化", graph: "图谱", persist: "持久化" };
 
 function Fact({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
@@ -12,6 +12,7 @@ function Fact({ label, value, mono = false }: { label: string; value: string; mo
 
 export default function ParsedContextPane({ document, chunks }: { document: DocumentItem; chunks: DocumentChunkItem[] }) {
   const meta = document.parser_meta ?? {};
+  const chunkDiag = formatChunkingDecision(meta);
   const stages = Object.entries(meta.stage_ms ?? {}).filter(([, value]) => Number.isFinite(Number(value)) && Number(value) >= 0);
   const stageTotal = stages.reduce((sum, [, value]) => sum + Number(value), 0);
   const maxStage = Math.max(1, ...stages.map(([, value]) => Number(value)));
@@ -26,7 +27,14 @@ export default function ParsedContextPane({ document, chunks }: { document: Docu
         <Fact label="文档 Revision" value={String(document.mutation_generation ?? "未记录")} mono />
         <Fact label="来源类型" value={document.source_type || "未记录"} /><Fact label="安全来源" value={source} mono />
         <Fact label="解析引擎" value={ENGINE_LABELS[meta.engine ?? ""] ?? meta.engine ?? "未记录"} />
-        <Fact label="切分策略" value={CHUNK_LABELS[meta.chunking_mode ?? ""] ?? meta.chunking_mode ?? "未记录"} />
+        <Fact label="切分策略" value={chunkDiag.modeLabel} />
+        <Fact
+          label="决策理由"
+          value={chunkDiag.reason ?? "未记录（历史文档可能缺 parser_meta 诊断字段）"}
+        />
+        {chunkDiag.factsSummary ? (
+          <Fact label="决策依据" value={chunkDiag.factsSummary} mono />
+        ) : null}
         <Fact label="文档形态" value={meta.pdf_type ?? document.doc_type ?? "未记录"} />
         <Fact label="覆盖" value={`${meta.page_count ?? "?"} 页 · ${meta.layout_blocks ?? "?"} 版面块 · ${meta.text_chars ?? "?"} 字符`} />
       </dl>

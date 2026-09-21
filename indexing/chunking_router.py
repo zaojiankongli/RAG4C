@@ -57,20 +57,69 @@ class ChunkingRouter:
     # ------------------------------------------------------------------ #
     # 路由决策
     # ------------------------------------------------------------------ #
+    def explain_decision(
+        self, doc_type: str, text: str, layout: list[Any] | None = None
+    ) -> dict[str, Any]:
+        """可解释路由决策：mode + reason_code + reason + facts。
+
+        与 :meth:`decide` 同一判定表；额外输出操作员可读理由，供
+        ingest ``parser_meta`` 持久化与前端诊断展示。
+        """
+        text_chars = len(text or "")
+        layout_blocks = len(layout or [])
+        normalized_type = (doc_type or "").lower()
+        facts: dict[str, Any] = {
+            "doc_type": doc_type or "",
+            "text_chars": text_chars,
+            "layout_blocks": layout_blocks,
+            "simple_max_chars": self.simple_max_chars,
+            "configured_mode": self.mode,
+        }
+        if self.mode != "auto":
+            return {
+                "mode": self.mode,
+                "configured_mode": self.mode,
+                "reason_code": "explicit_mode",
+                "reason": f"配置强制 chunking_mode={self.mode}，不按文档特征路由",
+                "facts": facts,
+            }
+        if normalized_type in _TABLE_DOC_TYPES:
+            return {
+                "mode": "qa",
+                "configured_mode": self.mode,
+                "reason_code": "table_doc_type",
+                "reason": f"文档类型「{doc_type}」属表格类，路由为 qa（逐行问答切分）",
+                "facts": facts,
+            }
+        if text_chars <= self.simple_max_chars and layout_blocks == 0:
+            return {
+                "mode": "recursive",
+                "configured_mode": self.mode,
+                "reason_code": "simple_short_no_layout",
+                "reason": (
+                    f"全文 {text_chars} 字 ≤ 阈值 {self.simple_max_chars} "
+                    f"且版面块为 0，判定为简单文档 → recursive"
+                ),
+                "facts": facts,
+            }
+        return {
+            "mode": "parent_child",
+            "configured_mode": self.mode,
+            "reason_code": "complex_or_structured",
+            "reason": (
+                f"文本 {text_chars} 字或存在 {layout_blocks} 个版面块，"
+                f"超出简单文档条件（阈值 {self.simple_max_chars}）→ parent_child"
+            ),
+            "facts": facts,
+        }
+
     def decide(self, doc_type: str, text: str, layout: list[Any] | None = None) -> str:
         """按文档类型 / 复杂度决策切分模式。
 
         Returns:
             recursive / parent_child / qa。
         """
-        if self.mode != "auto":
-            return self.mode
-        if (doc_type or "").lower() in _TABLE_DOC_TYPES:
-            return "qa"
-        # 简单文档：短文本且无版面组件（layout 为空或 None）
-        if len(text) <= self.simple_max_chars and not (layout or []):
-            return "recursive"
-        return "parent_child"
+        return str(self.explain_decision(doc_type, text, layout)["mode"])
 
     # ------------------------------------------------------------------ #
     # 公开入口
@@ -86,11 +135,15 @@ class ChunkingRouter:
         layout: list[Any] | None = None,
     ) -> list[Chunk]:
         """按决策把文本切分为 Chunk 列表（doc 级决策）。"""
-        decision = self.decide(doc_type, text, layout)
+        decision_info = self.explain_decision(doc_type, text, layout)
+        decision = str(decision_info["mode"])
         self.last_decision = {
             "doc_type": doc_type,
             "mode": decision,
             "text_chars": len(text),
+            "reason_code": decision_info.get("reason_code"),
+            "reason": decision_info.get("reason"),
+            "facts": decision_info.get("facts") or {},
         }
         return self.chunk_with_mode(
             decision, doc_id, text, source=source, metadata=metadata, start_seq=start_seq,
