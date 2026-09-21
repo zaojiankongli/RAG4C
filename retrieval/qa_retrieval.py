@@ -77,6 +77,15 @@ def load_qa_bundle_best_effort(
         return []
 
 
+def _qa_metric(name: str) -> None:
+    try:
+        from core.metrics import get_metrics
+
+        get_metrics().incr(name)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def apply_qa_retrieval(
     query: str,
     chunks: Sequence[RetrievedChunk],
@@ -104,17 +113,20 @@ def apply_qa_retrieval(
     except Exception:  # noqa: BLE001
         enabled, min_score, top_k = True, 0.55, 3
     if not enabled:
+        _qa_metric("query.qa_retrieval.enabled_skip")
         return list(chunks), traces, False
 
     if bundle is None:
         bundle = load_qa_bundle_best_effort(tenant_id, dataset_id)
     if not bundle:
+        _qa_metric("query.qa_retrieval.no_bundle")
         return list(chunks), traces, False
 
     records = qa_records_from_bundle(bundle)
     matches = match_qa(query, records, min_score=min_score, top_k=top_k)
     if not matches:
         traces.append("QA 检索：无有效 FAQ 命中")
+        _qa_metric("query.qa_retrieval.no_match")
         return list(chunks), traces, False
 
     qa_items = [match_to_retrieved_chunk(m, rank=i + 1) for i, m in enumerate(matches)]
@@ -124,6 +136,7 @@ def apply_qa_retrieval(
         + ", ".join(f"{m.qa_id}:{m.score:.2f}" for m in matches)
         + "）"
     )
+    _qa_metric("query.qa_retrieval.hit")
     return merged, traces, True
 
 

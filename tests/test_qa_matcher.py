@@ -222,3 +222,49 @@ def test_qa_records_from_bundle_skips_empty_ids():
     assert records[0].qa_id == "qa-3"
     assert records[0].alternatives == ("Alt",)
     assert records[0].negatives == ("Neg",)
+
+
+def test_apply_qa_retrieval_emits_metrics(monkeypatch):
+    from types import SimpleNamespace
+
+    from core import metrics as metrics_mod
+    from retrieval.qa_retrieval import apply_qa_retrieval
+
+    counts: dict[str, float] = {}
+
+    class _M:
+        def incr(self, name, tags=None, value=1.0):
+            counts[name] = counts.get(name, 0) + value
+
+    monkeypatch.setattr(metrics_mod, "get_metrics", lambda: _M())
+
+    class _Off:
+        pipeline = SimpleNamespace(qa_retrieval_on=False)
+
+    apply_qa_retrieval("q", [], settings=_Off(), bundle=[{"qa_id": "x", "question": "q", "answer": "a"}])
+    assert counts.get("query.qa_retrieval.enabled_skip") == 1
+
+    counts.clear()
+    class _On:
+        pipeline = SimpleNamespace(qa_retrieval_on=True, qa_match_min_score=0.55, qa_match_top_k=3)
+
+    apply_qa_retrieval("什么都没命中", [], settings=_On(), bundle=[])
+    assert counts.get("query.qa_retrieval.no_bundle") == 1
+
+    counts.clear()
+    apply_qa_retrieval(
+        "完全不相关的问题",
+        [],
+        settings=_On(),
+        bundle=[{"qa_id": "qa-1", "question": "如何重置？", "answer": "A"}],
+    )
+    assert counts.get("query.qa_retrieval.no_match") == 1
+
+    counts.clear()
+    apply_qa_retrieval(
+        "如何重置？",
+        [],
+        settings=_On(),
+        bundle=[{"qa_id": "qa-1", "question": "如何重置？", "answer": "A"}],
+    )
+    assert counts.get("query.qa_retrieval.hit") == 1
