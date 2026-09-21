@@ -16,25 +16,29 @@ export interface AuthRecoveryHintProps {
 /**
  * 鉴权门禁恢复提示：告诉操作员「缺什么、去哪补」，而不是只抛后端错误串。
  */
+const DEFAULT_DESCRIPTION =
+  "当前浏览器未配置有效的 Actor Bearer。请在工作区/系统设置中完成身份接入，或联系租户管理员签发凭据后重试。本页不会使用演示数据填充。";
+const TOKEN_REJECTED_DESCRIPTION =
+  "已检测到本地 Actor Token，但仍被服务端拒绝（可能过期、租户不匹配或权限不足）。请刷新凭据或联系管理员。";
+
 export default function AuthRecoveryHint({
   title = "缺少 KnowledgeOps 身份凭据",
-  description = "当前浏览器未配置有效的 Actor Bearer。请在工作区/系统设置中完成身份接入，或联系租户管理员签发凭据后重试。本页不会使用演示数据填充。",
+  description,
   onRetry,
   retryLabel = "重新连接并重试",
   compact = false,
 }: AuthRecoveryHintProps) {
   const hasToken = Boolean(readKnowledgeActorToken().trim());
+  // 调用方显式传入的 description 优先，避免覆盖「后端离线」等诊断文案
+  const resolvedDescription =
+    description ?? (hasToken ? TOKEN_REJECTED_DESCRIPTION : DEFAULT_DESCRIPTION);
   return (
     <div
       className={"auth-recovery-hint" + (compact ? " is-compact" : "")}
       aria-label="鉴权恢复提示"
     >
       <p className="auth-recovery-title">{title}</p>
-      <p className="auth-recovery-desc">
-        {hasToken
-          ? "已检测到本地 Actor Token，但仍被服务端拒绝（可能过期、租户不匹配或权限不足）。请刷新凭据或联系管理员。"
-          : description}
-      </p>
+      <p className="auth-recovery-desc">{resolvedDescription}</p>
       <div className="auth-recovery-actions">
         <Button
           tag="button"

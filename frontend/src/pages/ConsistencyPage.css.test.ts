@@ -12,6 +12,17 @@ function body(selector: string): string {
   return match[1].replace(/\s+/g, " ");
 }
 
+describe("console ops touch / auth recovery CSS contracts", () => {
+  it("raises config advanced controls and recovery actions to control-min-h", () => {
+    expect(body(".adv-nav-item")).toMatch(/min-height:\s*var\(--control-min-h/);
+    expect(css).toMatch(/\.adv-row-control[\s\S]{0,400}min-height:\s*var\(--control-min-h/);
+    expect(css).toMatch(
+      /\.auth-recovery-control-min-h\s*\{[^}]*min-height:\s*var\(--control-min-h/,
+    );
+    expect(body(".auth-recovery-hint")).toMatch(/display:\s*flex/);
+  });
+});
+
 describe("Consistency Console responsive contracts", () => {
   it("uses a keyboard-focusable horizontal scroll region with a 375px-safe table", () => {
     expect(body(".consistency-table-scroll")).toMatch(/overflow-x:\s*auto/);

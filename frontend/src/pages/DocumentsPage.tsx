@@ -761,6 +761,15 @@ export default function DocumentsPage({
     resetModernPagination();
   };
 
+  const clearAllDocumentFilters = () => {
+    applyDocumentFilter("keyword", "");
+    applyDocumentFilter("status", "all");
+    applyDocumentFilter("type", "all");
+    applyDocumentFilter("engine", "all");
+    applyDocumentFilter("category", "all");
+    applyDocumentFilter("tag", "all");
+  };
+
   const goToNextModernPage = useCallback(() => {
     if (!modernCatalogEnabled || !modernPage) return;
     const hasNext =
@@ -1797,18 +1806,14 @@ export default function DocumentsPage({
                 engineFilter !== "all" ||
                 statusFilter !== "all" ||
                 categoryFilter !== "all" ||
-                tagFilter !== "all") && (
+                tagFilter !== "all" ||
+                keyword.trim()) && (
                 <Button
                   tag="button"
                   variant="text"
                   size="small"
-                  onClick={() => {
-                    applyDocumentFilter("status", "all");
-                    applyDocumentFilter("type", "all");
-                    applyDocumentFilter("engine", "all");
-                    applyDocumentFilter("category", "all");
-                    applyDocumentFilter("tag", "all");
-                  }}
+                  aria-label="清除全部文档筛选"
+                  onClick={clearAllDocumentFilters}
                 >
                   清除筛选
                 </Button>
@@ -2052,10 +2057,7 @@ export default function DocumentsPage({
                             tag="button"
                             type="button"
                             aria-label="清除文档筛选"
-                            onClick={() => {
-                              applyDocumentFilter("keyword", "");
-                              applyDocumentFilter("status", "all");
-                            }}
+                            onClick={clearAllDocumentFilters}
                           >
                             清除筛选
                           </Button>

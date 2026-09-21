@@ -20,6 +20,19 @@ describe("AuthRecoveryHint", () => {
     expect(screen.getByLabelText("重新连接并重试")).toBeTruthy();
     localStorage.removeItem("rag4c.knowledge_actor_token");
   });
+
+  it("keeps caller-supplied description even when a token exists", () => {
+    localStorage.setItem("rag4c.knowledge_actor_token", "tok");
+    render(
+      <AuthRecoveryHint
+        description="若后端已恢复，请确认工作区身份后刷新；若服务未启动，请先启动桥服务。"
+        title="治理权威不可用"
+      />,
+    );
+    expect(screen.getByText("治理权威不可用")).toBeTruthy();
+    expect(screen.getByText(/服务未启动/)).toBeTruthy();
+    localStorage.removeItem("rag4c.knowledge_actor_token");
+  });
 });
 
 describe("isAuthError", () => {
