@@ -1,13 +1,38 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from concurrent.futures import Future
 from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from server import documents
+
+
+def _request() -> Request:
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/documents/ingest-folder",
+        "headers": [],
+        "client": ("127.0.0.1", 1),
+        "query_string": b"",
+    }
+    return Request(scope)  # type: ignore[arg-type]
+
+
+def _ingest_folder(monkeypatch: pytest.MonkeyPatch, req: documents.FolderIngestRequest):
+    """本文件只测发现/去重/回滚/批量投递，不管鉴权。
+
+    ``ingest_folder`` 端点化后要求 Request + Knowledge Actor，闸门默认开启会直接
+    401，把要测的分支整个挡在前面。这里按单租户开发部署的既有配置把闸门关掉，
+    鉴权本身由 tests/test_admin_endpoint_actor_auth.py 覆盖。
+    """
+    monkeypatch.setattr(documents, "require_actor_on_admin_writes", lambda: False)
+    return asyncio.run(documents.ingest_folder(req, _request()))
 
 
 @pytest.fixture()
@@ -74,8 +99,8 @@ def test_folder_ingest_registers_waiting_documents_and_skips_completed_paths(
 
     monkeypatch.setattr(documents, "_submit_batch_job", hold_batch)
 
-    response = documents.ingest_folder(
-        documents.FolderIngestRequest(folder_path=str(tmp_path))
+    response = _ingest_folder(
+        monkeypatch, documents.FolderIngestRequest(folder_path=str(tmp_path))
     )
 
     assert response["discovered_count"] == 2
@@ -92,13 +117,15 @@ def test_folder_ingest_registers_waiting_documents_and_skips_completed_paths(
     ]
 
 
-def test_folder_ingest_rejects_a_non_directory(tmp_path: Path) -> None:
+def test_folder_ingest_rejects_a_non_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     file_path = tmp_path / "one.md"
     file_path.write_text("one", encoding="utf-8")
 
     with pytest.raises(HTTPException) as exc:
-        documents.ingest_folder(
-            documents.FolderIngestRequest(folder_path=str(file_path))
+        _ingest_folder(
+            monkeypatch, documents.FolderIngestRequest(folder_path=str(file_path))
         )
 
     assert exc.value.status_code == 400
@@ -118,8 +145,8 @@ def test_folder_ingest_rolls_back_new_rows_when_the_queue_is_full(
     monkeypatch.setattr(documents, "_submit_batch_job", reject_batch)
 
     with pytest.raises(HTTPException) as exc:
-        documents.ingest_folder(
-            documents.FolderIngestRequest(folder_path=str(tmp_path))
+        _ingest_folder(
+            monkeypatch, documents.FolderIngestRequest(folder_path=str(tmp_path))
         )
 
     assert exc.value.status_code == 429
@@ -181,8 +208,8 @@ def test_folder_batch_executes_jobs_through_the_ledger_factory(
         lambda _doc_ids, job: submitted.append(job),
     )
 
-    response = documents.ingest_folder(
-        documents.FolderIngestRequest(folder_path=str(tmp_path))
+    response = _ingest_folder(
+        monkeypatch, documents.FolderIngestRequest(folder_path=str(tmp_path))
     )
     assert len(submitted) == 1
 

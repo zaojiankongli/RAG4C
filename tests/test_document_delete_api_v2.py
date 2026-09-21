@@ -365,9 +365,13 @@ def bridge_api(monkeypatch: pytest.MonkeyPatch):
     # （test_enterprise_admin_api 的引擎同一性断言即因此变红）；monkeypatch 会在 teardown 还原。
     monkeypatch.setattr(bridge_app.state, "knowledge_auth_engine", engine)
     monkeypatch.setattr(bridge_app.state, "knowledge_auth_settings", settings, raising=False)
+    # 管理面远程闸门（security.require_admin_access）把
+    # /api/knowledge-bases/*/documents/*/delete 划入 is_admin_path 后，非本地来源
+    # 必须先过 operator Bearer；本用例测的是路由装配与 durable delete 错误映射，
+    # 故走可信本地。远程准入本身由 tests/test_admin_access_guard.py 覆盖。
     return TestClient(
         bridge_app,
-        client=("10.0.0.2", 50000),
+        client=("127.0.0.1", 50000),
         raise_server_exceptions=False,
     ), settings
 
@@ -379,7 +383,7 @@ def test_real_server_app_exposes_canonical_delete_and_preserves_errors(bridge_ap
         headers=_headers(settings, "editor-a", idempotency_key="bridge-delete"),
         json={"expected_generation": 0, "reason": "bridge"},
     )
-    assert created.status_code == 202
+    assert created.status_code == 202, created.text
 
     missing = client.get(
         "/api/knowledge-bases/dataset-a/document-delete-operations/missing",

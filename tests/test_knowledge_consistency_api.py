@@ -272,6 +272,26 @@ def test_summary_requires_read_runs_dry_run_and_never_exposes_raw_identifiers(ap
     assert _counts(engine) == before
     assert calls[-1]["repair"] is False
     payload = response.json()
+    # QA 权威计数自 e0bebde 起进摘要。它必须是固定词表 + 纯计数（无任何标识符），
+    # 这里钉住键名与数值，而不把 note 的中文文案钉进整体相等断言。
+    qa_authority = payload.pop("qa_authority")
+    assert set(qa_authority) == {
+        "total",
+        "effective_retrieval",
+        "pending_review",
+        "rejected",
+        "expired",
+        "retrieval_disabled",
+        "note",
+    }
+    assert {k: v for k, v in qa_authority.items() if k != "note"} == {
+        "total": 0,
+        "effective_retrieval": 0,
+        "pending_review": 0,
+        "rejected": 0,
+        "expired": 0,
+        "retrieval_disabled": 0,
+    }
     assert payload == {
         "mode": "report-only",
         "counts": {

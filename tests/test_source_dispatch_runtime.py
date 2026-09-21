@@ -368,7 +368,10 @@ time.sleep(0.1)
     completed = subprocess.run(
         [sys.executable, "-c", code],
         cwd=str(Path(__file__).resolve().parent.parent),
-        timeout=3,
+        # 要证的性质是"退出时不等那 60 秒的子任务"，所以预算只要明显小于 60 即可。
+        # 空载下这条子命令光 import server.source_dispatcher 就要 1.4~1.8s，3s 上限
+        # 在 pytest -n 并行时会被冷启动方差吃光（间歇性 timeout 而非产品回归）。
+        timeout=30,
         check=False,
     )
     assert completed.returncode == 0
