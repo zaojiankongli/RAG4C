@@ -249,6 +249,38 @@ export const STRATEGY_STAGES: StrategyStage[] = [
             kind: "switch",
             cost: "none",
           },
+          {
+            path: "pipeline.qa_retrieval_on",
+            label: "QA 权威检索",
+            desc: "把 Catalog 中已审核（approved + 启用检索）的 FAQ 并入证据链；不投影 Milvus，走目录权威匹配。",
+            kind: "switch",
+            cost: "none",
+          },
+          {
+            path: "pipeline.qa_match_min_score",
+            label: "QA 匹配最低分",
+            desc: "词面匹配（Jaccard）低于该分不注入 FAQ；规范化全等/备选问全等不受此阈值限制。",
+            kind: "number",
+            min: 0,
+            max: 1,
+            step: 0.05,
+            activeWhen: {
+              when: (get) => isOn(get, "pipeline.qa_retrieval_on"),
+              hint: "需先启用 QA 权威检索",
+            },
+          },
+          {
+            path: "pipeline.qa_match_top_k",
+            label: "QA 命中上限",
+            desc: "单次查询最多注入的权威 FAQ 条数。",
+            kind: "number",
+            min: 1,
+            max: 10,
+            activeWhen: {
+              when: (get) => isOn(get, "pipeline.qa_retrieval_on"),
+              hint: "需先启用 QA 权威检索",
+            },
+          },
         ],
       },
       {
