@@ -9,16 +9,22 @@ import {
 import {
   citationStatusColor,
   citationStatusLabel,
+  countQaEvidence,
   documentDeepLink,
+  evidenceQaId,
+  evidenceSourceKind,
   formatObservedAt,
   outcomeLabel,
   OUTCOME_COLORS,
   projectAnswerEvidenceError,
+  qaDeepLink,
   routeLabel,
   sortEvidenceRefs,
+  SOURCE_KIND_LABELS,
   type AnswerEvidenceErrorView,
   type AnswerFact,
   type AnswerFactListResponse,
+  type AnswerEvidenceRef,
 } from "../model/answerEvidenceModel";
 import "../answer-evidence.css";
 
@@ -68,6 +74,92 @@ function FactSwitcher({
   );
 }
 
+function EvidenceRefRow({
+  evidence,
+  datasetId,
+}: {
+  evidence: AnswerEvidenceRef;
+  datasetId: string;
+}) {
+  const evidenceRef = evidence;
+  const kind = evidenceSourceKind(evidenceRef);
+  const qaId = evidenceQaId(evidenceRef);
+  const docLink =
+    kind === "document" ? documentDeepLink(evidenceRef.document_id, datasetId) : null;
+  const qaLink = kind === "qa" ? qaDeepLink(qaId, datasetId) : null;
+  return (
+    <li
+      key={evidenceRef.id}
+      className={`answer-evidence-ref is-source-${kind}`}
+      aria-label={`证据引用 ${evidenceRef.seq} ${evidenceRef.citation_status} source_kind=${kind}`}
+      data-source-kind={kind}
+      data-qa-id={qaId ?? undefined}
+    >
+      <span className="answer-evidence-ref__seq" aria-hidden="true">
+        #{evidenceRef.seq}
+      </span>
+      <div className="answer-evidence-ref__body">
+        <div className="answer-evidence-ref__tags">
+          <Tag color={kind === "qa" ? "primary" : "default"} variant="light">
+            {SOURCE_KIND_LABELS[kind] ?? kind}
+          </Tag>
+          <Tag color={citationStatusColor(evidenceRef.citation_status)} variant="light">
+            {citationStatusLabel(evidenceRef.citation_status)}
+          </Tag>
+          <Text type="secondary" className="mono">
+            {evidenceRef.chunk_id || "chunk —"}
+          </Text>
+        </div>
+        <div className="answer-evidence-ref__ids">
+          {kind === "qa" ? (
+            <span>
+              QA{" "}
+              {qaLink ? (
+                <a
+                  className="answer-evidence-qa-link"
+                  href={qaLink}
+                  aria-label={`打开 QA 治理 ${qaId}`}
+                >
+                  <code>{qaId}</code>
+                </a>
+              ) : (
+                <code>{qaId || "—"}</code>
+              )}
+              {evidenceRef.qa_revision != null ? (
+                <>
+                  {" "}
+                  revision <code>{evidenceRef.qa_revision}</code>
+                </>
+              ) : null}
+            </span>
+          ) : (
+            <>
+              <span>
+                chunk revision{" "}
+                <code>{evidenceRef.chunk_revision_id || "—"}</code>
+              </span>
+              <span>
+                document{" "}
+                {docLink ? (
+                  <a
+                    className="answer-evidence-doc-link"
+                    href={docLink}
+                    aria-label={`打开文档 ${evidenceRef.document_id}`}
+                  >
+                    <code>{evidenceRef.document_id}</code>
+                  </a>
+                ) : (
+                  <code>{evidenceRef.document_id || "—"}</code>
+                )}
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}
+
 function EvidenceRefList({ fact, datasetId }: { fact: AnswerFact; datasetId: string }) {
   const refs = useMemo(() => sortEvidenceRefs(fact.evidence_refs), [fact.evidence_refs]);
   if (!refs.length) {
@@ -79,55 +171,15 @@ function EvidenceRefList({ fact, datasetId }: { fact: AnswerFact; datasetId: str
   }
   return (
     <ul className="answer-evidence-refs" aria-label="证据引用列表">
-      {refs.map((ref) => {
-        const docLink = documentDeepLink(ref.document_id, fact.dataset_id || datasetId);
-        return (
-          <li
-            key={ref.id}
-            className="answer-evidence-ref"
-            aria-label={`证据引用 ${ref.seq} ${ref.citation_status}`}
-          >
-            <span className="answer-evidence-ref__seq" aria-hidden="true">
-              #{ref.seq}
-            </span>
-            <div className="answer-evidence-ref__body">
-              <div className="answer-evidence-ref__tags">
-                <Tag color={citationStatusColor(ref.citation_status)} variant="light">
-                  {citationStatusLabel(ref.citation_status)}
-                </Tag>
-                <Text type="secondary" className="mono">
-                  {ref.chunk_id || "chunk —"}
-                </Text>
-              </div>
-              <div className="answer-evidence-ref__ids">
-                <span>
-                  chunk revision{" "}
-                  <code>{ref.chunk_revision_id || "—"}</code>
-                </span>
-                <span>
-                  document{" "}
-                  {docLink ? (
-                    <a
-                      className="answer-evidence-doc-link"
-                      href={docLink}
-                      aria-label={`打开文档 ${ref.document_id}`}
-                    >
-                      <code>{ref.document_id}</code>
-                    </a>
-                  ) : (
-                    <code>—</code>
-                  )}
-                </span>
-              </div>
-            </div>
-          </li>
-        );
-      })}
+      {refs.map((item) => (
+        <EvidenceRefRow key={item.id} evidence={item} datasetId={fact.dataset_id || datasetId} />
+      ))}
     </ul>
   );
 }
 
 function FactSummary({ fact }: { fact: AnswerFact }) {
+  const qaHits = countQaEvidence(fact.evidence_refs);
   return (
     <dl className="answer-evidence-summary" aria-label="答案事实摘要">
       <div>
@@ -149,6 +201,12 @@ function FactSummary({ fact }: { fact: AnswerFact }) {
       <div>
         <dt>证据数</dt>
         <dd className="tabular-nums">{fact.evidence_count}</dd>
+      </div>
+      <div>
+        <dt>QA 命中</dt>
+        <dd className="tabular-nums" aria-label="QA 权威命中数">
+          {qaHits}
+        </dd>
       </div>
       <div>
         <dt>观察时间</dt>

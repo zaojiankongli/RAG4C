@@ -29,6 +29,70 @@ export interface AnswerEvidenceRef {
   document_id: string | null;
   citation_status: CitationStatusCode;
   evidence_digest?: string | null;
+  /** qa | document — API 可选；缺省时由 chunk_id 前缀推断 */
+  source_kind?: "qa" | "document" | (string & {});
+  qa_id?: string | null;
+  qa_revision?: number | null;
+}
+
+/** chunk_id 约定：qa::{qa_id}（见 retrieval.qa_matcher.qa_chunk_id） */
+export function parseQaChunkId(chunkId: string | null | undefined): string | null {
+  const raw = (chunkId ?? "").trim();
+  if (!raw.startsWith("qa::")) return null;
+  const id = raw.slice(4).trim();
+  return id || null;
+}
+
+export function evidenceSourceKind(
+  ref: Partial<Pick<AnswerEvidenceRef, "source_kind" | "chunk_id" | "document_id">> | null | undefined,
+): "qa" | "document" {
+  if (!ref) return "document";
+  const explicit = String(ref.source_kind || "").trim().toLowerCase();
+  if (explicit === "qa") return "qa";
+  if (explicit === "document") return "document";
+  if (parseQaChunkId(ref.chunk_id)) return "qa";
+  if (parseQaChunkId(ref.document_id)) return "qa";
+  return "document";
+}
+
+export function evidenceQaId(
+  ref:
+    | Partial<Pick<AnswerEvidenceRef, "qa_id" | "chunk_id" | "document_id" | "source_kind">>
+    | null
+    | undefined,
+): string | null {
+  if (!ref) return null;
+  const explicit = (ref.qa_id ?? "").trim();
+  if (explicit) return explicit;
+  return parseQaChunkId(ref.chunk_id) || parseQaChunkId(ref.document_id);
+}
+
+/** QA 深链：治理页 PAGE key 为 governance（shell 路由 /governance） */
+export function qaDeepLink(qaId: string | null | undefined, datasetId?: string | null): string | null {
+  const id = (qaId ?? "").trim();
+  if (!id) return null;
+  const params = new URLSearchParams({ qa: id });
+  const dataset = datasetId?.trim();
+  if (dataset) params.set("dataset", dataset);
+  return `#/governance?${params.toString()}`;
+}
+
+/** 仅对真实文档 id 生成 Documents 深链；qa:: 伪 id 返回 null */
+export function documentDeepLink(
+  documentId: string | null | undefined,
+  datasetId?: string | null,
+): string | null {
+  const id = documentId?.trim();
+  if (!id) return null;
+  if (parseQaChunkId(id)) return null;
+  const params = new URLSearchParams({ document: id });
+  const dataset = datasetId?.trim();
+  if (dataset) params.set("dataset", dataset);
+  return `#/documents?${params.toString()}`;
+}
+
+export function countQaEvidence(refs: readonly AnswerEvidenceRef[]): number {
+  return refs.filter((ref) => evidenceSourceKind(ref) === "qa").length;
 }
 
 /**
@@ -110,6 +174,11 @@ export const CITATION_STATUS_COLORS: Record<string, string> = {
   unsupported: "error",
 };
 
+export const SOURCE_KIND_LABELS: Record<string, string> = {
+  qa: "QA 权威",
+  document: "文档投影",
+};
+
 export function outcomeLabel(code: AnswerOutcomeCode | null | undefined): string {
   if (!code) return "—";
   return OUTCOME_LABELS[code] ?? String(code);
@@ -155,14 +224,35 @@ export function normalizeAnswerEvidenceRef(payload: unknown): AnswerEvidenceRef 
   const record = payload as Record<string, unknown>;
   const id = asStringOrNull(record.id);
   if (!id) return null;
+  const chunk_id = asStringOrNull(record.chunk_id);
+  const document_id = asStringOrNull(record.document_id);
+  const source_kind_raw = asStringOrNull(record.source_kind);
+  const qa_id =
+    asStringOrNull(record.qa_id) || parseQaChunkId(chunk_id) || parseQaChunkId(document_id);
+  const kind: AnswerEvidenceRef["source_kind"] =
+    source_kind_raw === "qa" || source_kind_raw === "document"
+      ? source_kind_raw
+      : qa_id
+        ? "qa"
+        : "document";
+  const qaRevisionRaw = record.qa_revision;
+  const qa_revision =
+    typeof qaRevisionRaw === "number" && Number.isFinite(qaRevisionRaw)
+      ? Math.floor(qaRevisionRaw)
+      : typeof qaRevisionRaw === "string" && Number.isFinite(Number(qaRevisionRaw))
+        ? Math.floor(Number(qaRevisionRaw))
+        : null;
   return {
     id,
     seq: asNonNegativeInt(record.seq),
-    chunk_id: asStringOrNull(record.chunk_id),
+    chunk_id,
     chunk_revision_id: asStringOrNull(record.chunk_revision_id),
-    document_id: asStringOrNull(record.document_id),
+    document_id,
     citation_status: asStringOrNull(record.citation_status) ?? "ok",
     evidence_digest: asStringOrNull(record.evidence_digest),
+    source_kind: kind,
+    qa_id: qa_id || null,
+    qa_revision: kind === "qa" ? qa_revision : null,
   };
 }
 
@@ -275,19 +365,6 @@ export function formatObservedAt(iso: string | null | undefined): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z");
-}
-
-/** 深链 Documents 页（Knowledge Lifeline 上游） */
-export function documentDeepLink(
-  documentId: string | null | undefined,
-  datasetId?: string | null,
-): string | null {
-  const id = documentId?.trim();
-  if (!id) return null;
-  const params = new URLSearchParams({ document: id });
-  const dataset = datasetId?.trim();
-  if (dataset) params.set("dataset", dataset);
-  return `#/documents?${params.toString()}`;
 }
 
 export function sortEvidenceRefs(refs: readonly AnswerEvidenceRef[]): AnswerEvidenceRef[] {

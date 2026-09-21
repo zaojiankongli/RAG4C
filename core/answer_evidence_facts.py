@@ -41,7 +41,55 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:16]}"
 
 
+def _qa_revision_from_meta(meta: Any) -> int | None:
+    if not isinstance(meta, dict):
+        return None
+    raw = meta.get("qa_revision")
+    if raw is None:
+        nested = meta.get("metadata")
+        if isinstance(nested, dict):
+            raw = nested.get("qa_revision")
+    try:
+        if raw is None:
+            return None
+        value = int(raw)
+        return value if value > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _evidence_ref_payload(ref: Any) -> dict[str, Any]:
+    chunk_id = ref.chunk_id
+    document_id = ref.document_id
+    qa_id = None
+    for candidate in (chunk_id, document_id):
+        raw = str(candidate or "")
+        if raw.startswith("qa::") and len(raw) > 4:
+            qa_id = raw[4:]
+            break
+    qa_revision = None
+    revision_id = str(ref.chunk_revision_id or "")
+    if revision_id.startswith("qa-rev:"):
+        try:
+            qa_revision = int(revision_id[len("qa-rev:") :])
+        except ValueError:
+            qa_revision = None
+    return {
+        "id": ref.id,
+        "seq": ref.seq,
+        "chunk_id": chunk_id,
+        "chunk_revision_id": ref.chunk_revision_id,
+        "document_id": document_id,
+        "citation_status": ref.citation_status,
+        "evidence_digest": getattr(ref, "evidence_digest", None),
+        "source_kind": "qa" if qa_id else "document",
+        "qa_id": qa_id,
+        "qa_revision": qa_revision if qa_id else None,
+    }
+
+
 def fact_payload(fact: TenantKnowledgeAnswerFact, refs: list[Any]) -> dict[str, Any]:
+    payloads = [_evidence_ref_payload(ref) for ref in refs]
     return {
         "id": fact.id,
         "tenant_id": fact.tenant_id,
@@ -58,17 +106,8 @@ def fact_payload(fact: TenantKnowledgeAnswerFact, refs: list[Any]) -> dict[str, 
         "citation_count": fact.citation_count,
         "evidence_count": fact.evidence_count,
         "observed_at": fact.observed_at,
-        "evidence_refs": [
-            {
-                "id": ref.id,
-                "seq": ref.seq,
-                "chunk_id": ref.chunk_id,
-                "chunk_revision_id": ref.chunk_revision_id,
-                "document_id": ref.document_id,
-                "citation_status": ref.citation_status,
-            }
-            for ref in refs
-        ],
+        "evidence_refs": payloads,
+        "qa_evidence_count": sum(1 for item in payloads if item.get("source_kind") == "qa"),
     }
 
 
@@ -124,6 +163,15 @@ class AnswerEvidenceRepository:
                 str(cite.get("document_id") or (meta or {}).get("doc_id") or "") or None
             )
             revision_id = str(cite.get("chunk_revision_id") or (meta or {}).get("revision") or "") or None
+            if chunk_id and str(chunk_id).startswith("qa::"):
+                qa_rev = cite.get("qa_revision")
+                if qa_rev is None:
+                    qa_rev = _qa_revision_from_meta(meta)
+                try:
+                    if qa_rev is not None:
+                        revision_id = f"qa-rev:{int(qa_rev)}"
+                except (TypeError, ValueError):
+                    pass
             evidence_rows.append(
                 {
                     "seq": index,
@@ -139,12 +187,17 @@ class AnswerEvidenceRepository:
             for index, item in enumerate(evidence[:20]):
                 chunk_id = str(item.get("chunk_id") or "") or None
                 document_id = str(item.get("doc_id") or "") or None
+                revision_id = None
+                if chunk_id and str(chunk_id).startswith("qa::"):
+                    qa_rev = _qa_revision_from_meta(item)
+                    if qa_rev is not None:
+                        revision_id = f"qa-rev:{qa_rev}"
                 evidence_rows.append(
                     {
                         "seq": index,
                         "chunk_id": chunk_id,
                         "document_id": document_id,
-                        "chunk_revision_id": None,
+                        "chunk_revision_id": revision_id,
                         "citation_status": "ok",
                         "evidence_digest": digest_sha256(chunk_id, "ok", document_id),
                     }

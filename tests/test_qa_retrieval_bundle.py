@@ -147,3 +147,7 @@ def test_answer_evidence_records_qa_chunk_refs(tmp_path: Path):
     assert refs
     assert refs[0]["chunk_id"] == "qa::qa-1"
     assert refs[0]["document_id"] == "doc-9"
+    assert refs[0]["source_kind"] == "qa"
+    assert refs[0]["qa_id"] == "qa-1"
+    assert refs[0].get("qa_revision") == 2
+    assert payload.get("qa_evidence_count") == 1

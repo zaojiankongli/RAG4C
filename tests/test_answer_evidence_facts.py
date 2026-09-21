@@ -84,7 +84,10 @@ def test_record_and_query_answer_fact_evidence_refs() -> None:
     assert detail["evidence_count"] == 2
     assert detail["evidence_refs"][0]["chunk_id"] == "chunk-1"
     assert detail["evidence_refs"][0]["document_id"] == "doc-1"
+    assert detail["evidence_refs"][0]["source_kind"] == "document"
+    assert "evidence_digest" in detail["evidence_refs"][0]
     assert detail["evidence_refs"][1]["citation_status"] == "unsupported"
+    assert detail.get("qa_evidence_count") == 0
 
     by_run = repo.get_by_run("tenant-a", "run-1", dataset_id="dataset-a")
     assert by_run is not None

@@ -34,6 +34,7 @@ const answeredFact: AnswerFact = {
       chunk_revision_id: "chunk-1-r3",
       document_id: "doc-1",
       citation_status: "ok",
+      source_kind: "document",
     },
     {
       id: "ref-2",
@@ -42,6 +43,37 @@ const answeredFact: AnswerFact = {
       chunk_revision_id: null,
       document_id: null,
       citation_status: "stale",
+      source_kind: "document",
+    },
+  ],
+};
+
+const qaFact: AnswerFact = {
+  ...answeredFact,
+  id: "fact-qa",
+  run_id: "run-qa",
+  citation_count: 1,
+  evidence_count: 2,
+  evidence_refs: [
+    {
+      id: "ref-qa",
+      seq: 0,
+      chunk_id: "qa::qa-faq-1",
+      chunk_revision_id: null,
+      document_id: "doc-src-9",
+      citation_status: "ok",
+      source_kind: "qa",
+      qa_id: "qa-faq-1",
+      qa_revision: 3,
+    },
+    {
+      id: "ref-doc",
+      seq: 1,
+      chunk_id: "chunk-1",
+      chunk_revision_id: "chunk-1-r3",
+      document_id: "doc-1",
+      citation_status: "ok",
+      source_kind: "document",
     },
   ],
 };
@@ -85,15 +117,33 @@ describe("AnswerEvidencePanel", () => {
     expect(screen.getByText("已回答")).toBeTruthy();
     expect(screen.getByText("RAG")).toBeTruthy();
     expect(screen.getByLabelText("证据引用列表")).toBeTruthy();
-    expect(screen.getByLabelText("证据引用 0 ok")).toBeTruthy();
-    expect(screen.getByLabelText("证据引用 1 stale")).toBeTruthy();
+    expect(screen.getByLabelText("证据引用 0 ok source_kind=document")).toBeTruthy();
+    expect(screen.getByLabelText("证据引用 1 stale source_kind=document")).toBeTruthy();
     expect(screen.getByText("引用有效")).toBeTruthy();
     expect(screen.getByText("过期")).toBeTruthy();
     expect(document.body.textContent).toContain("如何配置对象存储");
     expect(screen.getByLabelText("打开文档 doc-1")).toBeTruthy();
+    expect(screen.getByLabelText("QA 权威命中数")).toBeTruthy();
 
     const refresh = screen.getByRole("button", { name: "刷新答案证据链" });
     expect(refresh.getAttribute("class") || "").toContain("answer-evidence-control-min-h");
+  });
+
+  it("marks QA evidence with source tag, governance deep link, and QA hit count", async () => {
+    vi.mocked(api.loadAnswerEvidence).mockResolvedValue({ items: [qaFact], count: 1 });
+    render(<AnswerEvidencePanel runId="run-qa" datasetId="ds-1" />);
+    await waitFor(() => expect(screen.getByTestId("answer-evidence-panel")).toBeTruthy());
+
+    expect(screen.getByLabelText("证据引用 0 ok source_kind=qa")).toBeTruthy();
+    expect(screen.getByText("QA 权威")).toBeTruthy();
+    expect(screen.getByLabelText("打开 QA 治理 qa-faq-1")).toBeTruthy();
+    const qaLink = screen.getByLabelText("打开 QA 治理 qa-faq-1") as HTMLAnchorElement;
+    expect(qaLink.getAttribute("href")).toContain("#/governance?qa=qa-faq-1");
+    // document link still available for the non-QA ref
+    expect(screen.getByLabelText("打开文档 doc-1")).toBeTruthy();
+    // QA ref must not produce a documents deep-link for qa:: / source doc only when kind=qa
+    expect(screen.queryByLabelText("打开文档 doc-src-9")).toBeNull();
+    expect(screen.getByLabelText("QA 权威命中数").textContent).toBe("1");
   });
 
   it("falls back to list mode on load without a run and can switch facts", async () => {

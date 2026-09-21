@@ -81,7 +81,13 @@ const normalizedFact = {
   answer_digest: null,
   evidence_chain_digest: null,
   fact_digest: null,
-  evidence_refs: fact.evidence_refs.map((ref) => ({ ...ref, evidence_digest: null })),
+  evidence_refs: fact.evidence_refs.map((ref) => ({
+    ...ref,
+    evidence_digest: null,
+    source_kind: "document" as const,
+    qa_id: null,
+    qa_revision: null,
+  })),
 };
 
 class TestApiError extends Error {
