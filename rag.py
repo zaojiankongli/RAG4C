@@ -175,13 +175,13 @@ def _build_optional_components(
         )
 
     if p.graph_retrieval_on:
-        from core.graph_store import RagGraphStore
+        from core.graph_store_registry import create_graph_store
         from retrieval.graph_retriever import GraphRetriever
 
         _try(
             "graph_retriever",
             lambda: GraphRetriever(
-                store=RagGraphStore(settings.milvus, settings.graph),
+                store=create_graph_store(settings),
                 embedder=embedder,
                 # 图谱关系重排复用 judge 槽位（温度 0，确定性输出）；
                 # graph.use_llm_rerank 关闭时不传 LLM，按检索分数排序。

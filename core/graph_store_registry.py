@@ -20,7 +20,7 @@ GraphEngineType = Literal["milvus_vector_graph", "none"]
 
 
 class GraphStoreProtocol(Protocol):
-    """Subset of graph-store operations used by ingest/retrieval assembly."""
+    """Subset of graph-store operations used by ingest/retrieval/query assembly."""
 
     def ensure_collections(self) -> None: ...
 
@@ -36,9 +36,13 @@ class GraphStoreProtocol(Protocol):
 
     def healthy(self) -> bool: ...
 
+    def get_entities_by_ids(self, ids: Sequence[str], tenant_id: str | None = None) -> list[Any]: ...
+
+    def get_relations_by_ids(self, ids: Sequence[str], tenant_id: str | None = None) -> list[Any]: ...
+
 
 class NoopGraphStore:
-    """Disabled graph backend: never fail startup; search returns empty.
+    """Disabled graph backend: never fail startup; search/id lookups return empty.
 
     Mirrors WeKnora: disabled is healthy; ingest/delete are no-ops.
     """
@@ -67,6 +71,44 @@ class NoopGraphStore:
 
     def healthy(self) -> bool:
         return True
+
+    def get_entities_by_ids(self, ids: Sequence[str], tenant_id: str | None = None) -> list[Any]:
+        del ids, tenant_id
+        return []
+
+    def get_relations_by_ids(self, ids: Sequence[str], tenant_id: str | None = None) -> list[Any]:
+        del ids, tenant_id
+        return []
+
+    def get_entities_by_passage_ids(self, ids: Sequence[str], tenant_id: str | None = None) -> list[Any]:
+        del ids, tenant_id
+        return []
+
+    def get_relations_by_passage_ids(self, ids: Sequence[str], tenant_id: str | None = None) -> list[Any]:
+        del ids, tenant_id
+        return []
+
+    def get_entities_by_texts(self, texts: Sequence[str], tenant_id: str | None = None) -> list[Any]:
+        del texts, tenant_id
+        return []
+
+    def get_relations_by_texts(self, texts: Sequence[str], tenant_id: str | None = None) -> list[Any]:
+        del texts, tenant_id
+        return []
+
+    def upsert_raw_entities(self, rows: Sequence[Any]) -> None:
+        del rows
+
+    def upsert_raw_relations(self, rows: Sequence[Any]) -> None:
+        del rows
+
+    def delete_entities_by_ids(self, ids: Sequence[str]) -> int:
+        del ids
+        return 0
+
+    def delete_relations_by_ids(self, ids: Sequence[str]) -> int:
+        del ids
+        return 0
 
 
 class GraphStoreError(RuntimeError):
@@ -156,8 +198,26 @@ def get_registry() -> GraphStoreRegistry:
     return _REGISTRY
 
 
+def assembly_graph_engine(settings: Any = None) -> GraphEngineType:
+    """Engine for feature-flagged assembly (ingest/retrieval pipelines).
+
+    - ``pipeline.graph_retrieval_on`` or ``pipeline.graph_index_on`` → milvus
+      (production GraphSettings has no ``enabled`` flag; pipeline switches are truth).
+    - Otherwise fall through to :func:`resolve_graph_engine_from_settings`.
+    """
+    if settings is None:
+        return "none"
+    pipeline = getattr(settings, "pipeline", None)
+    if pipeline is not None:
+        if bool(getattr(pipeline, "graph_retrieval_on", False)) or bool(
+            getattr(pipeline, "graph_index_on", False)
+        ):
+            return "milvus_vector_graph"
+    return resolve_graph_engine_from_settings(settings)
+
+
 def get_graph_store(settings: Any = None, *, registry: GraphStoreRegistry | None = None) -> GraphStoreProtocol:
-    """Resolve + cache active graph store for this process."""
+    """Resolve + cache active graph store from settings.engine resolution."""
     reg = registry if registry is not None else _REGISTRY
     engine = resolve_graph_engine_from_settings(settings)
     existing = reg.get(engine)
@@ -175,6 +235,40 @@ def reset_registry_for_tests() -> None:
     _REGISTRY = GraphStoreRegistry()
 
 
+def create_graph_store(
+    settings: Any = None,
+    *,
+    engine_override: GraphEngineType | None = None,
+    registry: GraphStoreRegistry | None = None,
+) -> GraphStoreProtocol:
+    """Production assembly helper (registry-backed, cached per engine).
+
+    - ``engine_override``: force a backend (e.g. query API observability always
+      reads milvus even when ingest/retrieval flags are off — preserve pre-wiring
+      ``/api/graph/*`` behavior).
+    - Else engine = :func:`assembly_graph_engine` (pipeline flags → milvus; else
+      settings resolve; disabled → noop).
+    """
+    reg = registry if registry is not None else _REGISTRY
+    if engine_override is not None:
+        engine: GraphEngineType = engine_override
+    else:
+        engine = assembly_graph_engine(settings)
+    existing = reg.get(engine)
+    if existing is not None and reg.active_engine_type == engine:
+        return existing
+    store = GraphStoreFactory.create(engine, settings)
+    reg.register(engine, store)
+    reg.set_active(engine)
+    _logger.debug("graph store assembly engine=%s", engine)
+    return store
+
+
+def reset_graph_store_registry() -> None:
+    """Clear process cache (pipeline reload / tests)."""
+    reset_registry_for_tests()
+
+
 __all__ = [
     "GraphEngineType",
     "GraphStoreError",
@@ -182,8 +276,11 @@ __all__ = [
     "GraphStoreProtocol",
     "GraphStoreRegistry",
     "NoopGraphStore",
+    "assembly_graph_engine",
+    "create_graph_store",
     "get_graph_store",
     "get_registry",
+    "reset_graph_store_registry",
     "reset_registry_for_tests",
     "resolve_graph_engine_from_settings",
     "RagGraphStoreError",

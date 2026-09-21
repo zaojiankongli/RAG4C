@@ -220,7 +220,7 @@ def _build_ingest_optional(s: Any) -> dict[str, Any]:
     if getattr(p, "graph_index_on", False):
         try:
             from core.embedding import create_embedder
-            from core.graph_store import RagGraphStore
+            from core.graph_store_registry import create_graph_store
             from core.llm import create_client
             from indexing.graph_builder import GraphBuilder
             from indexing.triplet_extractor import TripletExtractor
@@ -230,7 +230,7 @@ def _build_ingest_optional(s: Any) -> dict[str, Any]:
             # （见 ingest / reindex 的 _run），与 pipeline.ensure_collection()
             # 同一时机，避免 Milvus Lite 上对同一 .db 文件开出第二个句柄。
             optional["graph_builder"] = GraphBuilder(
-                store=RagGraphStore(s.milvus, s.graph),
+                store=create_graph_store(s),
                 embedder=create_embedder(s.embedding),
                 extractor=TripletExtractor(llm=create_client(s.llm.triplet)),
                 extract_concurrency=int(getattr(p, "graph_extract_concurrency", 8)),

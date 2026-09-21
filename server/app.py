@@ -2440,11 +2440,12 @@ def _get_graph_components() -> tuple[Any, Any]:
     """懒加载图谱存储 + 检索器（进程内缓存；未配置 / 未安装依赖时 (None, None)）。"""
     from config.settings import get_settings
     from core.embedding import create_embedder
-    from core.graph_store import RagGraphStore
+    from core.graph_store_registry import create_graph_store
 
     try:
         s = get_settings()
-        store = RagGraphStore(s.milvus, s.graph)
+        # 查询图 API 保持 flag 无关：观测/检索始终读 milvus 图存储（与接线前一致）
+        store = create_graph_store(s, engine_override="milvus_vector_graph")
         embedder = create_embedder(s.embedding)
         return store, embedder
     except Exception as exc:  # noqa: BLE001 - 组件不可用时降级

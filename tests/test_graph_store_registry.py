@@ -48,17 +48,62 @@ def test_factory_noop_and_unknown():
         GraphStoreFactory.create("neo4j", _MilvusSettings())
 
 
-def test_registry_and_resolve_are_single_active_backend():
+def test_assembly_engine_and_app_override(monkeypatch):
+    from core.graph_store_registry import assembly_graph_engine, create_graph_store
+
+    reset_registry_for_tests()
+    s_flags_on = SimpleNamespace(
+        pipeline=SimpleNamespace(graph_retrieval_on=True, graph_index_on=False),
+        graph=SimpleNamespace(),
+        milvus=SimpleNamespace(uri="http://x"),
+    )
+    assert assembly_graph_engine(s_flags_on) == "milvus_vector_graph"
+    s_flags_off = SimpleNamespace(
+        pipeline=SimpleNamespace(graph_retrieval_on=False, graph_index_on=False),
+        graph=SimpleNamespace(),
+        milvus=None,
+    )
+    assert assembly_graph_engine(s_flags_off) == "none"
+
+    monkeypatch.setattr(
+        "core.graph_store_registry.GraphStoreFactory.create",
+        staticmethod(lambda engine, settings=None: NoopGraphStore() if engine == "none" else SimpleNamespace(mode="milvus")),
+    )
+    reset_registry_for_tests()
+    assert create_graph_store(s_flags_off).mode == "noop"
+    # app query path: force milvus even when flags off
+    reset_registry_for_tests()
+    store = create_graph_store(s_flags_off, engine_override="milvus_vector_graph")
+    assert store.mode == "milvus"
+
+    noop = NoopGraphStore()
+    assert noop.get_entities_by_ids(["e1"]) == []
+    assert noop.get_relations_by_ids(["r1"]) == []
+    assert noop.delete_entities_by_ids(["e1"]) == 0
+
+
+def test_production_call_sites_use_registry_create_graph_store():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for rel in ("rag.py", "server/documents.py", "server/app.py"):
+        text = (root / rel).read_text(encoding="utf-8")
+        assert "create_graph_store" in text, rel
+        assert "RagGraphStore(s.milvus" not in text, rel
+        assert "RagGraphStore(settings.milvus" not in text, rel
+    app = (root / "server" / "app.py").read_text(encoding="utf-8")
+    assert 'engine_override="milvus_vector_graph"' in app
+
+
+def test_graph_store_registry_and_resolve():
     reset_registry_for_tests()
     reg = GraphStoreRegistry()
     none_store = GraphStoreFactory.create("none")
     reg.register("none", none_store)
     reg.set_active("none")
     assert reg.get_active() is none_store
-    # 未注册引擎不可 activate（互斥装配）
     with pytest.raises(GraphStoreError):
         reg.set_active("milvus_vector_graph")
-    # disabled settings → process store is noop
     s = get_graph_store(SimpleNamespace(graph=SimpleNamespace(enabled=False)), registry=reg)
     assert isinstance(s, NoopGraphStore)
     assert reg.active_engine_type == "none"
