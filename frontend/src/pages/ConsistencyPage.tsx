@@ -602,6 +602,70 @@ export default function ConsistencyPage() {
                 </ol>
               </section>
 
+              <section className="consistency-qa-authority" aria-labelledby="consistency-qa-title">
+                <div className="consistency-section-heading">
+                  <div>
+                    <Text className="consistency-eyebrow">QA AUTHORITY</Text>
+                    <h2 id="consistency-qa-title">QA 检索权威（Catalog）</h2>
+                  </div>
+                  <Tag variant="light">
+                    {projection.qaAuthority
+                      ? `${projection.qaAuthority.effective_retrieval.toLocaleString()} 可检索`
+                      : "未返回"}
+                  </Tag>
+                </div>
+                {projection.qaAuthority ? (
+                  <>
+                    <ol className="consistency-lifeline" aria-label="QA 权威生命线">
+                      <li>
+                        <span>可检索</span>
+                        <strong>{projection.qaAuthority.effective_retrieval.toLocaleString()}</strong>
+                        <small>approved+active+启用</small>
+                      </li>
+                      <li>
+                        <span>待审核</span>
+                        <strong>{projection.qaAuthority.pending_review.toLocaleString()}</strong>
+                        <small>pending</small>
+                      </li>
+                      <li
+                        className={
+                          projection.qaAuthority.expired || projection.qaAuthority.retrieval_disabled
+                            ? "is-drift"
+                            : "is-clear"
+                        }
+                      >
+                        <span>过审未启用</span>
+                        <strong>{projection.qaAuthority.retrieval_disabled.toLocaleString()}</strong>
+                        <small>approved 但禁检索</small>
+                      </li>
+                      <li
+                        className={
+                          projection.qaAuthority.expired || projection.qaAuthority.rejected
+                            ? "is-drift"
+                            : "is-clear"
+                        }
+                      >
+                        <span>失效/驳回</span>
+                        <strong>
+                          {(
+                            projection.qaAuthority.expired + projection.qaAuthority.rejected
+                          ).toLocaleString()}
+                        </strong>
+                        <small>expired + rejected</small>
+                      </li>
+                    </ol>
+                    <p className="consistency-qa-note" aria-label="QA 权威说明">
+                      {projection.qaAuthority.note ||
+                        "QA 权威来自 MySQL Catalog；不投影 Milvus，不作为可确认修复对象。"}
+                    </p>
+                  </>
+                ) : (
+                  <div className="consistency-empty" role="status">
+                    QA 权威计数未能从 Catalog 读取（未用 0 伪装生产事实）。文档投影摘要不受影响。
+                  </div>
+                )}
+              </section>
+
               <section className="consistency-category-grid" aria-label="漂移分类">
                 {projection.categories.map((category) => (
                   <Card key={category.key} className={`consistency-category-card is-${category.key}`}>

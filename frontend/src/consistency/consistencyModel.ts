@@ -16,6 +16,16 @@ export interface ConsistencyDriftCategories {
   stale_reasons: Record<string, number>;
 }
 
+export interface ConsistencyQaAuthority {
+  total: number;
+  effective_retrieval: number;
+  pending_review: number;
+  rejected: number;
+  expired: number;
+  retrieval_disabled: number;
+  note?: string | null;
+}
+
 export interface ConsistencySummaryResponse {
   mode: "report-only";
   best_effort: true;
@@ -26,6 +36,7 @@ export interface ConsistencySummaryResponse {
   confirmable: false;
   snapshot_guarantee: "catalog_only";
   has_drift: boolean;
+  qa_authority?: ConsistencyQaAuthority | null;
 }
 
 export interface DeadLetterItem {
@@ -67,6 +78,42 @@ export interface ConsistencySummaryProjection {
   catalogOnly: boolean;
   complete: false;
   confirmable: false;
+  qaAuthority: ConsistencyQaAuthority | null;
+}
+
+function asNonNeg(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+}
+
+export function normalizeQaAuthority(
+  payload: unknown,
+): ConsistencyQaAuthority | null {
+  if (!payload || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
+  // 需要完整计数字段；缺任一关键字段则返回 null（不用 0 伪装生产事实）
+  const required = [
+    "total",
+    "effective_retrieval",
+    "pending_review",
+    "rejected",
+    "expired",
+    "retrieval_disabled",
+  ] as const;
+  for (const key of required) {
+    if (typeof record[key] !== "number" && typeof record[key] !== "string") {
+      return null;
+    }
+  }
+  return {
+    total: asNonNeg(record.total),
+    effective_retrieval: asNonNeg(record.effective_retrieval),
+    pending_review: asNonNeg(record.pending_review),
+    rejected: asNonNeg(record.rejected),
+    expired: asNonNeg(record.expired),
+    retrieval_disabled: asNonNeg(record.retrieval_disabled),
+    note: typeof record.note === "string" && record.note.trim() ? record.note.trim() : null,
+  };
 }
 
 export function projectConsistencySummary(
@@ -87,5 +134,6 @@ export function projectConsistencySummary(
     catalogOnly: summary.snapshot_guarantee === "catalog_only",
     complete: summary.complete,
     confirmable: summary.confirmable,
+    qaAuthority: normalizeQaAuthority(summary.qa_authority),
   };
 }

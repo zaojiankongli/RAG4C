@@ -115,6 +115,18 @@ class DriftCategories(StrictModel):
     stale_reasons: dict[str, int]
 
 
+class QAAuthorityCounts(StrictModel):
+    """Catalog-only QA retrieval authority (not a Milvus projection claim)."""
+
+    total: int
+    effective_retrieval: int
+    pending_review: int
+    rejected: int
+    expired: int
+    retrieval_disabled: int
+    note: str
+
+
 class ConsistencySummaryResponse(StrictModel):
     mode: Literal["report-only"]
     counts: ConsistencyCounts
@@ -125,6 +137,8 @@ class ConsistencySummaryResponse(StrictModel):
     snapshot_guarantee: Literal["catalog_only"]
     best_effort: Literal[True]
     has_drift: bool
+    #: None when QA catalog scan failed — never invent zeros for production authority.
+    qa_authority: QAAuthorityCounts | None = None
 
 
 class DeadLetterItem(StrictModel):
@@ -315,7 +329,61 @@ def _manifest_ref(report: ReconcileReport, report_secret: str) -> str:
     return value
 
 
-def _summary_payload(report: ReconcileReport, report_secret: str) -> dict[str, Any]:
+def _qa_authority_counts(engine: Any, tenant_id: str, dataset_id: str) -> dict[str, Any]:
+    """Catalog-only QA retrieval authority counts (no Milvus projection claim)."""
+    from datetime import datetime
+
+    from sqlalchemy import func, or_, select
+    from sqlalchemy.orm import Session
+
+    from models.orm import QAKnowledge
+
+    now = datetime.utcnow()
+    with Session(engine, expire_on_commit=False) as session:
+        base = (
+            QAKnowledge.tenant_id == tenant_id,
+            QAKnowledge.dataset_id == dataset_id,
+        )
+
+        def _count(*extra) -> int:
+            return int(
+                session.scalar(select(func.count()).select_from(QAKnowledge).where(*base, *extra))
+                or 0
+            )
+
+        total = _count()
+        effective = _count(
+            QAKnowledge.review_status == "approved",
+            QAKnowledge.lifecycle_state == "active",
+            QAKnowledge.retrieval_enabled.is_(True),
+            or_(QAKnowledge.effective_from.is_(None), QAKnowledge.effective_from <= now),
+            or_(QAKnowledge.expires_at.is_(None), QAKnowledge.expires_at > now),
+        )
+        pending = _count(QAKnowledge.review_status == "pending")
+        rejected = _count(QAKnowledge.review_status == "rejected")
+        expired = _count(QAKnowledge.lifecycle_state == "expired")
+        retrieval_disabled = _count(
+            QAKnowledge.review_status == "approved",
+            QAKnowledge.lifecycle_state == "active",
+            QAKnowledge.retrieval_enabled.is_(False),
+        )
+        return {
+            "total": total,
+            "effective_retrieval": effective,
+            "pending_review": pending,
+            "rejected": rejected,
+            "expired": expired,
+            "retrieval_disabled": retrieval_disabled,
+            "note": "QA 权威来自 MySQL Catalog；不投影 Milvus，不作为可确认修复对象",
+        }
+
+
+def _summary_payload(
+    report: ReconcileReport,
+    report_secret: str,
+    *,
+    qa_authority: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     counts = _counts(report)
     return {
         "mode": "report-only",
@@ -335,6 +403,7 @@ def _summary_payload(report: ReconcileReport, report_secret: str) -> dict[str, A
         "snapshot_guarantee": "catalog_only",
         "best_effort": True,
         "has_drift": bool(report.has_drift),
+        "qa_authority": qa_authority,
     }
 
 
@@ -993,7 +1062,17 @@ def consistency_summary(
     actor: ReadActor,
 ) -> dict[str, Any]:
     report, report_secret = _run_report(request, actor=actor, dataset_id=dataset_id)
-    return _summary_payload(report, report_secret)
+    qa_authority: dict[str, Any] | None
+    try:
+        qa_authority = _qa_authority_counts(_engine(request), actor.tenant_id, dataset_id)
+    except Exception:  # noqa: BLE001 - QA 计数失败不阻断文档投影摘要；不编造 0
+        from core.observability import get_logger
+
+        get_logger("server.knowledge_consistency_api").warning(
+            "qa_authority counts unavailable for consistency summary", exc_info=True
+        )
+        qa_authority = None
+    return _summary_payload(report, report_secret, qa_authority=qa_authority)
 
 
 @router.post(
