@@ -89,3 +89,4 @@ docs/*.visual-check.*
 debug-readonly*.txt
 server-live-*.log
 server-live-*.err.log
+.worktrees/
