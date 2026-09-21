@@ -103,6 +103,7 @@ export function formatChunkingDecision(
 
 export function chunkingDecisionAria(view: ChunkingDecisionView): string {
   const bits = [view.modeLabel];
+  if (view.reasonCodeLabel) bits.push(view.reasonCodeLabel);
   if (view.reason) bits.push(view.reason);
   if (view.factsSummary) bits.push(view.factsSummary);
   return bits.join("；");

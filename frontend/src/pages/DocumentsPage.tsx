@@ -1400,11 +1400,19 @@ export default function DocumentsPage({
         className="doc-parser-profile"
         aria-label={`${doc.name} 解析画像：${chunkingDecisionAria(diag)}`}
         title={chunkingDecisionAria(diag)}
+        data-testid={`doc-parser-profile-${doc.id}`}
       >
         <span>{engine}</span>
         <small>{diag.modeLabel}</small>
         {diag.reasonCodeLabel ? (
-          <small className="doc-parser-chunk-reason">{diag.reasonCodeLabel}</small>
+          <small className="doc-parser-chunk-reason" data-testid="doc-parser-chunk-reason">
+            {diag.reasonCodeLabel}
+          </small>
+        ) : null}
+        {diag.reason ? (
+          <small className="doc-parser-chunk-reason-detail" data-testid="doc-parser-chunk-reason-detail">
+            {diag.reason}
+          </small>
         ) : null}
         <small className="doc-parser-duration">
           总耗时 {formatDuration(meta.total_ms ?? meta.parse_ms)}
