@@ -17,6 +17,24 @@ const PROTECTION_DEFS: Array<Omit<ProtectionSignal, "count">> = [
     tone: "warning",
   },
   {
+    key: "query.qa_retrieval.hit",
+    label: "QA 权威命中",
+    hint: "Catalog 已审核 FAQ 进入检索证据的累计次数。",
+    tone: "neutral",
+  },
+  {
+    key: "query.qa_retrieval.no_match",
+    label: "QA 无命中",
+    hint: "存在有效 FAQ 包但当前查询未命中权威问答的累计次数。",
+    tone: "neutral",
+  },
+  {
+    key: "query.qa_retrieval.catalog_error",
+    label: "QA 目录读取失败",
+    hint: "FAQ 检索读 Catalog 失败的累计次数（不阻断问答，但 QA 权威未参与）。",
+    tone: "warning",
+  },
+  {
     key: "retrieval.rerank.degraded",
     label: "重排降级",
     hint: "重排不可用时退回召回顺序的累计次数。",

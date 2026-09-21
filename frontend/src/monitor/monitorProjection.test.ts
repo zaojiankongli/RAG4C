@@ -32,6 +32,9 @@ describe("monitor projection", () => {
   it("projects RAG4C quality and degradation counters", () => {
     const signals = projectProtectionSignals({
       "query.abstained": stat(8),
+      "query.qa_retrieval.hit": stat(5),
+      "query.qa_retrieval.no_match": stat(2),
+      "query.qa_retrieval.catalog_error": stat(1),
       "retrieval.rerank.degraded": stat(3),
       "graph.fallback": stat(2),
       "query.round2.skipped": stat(1),
@@ -39,6 +42,9 @@ describe("monitor projection", () => {
 
     expect(signals.map((signal) => [signal.key, signal.count])).toEqual([
       ["query.abstained", 8],
+      ["query.qa_retrieval.hit", 5],
+      ["query.qa_retrieval.no_match", 2],
+      ["query.qa_retrieval.catalog_error", 1],
       ["retrieval.rerank.degraded", 3],
       ["graph.fallback", 2],
       ["query.round2.skipped", 1],
