@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+﻿// @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -279,6 +279,25 @@ describe("QAGovernancePanel", () => {
     render(<QAGovernancePanel {...props({ items: [], pageItems: [] })} />);
     expect(screen.getAllByRole("button", { name: "导入 QA" }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: "新建 QA" }).length).toBeGreaterThan(0);
+  });
+
+  it("shows clear-filters CTA when empty under active filters", async () => {
+    const setFilters = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <QAGovernancePanel
+        {...props({ items: [], pageItems: [], filters: { review_status: "pending" } })}
+        setFilters={setFilters}
+      />,
+    );
+    expect(screen.getByLabelText("清除 QA 筛选")).toBeTruthy();
+    await user.click(screen.getByLabelText("清除 QA 筛选"));
+    expect(setFilters).toHaveBeenCalledWith({});
+  });
+
+  it("hides clear-filters CTA when empty without filters", () => {
+    render(<QAGovernancePanel {...props({ items: [], pageItems: [], filters: {} })} />);
+    expect(screen.queryByLabelText("清除 QA 筛选")).toBeNull();
   });
 
   it("exports current-filter QA as JSON/CSV via exportQA", async () => {

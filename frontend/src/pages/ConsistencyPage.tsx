@@ -608,11 +608,20 @@ export default function ConsistencyPage() {
                     <Text className="consistency-eyebrow">QA AUTHORITY</Text>
                     <h2 id="consistency-qa-title">QA 检索权威（Catalog）</h2>
                   </div>
-                  <Tag variant="light">
-                    {projection.qaAuthority
-                      ? `${projection.qaAuthority.effective_retrieval.toLocaleString()} 可检索`
-                      : "未返回"}
-                  </Tag>
+                  <div className="consistency-qa-heading-actions">
+                    <a
+                      className="consistency-qa-governance-link"
+                      href="#/governance"
+                      aria-label="打开 QA 治理"
+                    >
+                      打开 QA 治理
+                    </a>
+                    <Tag variant="light">
+                      {projection.qaAuthority
+                        ? `${projection.qaAuthority.effective_retrieval.toLocaleString()} 可检索`
+                        : "未返回"}
+                    </Tag>
+                  </div>
                 </div>
                 {projection.qaAuthority ? (
                   <>

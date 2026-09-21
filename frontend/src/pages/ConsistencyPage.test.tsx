@@ -56,6 +56,15 @@ const summary: ConsistencySummaryResponse = {
   confirmable: false,
   snapshot_guarantee: "catalog_only",
   has_drift: true,
+  qa_authority: {
+    total: 5,
+    effective_retrieval: 2,
+    pending_review: 1,
+    rejected: 1,
+    expired: 1,
+    retrieval_disabled: 0,
+    note: "QA 权威来自 MySQL Catalog",
+  },
 };
 
 const deadLetters: DeadLetterListResponse = {
@@ -163,6 +172,11 @@ describe("ConsistencyPage", () => {
     for (const [label, count] of [["缺失", "3"], ["过期", "2"], ["孤儿", "4"], ["阻塞", "1"]]) {
       expect(screen.getByText(label).parentElement?.textContent).toContain(count);
     }
+    // QA 权威区块 + 治理深链
+    const qaLifeline = screen.getByRole("list", { name: "QA 权威生命线" });
+    expect(qaLifeline).toBeTruthy();
+    const qaLink = screen.getByLabelText("打开 QA 治理");
+    expect(qaLink.getAttribute("href")).toBe("#/governance");
     expect(screen.queryByRole("button", { name: /修复/ })).toBeNull();
   });
 

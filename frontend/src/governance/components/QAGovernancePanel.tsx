@@ -114,6 +114,17 @@ export default function QAGovernancePanel(props: QAGovernancePanelProps) {
   const importButtonRef = useRef<HTMLButtonElement | null>(null);
   const lastInvokerRef = useRef<HTMLElement | null>(null);
   const globalBusy = props.mutatingId !== null;
+  const activeFilterKeys = useMemo(() => {
+    const f = props.filters || {};
+    return (Object.keys(f) as Array<keyof QAListFilters>).filter((key) => {
+      const value = f[key];
+      return value !== undefined && value !== null && String(value).trim() !== "";
+    });
+  }, [props.filters]);
+  const hasActiveFilters = activeFilterKeys.length > 0;
+  const clearFilters = () => {
+    props.setFilters({});
+  };
   const editingQA = editingId && editingId !== "create" ? props.items.find((item) => item.id === editingId) ?? null : null;
   const alternativeQA = alternativeId ? props.items.find((item) => item.id === alternativeId) ?? null : null;
   const selectedRows = useMemo(
@@ -500,6 +511,16 @@ export default function QAGovernancePanel(props: QAGovernancePanelProps) {
                 <div className="governance-empty-cta">
                   <p className="governance-empty-inline">当前筛选下暂无 QA 记录</p>
                   <div className="governance-empty-actions">
+                    {hasActiveFilters ? (
+                      <Button
+                        variant="outline"
+                        aria-label="清除 QA 筛选"
+                        className="governance-control-min-h"
+                        onClick={clearFilters}
+                      >
+                        清除筛选
+                      </Button>
+                    ) : null}
                     {!props.readOnly && props.importItems ? (
                       <Button
                         theme="primary"

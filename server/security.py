@@ -24,42 +24,46 @@ from server.run_ops import (
     configured_operator_token,
 )
 
-#: 管理型路径（远程访问必须 operator 凭证）。路径使用 app.py 挂载的完整前缀。
-#: 另见 :func:`is_admin_path`：知识库文档写操作使用参数化路径，不能只靠精确集合。
+#: 管理型路径（远程访问必须 operator 凭证）。仅收录**真实存在**的全局写路径。
 _ADMIN_PATHS = frozenset(
     {
         "/api/config/update",
         "/api/eval/run",
         "/api/documents/ingest",
         "/api/documents/ingest-folder",
-        "/api/documents/batch-delete",
     }
-)
-
-_ADMIN_PATH_SUFFIXES = (
-    "/documents/batch-delete",
-    "/delete",
 )
 
 
 def is_admin_path(path: str) -> bool:
-    """管理型写路径判定：精确白名单 + 知识库文档参数化路由。
+    """管理型写路径判定：精确白名单 + 结构化知识库文档写路由。
 
     - ``/api/knowledge-bases/{ds}/documents/batch-delete``
     - ``/api/knowledge-bases/{ds}/documents/{doc}/delete``
     - ``/api/documents/{doc}/reindex``
+
+    刻意**不用**过宽的 ``/delete`` 后缀，避免把无关读路径划入管理面。
     """
     raw = (path or "").split("?", 1)[0]
     if not raw:
         return False
     if raw in _ADMIN_PATHS:
         return True
-    if raw.startswith("/api/documents/") and raw.endswith("/reindex"):
-        return True
+    if raw.startswith("/api/documents/"):
+        tail = raw[len("/api/documents/") :]
+        parts = tail.split("/")
+        # 仅 {doc_id}/reindex；拒绝 /reindex 自身与多级路径
+        if len(parts) == 2 and parts[0] and parts[0] != "reindex" and parts[1] == "reindex":
+            return True
     if raw.startswith("/api/knowledge-bases/") and "/documents/" in raw:
-        for suffix in _ADMIN_PATH_SUFFIXES:
-            if raw.endswith(suffix):
-                return True
+        tail = raw.split("/documents/", 1)[1]
+        # batch-delete：整段路径
+        if tail == "batch-delete":
+            return True
+        # 单文档删除：{doc_id}/delete（doc_id 非空且无额外段）
+        parts = tail.split("/")
+        if len(parts) == 2 and parts[0] and parts[1] == "delete":
+            return True
     return False
 
 
