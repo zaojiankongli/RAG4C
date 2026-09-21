@@ -2618,12 +2618,23 @@ def eval_datasets() -> dict[str, Any]:
 
 
 @app.post("/api/eval/run")
-async def eval_run(req: EvalRunRequest) -> dict[str, Any]:
+async def eval_run(
+    req: EvalRunRequest,
+    request: Request,
+) -> dict[str, Any]:
     """运行一次评测（dry-run 或真实管线），返回 EvalReport 并落盘。
 
     真实模式（pipeline != "none"）会逐条调用 RAG 全链路，耗时取决于数据集大小；
-    同时间仅允许一个评测任务（忙时 409）。
+    同时间仅允许一个评测任务（忙时 409）。远程经 admin operator 中间件；
+    业务层在 require_actor_on_admin_writes 时要求 Knowledge MANAGE。
     """
+    from server.security import is_loopback_or_test, require_actor_on_admin_writes
+    from server.knowledge_auth import require_knowledge_permission
+    from core.knowledge_permissions import KNOWLEDGE_MANAGE
+
+    if require_actor_on_admin_writes() or not is_loopback_or_test(request):
+        await require_knowledge_permission(KNOWLEDGE_MANAGE, None)(request)
+
     if req.dataset_spec not in _eval_dataset_specs():
         raise HTTPException(status_code=400, detail="评测数据集不在服务端允许清单中")
     if req.pipeline not in _ALLOWED_EVAL_PIPELINES:
@@ -3222,21 +3233,30 @@ _env_write_lock = threading.Lock()
 
 
 @app.post("/api/config/update")
-def config_update(req: ConfigUpdateRequest) -> dict[str, Any]:
+async def config_update(
+    req: ConfigUpdateRequest,
+    request: Request,
+) -> dict[str, Any]:
     """把指定配置项写入 .env（RAG4C_<SECTION>_<KEY>=value）并尝试热更新。
 
         安全约束：
         - 仅接受 Settings 模型结构内的合法路径（白名单）；
         - 拒绝修改敏感字段（api_key / token）；
         - 值按当前字段类型做严格校验（bool / int / float / str）；
-        - 原子写入（临时文件 + os.replace）+ 写锁。
-
-        热更新的边界：``hot_reloaded=True`` 表示**回读核实过**——重建管线后从新的
-        ``get_settings()`` 把每个改动路径读回来，与提交值一致才算数。做不到的路径
-        列在 `
-    eeds_restart`` 里（bridge 段是进程启动时读的模块级常量，天然属于
-        这一类）。这个接口从前只保证"上面那段没抛异常"就报成功。
+        - 原子写入（临时文件 + os.replace）+ 写锁；
+        - 远程经 admin operator 中间件；require_actor_on_admin_writes 时要求 MANAGE。
     """
+    from server.security import is_loopback_or_test, require_actor_on_admin_writes
+    from server.knowledge_auth import require_knowledge_permission
+    from core.knowledge_permissions import KNOWLEDGE_MANAGE
+
+    if require_actor_on_admin_writes() or not is_loopback_or_test(request):
+        await require_knowledge_permission(KNOWLEDGE_MANAGE, None)(request)
+    return _apply_config_update(req)
+
+
+def _apply_config_update(req: ConfigUpdateRequest) -> dict[str, Any]:
+    """配置写实现（可被单测直接调用；鉴权在路由层完成）。"""
     from config.settings import (
         Settings,
         _iter_field_paths,

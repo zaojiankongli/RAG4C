@@ -1203,6 +1203,10 @@ class KnowledgeSecuritySettings(BaseModel):
         default=None, json_schema_extra={"config_api_hidden": True}
     )
     actor_max_ttl_s: int = Field(default=900, ge=60, le=3600)
+    #: 管理型写端点（ingest/reindex/config.update/eval.run）是否强制 Knowledge Actor。
+    #: 远程请求仍先经过 admin operator 中间件；本开关控制业务层租户绑定门禁。
+    #: 桌面本地无 token 调试时可临时设为 False（生产保持 True）。
+    require_actor_on_admin_writes: bool = True
     # Empty by default: OIDC start remains fail-closed until an operator configures
     # exact callback URIs. At most 32 entries keeps comparison and config surfaces bounded.
     oidc_redirect_uri_allowlist: list[str] = Field(default_factory=list, max_length=32)

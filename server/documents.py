@@ -32,12 +32,17 @@ from core.document_deletion import (
     DocumentDeletionRepository,
 )
 from core.knowledge_content import ContentConflict, ContentNotFound
-from core.knowledge_permissions import KNOWLEDGE_DELETE, KNOWLEDGE_READ
+from core.knowledge_permissions import KNOWLEDGE_DELETE, KNOWLEDGE_READ, KNOWLEDGE_WRITE
 from core.observability import get_logger
 from server.knowledge_auth import (
     KnowledgeActor,
     require_knowledge_permission,
     resolve_path_dataset,
+)
+from server.security import (
+    assert_admin_actor_tenant,
+    is_loopback_or_test,
+    require_actor_on_admin_writes,
 )
 
 _logger = get_logger("server.documents")
@@ -1101,9 +1106,46 @@ def get_document(doc_id: str) -> dict[str, Any]:
     return doc
 
 
+async def _optional_admin_write_actor(request: Request) -> KnowledgeActor | None:
+    """有 Bearer 时强制鉴权；require_actor 开启时无 token 也 401；关闭且 loopback 放行。
+
+    此处只解析身份；dataset 级 ACL 在 handler 内用 body/document 二次调用
+    ``require_knowledge_permission`` 强制。
+    """
+    has_bearer = bool(request.headers.get("authorization", "").strip())
+    required = require_actor_on_admin_writes()
+    if not has_bearer and not required and is_loopback_or_test(request):
+        return None
+    dep = require_knowledge_permission(KNOWLEDGE_WRITE, None)
+    return await dep(request)
+
+
+async def _enforce_dataset_write(request: Request, dataset_id: str) -> KnowledgeActor:
+    """在已解析身份后，按目标 dataset 强制 WRITE ACL（fail-closed）。"""
+    dep = require_knowledge_permission(
+        KNOWLEDGE_WRITE,
+        lambda _request, _ds=(dataset_id or "default"): _ds,
+    )
+    return await dep(request)
+
+
 @router.post("/documents/ingest")
-def ingest(req: IngestRequest) -> dict[str, Any]:
+async def ingest(
+    req: IngestRequest,
+    request: Request,
+    actor: Annotated[KnowledgeActor | None, Depends(_optional_admin_write_actor)] = None,
+) -> dict[str, Any]:
     """登记文档并后台执行入库（状态机：waiting -> ... -> completed/error）。"""
+    if actor is not None:
+        req = req.model_copy(
+            update={"tenant_id": assert_admin_actor_tenant(actor.tenant_id, req.tenant_id)}
+        )
+        actor = await _enforce_dataset_write(request, req.dataset_id)
+    elif require_actor_on_admin_writes():
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "admin_auth_required", "message": "需要有效的 Bearer 凭据"},
+        )
 
     file_path = Path(req.file_path)
     if not file_path.is_file():
@@ -1149,8 +1191,22 @@ def ingest(req: IngestRequest) -> dict[str, Any]:
 
 
 @router.post("/documents/ingest-folder")
-def ingest_folder(req: FolderIngestRequest) -> dict[str, Any]:
+async def ingest_folder(
+    req: FolderIngestRequest,
+    request: Request,
+    actor: Annotated[KnowledgeActor | None, Depends(_optional_admin_write_actor)] = None,
+) -> dict[str, Any]:
     """递归登记文件夹中的支持格式，并用一个后台任务逐个入库。"""
+    if actor is not None:
+        req = req.model_copy(
+            update={"tenant_id": assert_admin_actor_tenant(actor.tenant_id, req.tenant_id)}
+        )
+        actor = await _enforce_dataset_write(request, req.dataset_id)
+    elif require_actor_on_admin_writes():
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "admin_auth_required", "message": "需要有效的 Bearer 凭据"},
+        )
 
     folder_path = Path(req.folder_path)
     if not folder_path.is_dir() or folder_path.is_symlink():
@@ -1236,13 +1292,36 @@ def ingest_folder(req: FolderIngestRequest) -> dict[str, Any]:
 
 
 @router.post("/documents/{doc_id}/reindex")
-def reindex(doc_id: str, req: ReindexRequest) -> dict[str, Any]:
+async def reindex(
+    doc_id: str,
+    req: ReindexRequest,
+    request: Request,
+    actor: Annotated[KnowledgeActor | None, Depends(_optional_admin_write_actor)] = None,
+) -> dict[str, Any]:
     """增量重索引（文件哈希变化检测 + chunk 级差量重建，后台执行）。"""
     from indexing.reindex import reindex_document
 
     doc = catalog.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"文档不存在: {doc_id}")
+    if actor is not None:
+        doc_tenant = str(doc.get("tenant_id") or "").strip()
+        # fail-closed：缺租户字段的文档不允许被任意 actor 重索引
+        if doc_tenant != actor.tenant_id:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "admin_tenant_mismatch",
+                    "message": "文档不属于当前身份租户",
+                },
+            )
+        doc_dataset = str(doc.get("dataset_id") or "default")
+        actor = await _enforce_dataset_write(request, doc_dataset)
+    elif require_actor_on_admin_writes():
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "admin_auth_required", "message": "需要有效的 Bearer 凭据"},
+        )
     if not doc.get("file_path"):
         raise HTTPException(status_code=400, detail="文档无 file_path，无法重索引（请用 ingest 入库）")
 

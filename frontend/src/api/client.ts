@@ -213,10 +213,18 @@ export async function ingestDocument(
     doc_type?: string;
   },
   signal?: AbortSignal,
+  auth?: { tenantId?: string; actorToken?: string },
 ): Promise<IngestResponse> {
+  const headers: Record<string, string> = {};
+  const token = (auth?.actorToken ?? readKnowledgeActorToken() ?? "").trim();
+  const tenant = auth?.tenantId?.trim();
+  if (token || tenant) {
+    Object.assign(headers, knowledgeAuthHeaders(tenant || payload.tenant_id || "default", token || undefined));
+  }
   return request<IngestResponse>("/api/documents/ingest", {
     method: "POST",
     body: JSON.stringify(payload),
+    headers,
     timeoutMs: 30_000,
     signal,
   });
@@ -230,10 +238,18 @@ export async function ingestFolder(
     tenant_id?: string;
   },
   signal?: AbortSignal,
+  auth?: { tenantId?: string; actorToken?: string },
 ): Promise<FolderIngestResponse> {
+  const headers: Record<string, string> = {};
+  const token = (auth?.actorToken ?? readKnowledgeActorToken() ?? "").trim();
+  const tenant = auth?.tenantId?.trim();
+  if (token || tenant) {
+    Object.assign(headers, knowledgeAuthHeaders(tenant || payload.tenant_id || "default", token || undefined));
+  }
   return request<FolderIngestResponse>("/api/documents/ingest-folder", {
     method: "POST",
     body: JSON.stringify(payload),
+    headers,
     timeoutMs: 60_000,
     signal,
   });
@@ -244,10 +260,21 @@ export async function reindexDocument(
   docId: string,
   force = false,
   signal?: AbortSignal,
+  auth?: { tenantId?: string; actorToken?: string },
 ): Promise<IngestResponse> {
+  const headers: Record<string, string> = {};
+  const token = (auth?.actorToken ?? readKnowledgeActorToken() ?? "").trim();
+  const tenant = auth?.tenantId?.trim();
+  if (token || tenant) {
+    Object.assign(
+      headers,
+      knowledgeAuthHeaders(tenant || "default", token || undefined),
+    );
+  }
   return request<IngestResponse>("/api/documents/" + encodeURIComponent(docId) + "/reindex", {
     method: "POST",
     body: JSON.stringify({ force }),
+    headers,
     timeoutMs: 30_000,
     signal,
   });

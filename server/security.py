@@ -4,17 +4,10 @@
 **管理型端点**（配置写、评测运行、文档写操作等），使其在远程访问时默认
 fail-closed；本地 loopback（前端开发 / Tauri 桌面端）保持免认证的既有体验。
 
-边界（刻意保守，不破坏"行为等价"）：
-- 本模块**不**改变现有各 API 模块自身的鉴权（knowledge_auth 的 actor token /
-  run_ops 的 operator token 已各自生效）；
-- 只补一道**管理端点**的远程准入闸门，且对 ``testclient``（单元测试）与
-  loopback 一律放行，避免把测试与本地开发误判为远程攻击。
-
-策略：
-- ``require_admin_access(request)`` 中间件：命中管理路径白名单 +
-  非 loopback + 非 testclient 时，要求 Bearer operator token；否则放行。
-- ``is_loopback_or_test(request)``：区分"可信本地"与"远程"。基于 request.client
-  直连地址判断，**不信任** X-Forwarded-For 等代理头。
+边界：
+- 远程准入：``require_admin_access`` 中间件 + :func:`is_admin_path`；
+- 业务层：``require_actor_on_admin_writes`` 控制 ingest/reindex/config/eval
+  是否强制 Knowledge Actor，并将写操作租户绑定到 actor（见 documents/app）。
 """
 from __future__ import annotations
 
@@ -32,6 +25,7 @@ from server.run_ops import (
 )
 
 #: 管理型路径（远程访问必须 operator 凭证）。路径使用 app.py 挂载的完整前缀。
+#: 另见 :func:`is_admin_path`：知识库文档写操作使用参数化路径，不能只靠精确集合。
 _ADMIN_PATHS = frozenset(
     {
         "/api/config/update",
@@ -41,6 +35,32 @@ _ADMIN_PATHS = frozenset(
         "/api/documents/batch-delete",
     }
 )
+
+_ADMIN_PATH_SUFFIXES = (
+    "/documents/batch-delete",
+    "/delete",
+)
+
+
+def is_admin_path(path: str) -> bool:
+    """管理型写路径判定：精确白名单 + 知识库文档参数化路由。
+
+    - ``/api/knowledge-bases/{ds}/documents/batch-delete``
+    - ``/api/knowledge-bases/{ds}/documents/{doc}/delete``
+    - ``/api/documents/{doc}/reindex``
+    """
+    raw = (path or "").split("?", 1)[0]
+    if not raw:
+        return False
+    if raw in _ADMIN_PATHS:
+        return True
+    if raw.startswith("/api/documents/") and raw.endswith("/reindex"):
+        return True
+    if raw.startswith("/api/knowledge-bases/") and "/documents/" in raw:
+        for suffix in _ADMIN_PATH_SUFFIXES:
+            if raw.endswith(suffix):
+                return True
+    return False
 
 
 def is_loopback_or_test(request: Request) -> bool:
@@ -80,7 +100,7 @@ def _settings() -> Any:
 def require_admin_access(request: Request) -> None:
     """管理端点准入（fail-closed）：可信本地放行；远程必须 Bearer operator token。
 
-    在 ``server.app`` 中以中间件方式挂载，命中 :data:`_ADMIN_PATHS` 才生效。
+    在 ``server.app`` 中以中间件方式挂载，命中 :func:`is_admin_path` 才生效。
     无 operator token 配置时，远程访问管理端点直接 403（与 run_ops 语义一致）。
     """
     if is_loopback_or_test(request):
@@ -112,6 +132,33 @@ def _unauthorized() -> Exception:
     )
 
 
+def require_actor_on_admin_writes() -> bool:
+    """业务层是否强制 Knowledge Actor。"""
+    try:
+        return bool(_settings().knowledge_security.require_actor_on_admin_writes)
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def assert_admin_actor_tenant(actor_tenant: str, requested_tenant: str | None) -> str:
+    """管理写：将请求租户收敛到 actor 租户；不一致则拒绝。"""
+    actor_t = (actor_tenant or "").strip()
+    requested = (requested_tenant or "").strip() or actor_t
+    if not actor_t:
+        raise _forbidden()
+    if requested and requested != actor_t:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "admin_tenant_mismatch",
+                "message": "请求租户与身份凭据不一致",
+            },
+        )
+    return actor_t
+
+
 def admin_access_middleware(make_error: Callable[[int, str, dict], object] | None = None):
     """HTTP 中间件工厂：对管理路径做远程准入控制。
 
@@ -119,7 +166,7 @@ def admin_access_middleware(make_error: Callable[[int, str, dict], object] | Non
     """
 
     async def middle(request: Request, call_next: Callable):
-        if request.url.path in _ADMIN_PATHS:
+        if is_admin_path(request.url.path):
             try:
                 require_admin_access(request)
             except Exception as exc:  # HTTPException 或其它
@@ -138,3 +185,13 @@ def admin_access_middleware(make_error: Callable[[int, str, dict], object] | Non
         return await call_next(request)
 
     return middle
+
+
+__all__ = [
+    "admin_access_middleware",
+    "assert_admin_actor_tenant",
+    "is_admin_path",
+    "is_loopback_or_test",
+    "require_actor_on_admin_writes",
+    "require_admin_access",
+]
