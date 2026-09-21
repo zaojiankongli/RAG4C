@@ -3,7 +3,7 @@ feature: config-qa-retrieval
 status: delivered
 updated: 2026-09-20
 branch: integration/qa-faq-ops
-commits: b0cb8a1..working-tree
+commits: b0cb8a1..b40ba52
 ---
 
 # Config QA Retrieval
