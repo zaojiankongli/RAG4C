@@ -156,9 +156,11 @@ def test_is_admin_path_matches_parameterized_document_writes() -> None:
     assert is_admin_path("/api/eval/run") is True
     assert is_admin_path("/api/documents/ingest") is True
     assert is_admin_path("/api/documents/ingest-folder") is True
+    assert is_admin_path("/api/documents/batch-settings") is True
+    assert is_admin_path("/api/documents/batch-delete") is True
     assert is_admin_path("/api/documents/doc-1/reindex") is True
-    assert is_admin_path("/api/documents/reindex") is False
-    assert is_admin_path("/api/documents/a/b/reindex") is False
+    assert is_admin_path("/api/documents/doc-1/settings") is True
+    assert is_admin_path("/api/documents/doc-1/chunks/ch-9") is True
     assert is_admin_path("/api/knowledge-bases/ds-1/documents/batch-delete") is True
     assert is_admin_path("/api/knowledge-bases/ds-1/documents/doc-1/delete") is True
     # 非管理读路径
@@ -167,9 +169,9 @@ def test_is_admin_path_matches_parameterized_document_writes() -> None:
     assert is_admin_path("/api/health") is False
     # 过宽后缀不得误伤
     assert is_admin_path("/api/knowledge-bases/ds-1/documents/doc-1") is False
-    assert is_admin_path("/api/knowledge-bases/ds-1/documents") is False
-    assert is_admin_path("/api/knowledge-bases/ds-1/other/delete") is False
-    assert is_admin_path("/api/documents/batch-delete") is False
+    assert is_admin_path("/api/documents/reindex") is False
+    assert is_admin_path("/api/documents/a/b/reindex") is False
+    assert is_admin_path("/api/documents/doc-1/chunks") is False
 
 
 def test_middleware_blocks_remote_parameterized_document_write(monkeypatch) -> None:

@@ -31,18 +31,22 @@ _ADMIN_PATHS = frozenset(
         "/api/eval/run",
         "/api/documents/ingest",
         "/api/documents/ingest-folder",
+        "/api/documents/batch-settings",
+        "/api/documents/batch-delete",
     }
 )
 
 
 def is_admin_path(path: str) -> bool:
-    """管理型写路径判定：精确白名单 + 结构化知识库文档写路由。
+    """管理型写路径判定：精确白名单 + 结构化文档写路由。
 
+    - ``/api/documents/ingest|ingest-folder|batch-settings|batch-delete``
+    - ``/api/documents/{doc}/reindex|settings``
+    - ``/api/documents/{doc}/chunks/{chunk}``
     - ``/api/knowledge-bases/{ds}/documents/batch-delete``
     - ``/api/knowledge-bases/{ds}/documents/{doc}/delete``
-    - ``/api/documents/{doc}/reindex``
 
-    刻意**不用**过宽的 ``/delete`` 后缀，避免把无关读路径划入管理面。
+    裸 ``/api/documents/{doc}``（GET 详情）**不**划入管理面。
     """
     raw = (path or "").split("?", 1)[0]
     if not raw:
@@ -50,17 +54,16 @@ def is_admin_path(path: str) -> bool:
     if raw in _ADMIN_PATHS:
         return True
     if raw.startswith("/api/documents/"):
-        tail = raw[len("/api/documents/") :]
-        parts = tail.split("/")
-        # 仅 {doc_id}/reindex；拒绝 /reindex 自身与多级路径
-        if len(parts) == 2 and parts[0] and parts[0] != "reindex" and parts[1] == "reindex":
+        parts = raw[len("/api/documents/") :].split("/")
+        if len(parts) == 2 and parts[0] and parts[0] not in ("batch-settings", "batch-delete"):
+            if parts[1] in ("reindex", "settings"):
+                return True
+        if len(parts) == 3 and parts[0] and parts[1] == "chunks" and parts[2]:
             return True
     if raw.startswith("/api/knowledge-bases/") and "/documents/" in raw:
         tail = raw.split("/documents/", 1)[1]
-        # batch-delete：整段路径
         if tail == "batch-delete":
             return True
-        # 单文档删除：{doc_id}/delete（doc_id 非空且无额外段）
         parts = tail.split("/")
         if len(parts) == 2 and parts[0] and parts[1] == "delete":
             return True
