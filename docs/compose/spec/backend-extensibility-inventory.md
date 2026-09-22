@@ -176,7 +176,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
    `info`（质量告警走 2 值 `_observation_alert_severity`，审批硬编码 `warning`）。
 8. **`mineru.provider` 有两个分派器**（`base.py:167-177` 与 `plugins.py:16-22`），前者不传 `mode`，
    只被 smoke 脚本用到；只在一边加 provider 会在另一边静默失效。
-9. **`gate_state` 存储值 `passing`、对外 `passed`** —— **仍在，且普查记的"两遍"是低估**。
+9. **`gate_state` 存储值 `passing`、对外 `passed`** —— **曾仍在、现已收口（见 §V）**；普查记的"两遍"是低估。
    本轮读码数出来是 **5 处**知道这个别名，分两种性质：
    * 三处**做转换**（各写一遍方向相反的三元式）：
      `core/enterprise_release_quality_scheduler.py:2816`（写库：`passed → passing`）、
@@ -186,7 +186,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
      `core/enterprise_release_quality_alerts.py:81` 与
      `server/enterprise_release_quality_operations_api.py:50` 都写
      `{"passing","passed","waived","not_required","blocked","unavailable"}`。
-   **建议形状**（**尚未实现**，本轮只做到把面数清）：一对常量 +
+   **形状**（已实现，见 §V）：一对常量 +
    `to_storage()` / `to_public()`（未知值 raise，不静默透传）+ 一个 `GATE_STATES_PUBLIC`；
    三处转换改调函数，两处词表改成从同一声明派生
    （`GATE_STATES_PUBLIC | {GATE_PASSED_STORAGE}`）。
@@ -801,3 +801,52 @@ DocumentsFilterState, (value: string) => void>` 两张表，回灌 / 单键写 /
    61 处 `"unavailable"` 字面量，且收成声明表时必须同时保住冻结版的行为等价（垫片每处都拿
    ORIGINAL 版做对照）。归为 §B 候选**轴 #17（capability 状态生产者）**，
    与 §D-6 同源风险，**不属于"顺手可修"**。
+
+## V. §D-9 落地记录：一个别名只留一个主人（含一次"我以为会有缺口，结果没有"）
+
+| | 改前 | 改后 |
+|---|---|---|
+| 加/改一档 gate 判定要动几处 | 6 处各自写（3 处方向相反的同款三元式 + 2 份并列两种拼写的词表 + 前端 1 处双拼分支） | 1 处声明（`core/release_quality_gate_states.py`）+ 两条对账守卫（请求侧静态 `Literal` 与 DB 的 `CHECK`）—— 请求侧那个 `Literal` 必须保持字面量形态好让 OpenAPI 生成，**没法从函数派生，所以靠守卫而不是编译期** |
+| 未声明的状态来到边界 | 写侧原样透传给 SQL，由 DB 的 CHECK 在 flush 时报一句跟业务无关的错；筛选侧靠另一份手写集合 | 两个方向的转换函数都是 **total**：不在声明里就 raise，筛选侧把它翻成既有的 `QualityScheduleValidation`（400 类，不是 500） |
+
+**这条轴真正的判据不是"少写两行"，而是新增的那道对账**：
+`test_the_declared_storage_vocabulary_equals_what_the_database_allows` 把 Python 侧的存储集合
+去等 `models/orm.py` 与 `catalog_migrations/versions/0031_...` 里那条
+`CHECK (gate_state IN ('passing','waived','not_required','blocked','unavailable'))` 的 IN 清单。
+**在此之前没有任何测试断言过"Python 词表 == 数据库约束"**，所以往一边加一档、另一边忘了，
+表现是 flush 期一个看不懂的完整性错误。
+
+顺带查出并修掉的死成员：`core/enterprise_release_quality_alerts.py` 校验的是**库里的行**
+（:517），词表却把 `passed` 也列着 —— 那条 CHECK 永不产出它。改成 `gate_states_storage()` 后
+它是一个**行为等价的收紧**（该值不可能出现，删掉不会拒掉任何真数据）。
+反向验证：把手写列表装回去 → `test_the_alerts_vocabulary_validates_rows_so_it_must_be_the_storage_set` 红。
+
+**前端那一处没在本片动**（登记而非顺手改）：
+`QualityOperationsDetailDrawer.tsx:43/:326` 同时认 `passed` 与 `passing`，
+因为契约的 `ObservationGateState` 确实并列着两种拼法。要收掉它得先裁一件事：
+**对外契约留不留 `passing`**。留 → 前端那两处就是正确的宽容；不留 → 是破坏性契约变更，
+必须单独成切片并同步界面。本片只做"两种拼法都由同一份声明派生"，不改对外承诺。
+
+**反向验证 6/6 转红**（`%TEMP%\mutate_gate_states.py`，四个被改文件还原后按字节断言与改前相同）：
+
+| 变异 | 转红的用例 |
+|---|---|
+| GM1 写侧退回内联三元式 | 回潮栅栏 `test_no_module_writes_the_alias_as_an_inline_ternary_again` |
+| GM2 转换函数不再 total（未知值原样返回） | 10 条红（含参数化的"未声明值必须拒"） |
+| GM3 存储词表混进对外拼法（与 CHECK 漂移） | 4 条红，其中一条就是新加的 CHECK 对账 |
+| GM4 alerts 退回自己那份含死成员的列表 | alerts 那条专用用例 |
+| GM5 请求侧 Literal 少一种拼法 | 字面量与声明的对账用例 |
+| GM6 筛选侧退回原样透传 | `..._reject_tampered_cursor_and_filters` |
+
+**GM6 是本轮一个值得记下的自我更正**：我原本判定"这条变异会存活"，理由是 fixture 只产出
+`blocked`，两种拼写都筛不到行、断言会同样通过。实跑**转红** —— 抓住它的不是"别名命中非空行"
+那半，而是**同一处转换同时是校验点**（透传之后 `stale` 不再被拒）。
+所以两件事分开说清：① 筛选侧被接线这一点有 DB 级覆盖；② "别名两种拼各自命中同一批**非空**行"
+这一格仍然只有单元级覆盖 —— 需要一个"健康 SLO"夹具，`_prepare_expired_execution_authority`
+给不出，而想用它绕（UPDATE 成 `passing`）被表自己的 append-only 不可变触发器拒了。
+该缺口写进用例 docstring，不当场糊。
+
+**门禁实跑**：`tests/test_release_quality_gate_states.py` + `..._operations_reads.py` → 20 passed；
+`ruff check tests/ core/release_quality_gate_states.py` 干净；release-quality 六套（alerts /
+observation / operations_core / operations_migration / persistence / scan_execution）→ 50 passed。
+

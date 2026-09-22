@@ -40,6 +40,10 @@ from core.enterprise_release_quality_operations import (
 )
 from core.knowledge_governance import sanitize_audit_snapshot
 from core.knowledge_permissions import KNOWLEDGE_MANAGE, KNOWLEDGE_READ, role_allows
+from core.release_quality_gate_states import (
+    to_public_gate_state,
+    to_storage_gate_state,
+)
 from models.orm import (
     AppDatasetReference,
     Dataset,
@@ -2812,9 +2816,7 @@ def append_quality_observation(
             slo_policy_id=canonical["slo_policy_id"],
             slo_policy_revision=canonical["slo_policy_revision"],
             release_role=canonical["release_role"],
-            gate_state=(
-                "passing" if canonical["gate_state"] == "passed" else canonical["gate_state"]
-            ),
+            gate_state=to_storage_gate_state(canonical["gate_state"]),
             gate_reason=canonical["gate_reason"],
             certification_id=canonical["certification_id"],
             certification_digest=canonical["certification_digest"],
@@ -3232,7 +3234,7 @@ def _observation_payload(row: DatasetReleaseQualityObservation) -> dict[str, Any
         "slo_policy_id": row.slo_policy_id,
         "slo_policy_revision": int(row.slo_policy_revision),
         "release_role": row.release_role,
-        "gate_state": "passed" if row.gate_state == "passing" else row.gate_state,
+        "gate_state": to_public_gate_state(row.gate_state),
         "gate_reason": row.gate_reason,
         "certification_id": row.certification_id,
         "certification_digest": row.certification_digest,
@@ -3283,17 +3285,12 @@ def list_quality_observations(
         raise QualityScheduleValidation("release_role is invalid")
     if filters["severity"] not in {None, "healthy", "warning", "critical", "unavailable"}:
         raise QualityScheduleValidation("severity is invalid")
-    if filters["gate_state"] == "passed":
-        filters["gate_state"] = "passing"
-    if filters["gate_state"] not in {
-        None,
-        "passing",
-        "waived",
-        "not_required",
-        "blocked",
-        "unavailable",
-    }:
-        raise QualityScheduleValidation("gate_state is invalid")
+    if filters["gate_state"] is not None:
+        # 入参两种拼写都收（契约对外就并列着它们），落到查询上只认存储那一拼。
+        try:
+            filters["gate_state"] = to_storage_gate_state(filters["gate_state"])
+        except ValueError as exc:
+            raise QualityScheduleValidation("gate_state is invalid") from exc
     after = _read_cursor_decode(cursor, "quality_observation")
     with Session(engine, expire_on_commit=False) as session:
         _read_authority(engine, session, tenant_id=tenant, actor_id=actor, dataset_id=dataset)

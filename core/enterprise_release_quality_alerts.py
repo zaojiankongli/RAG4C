@@ -53,6 +53,7 @@ from core.enterprise_tenant_idempotency import (
     tenant_request_hash,
 )
 from core.knowledge_governance import sanitize_audit_snapshot
+from core.release_quality_gate_states import gate_states_storage
 from models.orm import (
     Account,
     Dataset,
@@ -77,9 +78,9 @@ _ACTIVE_ALERT_STATUSES = ACTIVE_ALERT_STATUSES
 configure_alert_model(lambda column: hasattr(DatasetReleaseQualityAlert, column))
 _ALERT_SEVERITIES = frozenset({"warning", "critical"})
 _OBSERVATION_SEVERITIES = frozenset({"healthy", "warning", "critical", "unavailable"})
-_OBSERVATION_GATE_STATES = frozenset(
-    {"passing", "passed", "waived", "not_required", "blocked", "unavailable"}
-)
+# 校验对象是**库里的行**（见 :517 `str(row.gate_state)`），所以词表等于声明侧的存储集合。
+# 改之前这里还并列着 `passed` —— 那条 CHECK 存不进它，是个永不命中的死成员。
+_OBSERVATION_GATE_STATES = gate_states_storage()
 _ALERT_TYPES = frozenset(
     {
         "certification_expiring",
