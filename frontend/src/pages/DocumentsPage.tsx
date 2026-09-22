@@ -73,6 +73,7 @@ import {
   formatChunkingDecision,
 } from "../parse-intervention/model/chunkDiagnostics";
 import { formatDuration, isDocumentSelectable } from "../documents/documentModel";
+import SourcePreviewDialog from "../documents/SourcePreviewDialog";
 import ParseInterventionWorkspace from "../parse-intervention/ParseInterventionWorkspace";
 import {
   documentWorkspaceNavigationIntent,
@@ -394,6 +395,7 @@ export default function DocumentsPage({
   const [categoryFilter, setCategoryFilter] = useState<string>(initialDocumentFilters.category);
   const [tagFilter, setTagFilter] = useState<string>(initialDocumentFilters.tag);
   const [ingestOpen, setIngestOpen] = useState(false);
+  const [sourcePreviewDoc, setSourcePreviewDoc] = useState<DocumentItem | null>(null);
   const [importStep, setImportStep] = useState<1 | 2>(1);
   const [ingestPath, setIngestPath] = useState("");
   const [ingesting, setIngesting] = useState(false);
@@ -1559,6 +1561,23 @@ export default function DocumentsPage({
         >
           设置
         </Button>
+        <Button
+          tag="button"
+          size="small"
+          variant="text"
+          disabled={catalogUsingMock || !actorToken?.trim()}
+          onClick={() => setSourcePreviewDoc(doc)}
+        >
+          查看原文
+        </Button>
+        {sourcePreviewDoc?.id === doc.id ? (
+          <SourcePreviewDialog
+            documentId={doc.id}
+            documentName={doc.name}
+            scope={{ tenantId, datasetId, actorToken: actorToken ?? "" }}
+            onClose={() => setSourcePreviewDoc(null)}
+          />
+        ) : null}
         <Tooltip
           content={
             catalogUsingMock
