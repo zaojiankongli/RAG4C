@@ -49,11 +49,14 @@ def _document(
     updated_offset: int = 0,
     created_offset: int | None = None,
     parser_observed: bool = True,
+    chunking_reason_code: str | None = None,
 ) -> Document:
     parser_meta: dict[str, object] = {}
     if parser_observed:
         if engine is not None:
             parser_meta["engine"] = engine
+        if chunking_reason_code is not None:
+            parser_meta["chunking_reason_code"] = chunking_reason_code
         parser_meta["management"] = {"tags": list(tags or [])}
     return Document(
         id=document_id,
@@ -105,6 +108,7 @@ def _engine():
                     tags=["员工", "制度"],
                     chunks=12,
                     updated_offset=5,
+                    chunking_reason_code="complex_or_structured",
                 ),
                 _document(
                     "doc-a2",
@@ -116,6 +120,7 @@ def _engine():
                     tags=["薪酬", "制度"],
                     chunks=0,
                     updated_offset=4,
+                    chunking_reason_code="complex_or_structured",
                 ),
                 _document(
                     "doc-a3",
@@ -127,6 +132,7 @@ def _engine():
                     tags=["产品"],
                     chunks=3,
                     updated_offset=3,
+                    chunking_reason_code="explicit_mode",
                 ),
                 _document(
                     "doc-a4",
@@ -147,6 +153,7 @@ def _engine():
                     tags=["制度"],
                     chunks=8,
                     updated_offset=1,
+                    chunking_reason_code="simple_short_no_layout",
                 ),
                 _document(
                     "doc-a0",
@@ -154,6 +161,7 @@ def _engine():
                     tags=["制度"],
                     chunks=7,
                     updated_offset=1,
+                    chunking_reason_code="simple_short_no_layout",
                 ),
                 _document(
                     "doc-b1",
@@ -377,12 +385,137 @@ def test_summarize_documents_builds_authoritative_counts_facets_and_recent(catal
         {"value": "mineru", "count": 2},
         {"value": "unknown", "count": 1},
     ]
+    assert result["facets"]["chunking_reasons"] == [
+        {"value": "complex_or_structured", "count": 2},
+        {"value": "simple_short_no_layout", "count": 2},
+        {"value": "explicit_mode", "count": 1},
+        {"value": "unknown", "count": 1},
+    ]
     folders = {item["path"]: item for item in result["facets"]["folders"]}
     assert folders["制度/人力"] == {"path": "制度/人力", "documents": 3, "chunks": 27}
     tags = {item["name"]: item for item in result["facets"]["tags"]}
     assert tags["制度"] == {"name": "制度", "documents": 4, "chunks": 27}
     assert [item["id"] for item in result["recent"]] == ["doc-a1", "doc-a2", "doc-a3"]
     assert result["generated_at"].endswith("Z")
+
+
+def test_list_documents_page_filters_by_chunking_reason_code(catalog_engine) -> None:
+    """切分原因码要能单独当筛选条件；`unknown` 是"这一列还没写"的桶，不是一个原因码。"""
+    page = catalog.list_documents_page(
+        "tenant-a",
+        "dataset-a",
+        offset=0,
+        limit=20,
+        chunking_reason_code="simple_short_no_layout",
+    )
+    assert page["total"] == 2
+    assert sorted(item["id"] for item in page["items"]) == ["doc-a0", "doc-a5"]
+
+    unknown = catalog.list_documents_page(
+        "tenant-a",
+        "dataset-a",
+        offset=0,
+        limit=20,
+        chunking_reason_code="unknown",
+    )
+    assert [item["id"] for item in unknown["items"]] == ["doc-a4"]
+
+    other_tenant = catalog.list_documents_page(
+        "tenant-b",
+        "dataset-b",
+        offset=0,
+        limit=20,
+        chunking_reason_code="simple_short_no_layout",
+    )
+    assert other_tenant["total"] == 0
+
+
+def test_chunking_reason_code_cursor_cannot_page_a_different_filter(catalog_engine) -> None:
+    """游标必须绑住切分原因筛选：否则换筛选继续翻页会静默翻另一个结果集。"""
+    first = catalog.list_documents_page("tenant-a", "dataset-a", offset=0, limit=2)
+    assert first["next_cursor"]
+
+    with pytest.raises(ValueError, match="cursor does not match query"):
+        catalog.list_documents_page(
+            "tenant-a",
+            "dataset-a",
+            limit=2,
+            cursor=first["next_cursor"],
+            chunking_reason_code="explicit_mode",
+        )
+
+    same_filter = catalog.list_documents_page(
+        "tenant-a",
+        "dataset-a",
+        limit=2,
+        cursor=first["next_cursor"],
+        chunking_reason_code="all",
+    )
+    assert [item["id"] for item in same_filter["items"]] == ["doc-a3", "doc-a4"]
+
+
+def test_chunking_reason_code_filter_refuses_schema_without_parser_meta() -> None:
+    """旧库上没有 parser_meta 时，按具体原因码筛选要显式拒绝，不能静默返回全部。"""
+    available = {"tenant_id", "dataset_id", "id"}
+    scope = {
+        "query": "",
+        "status": "all",
+        "doc_type": "all",
+        "engine": "all",
+        "folder": "all",
+        "folder_mode": "exact",
+        "tag": "all",
+        "lifecycle_state": "all",
+    }
+
+    with pytest.raises(catalog.DocumentCatalogCapabilityError):
+        catalog._document_catalog_filter_criteria(
+            Document.__table__,
+            available,
+            "sqlite",
+            "tenant-a",
+            "dataset-a",
+            chunking_reason_code="explicit_mode",
+            **scope,
+        )
+
+    criteria = catalog._document_catalog_filter_criteria(
+        Document.__table__,
+        available,
+        "sqlite",
+        "tenant-a",
+        "dataset-a",
+        chunking_reason_code="unknown",
+        **scope,
+    )
+    assert len(criteria) == 2
+
+
+def test_document_catalog_api_exposes_chunking_reason_code_filter(api) -> None:
+    client, settings = api
+    headers = _headers(settings, "member-a")
+
+    page = client.get(
+        "/api/knowledge-bases/dataset-a/documents",
+        headers=headers,
+        params={"chunking_reason_code": "complex_or_structured"},
+    )
+    assert page.status_code == 200
+    assert sorted(item["id"] for item in page.json()["items"]) == ["doc-a1", "doc-a2"]
+
+    summary = client.get(
+        "/api/knowledge-bases/dataset-a/documents/summary",
+        headers=headers,
+    )
+    assert summary.status_code == 200
+    assert {"value": "explicit_mode", "count": 1} in summary.json()["facets"]["chunking_reasons"]
+
+    rejected = client.get(
+        "/api/knowledge-bases/dataset-a/documents",
+        headers=headers,
+        params={"chunking_reason_code": "x" * 65},
+    )
+    assert rejected.status_code == 422
 
 
 def test_document_catalog_api_requires_actor_and_enforces_limit(api) -> None:

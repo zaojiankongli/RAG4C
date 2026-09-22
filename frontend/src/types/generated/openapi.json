@@ -1006,6 +1006,18 @@
             }
           },
           {
+            "name": "chunking_reason_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "default": "all",
+              "title": "Chunking Reason Code"
+            }
+          },
+          {
             "name": "sort",
             "in": "query",
             "required": false,
@@ -15569,6 +15581,81 @@
                   "additionalProperties": true,
                   "title": "Response Revert Chunk Api Knowledge Bases  Dataset Id  Documents  Doc Id  Chunks  Chunk Id  Revert Post"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge-bases/{dataset_id}/documents/{doc_id}/source-preview": {
+      "get": {
+        "tags": [
+          "knowledge-source-preview"
+        ],
+        "summary": "Read Source Preview",
+        "description": "Hand back the recorded original file for this document, as the declared content type.",
+        "operationId": "read_source_preview_api_knowledge_bases__dataset_id__documents__doc_id__source_preview_get",
+        "security": [
+          {
+            "KnowledgeBearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Doc Id"
+            }
+          },
+          {
+            "name": "disposition",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "inline",
+                "attachment"
+              ],
+              "type": "string",
+              "default": "inline",
+              "title": "Disposition"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },

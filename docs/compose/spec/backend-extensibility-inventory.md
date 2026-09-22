@@ -1,7 +1,7 @@
 ---
 feature: backend-extensibility-inventory
 status: delivered
-updated: 2026-09-22
+updated: 2026-09-23
 branch: main
 commits: 1d2e2e6, a50c697, b93e50d, fa32684, b532304, 4cdd051, 4d842e0
 ---
@@ -30,6 +30,7 @@ retrieval 12/4606、models 3/9344、config 2/1473；字面量等值分派点 247
 | **来源连接器 kind（本轮新增）** | 注册表持有 `config_model` + `preflight`，HTTP 层按 kind 派发 | `tests/test_source_kind_registry.py`（10 条，含 4 路反向验证） |
 | **诊断投影 parser_meta（本轮新增）** | 类型判定（JSON 标量过、容器挡）取代三处按名字点菜的键清单 | `tests/test_ingest_meta_extensibility.py`（7 条，3 路变异验证） |
 | **运行事件类型分区（本轮新增）** | 声明式规格表 `RunEventTypeSpec`，两个 reducer 查表派发 | `tests/test_run_event_taxonomy_registry.py`（45 条，含 5 路反向验证 + import 期一致性栅栏） |
+| **`parser_meta` 字符串键筛选/分面（本轮新增）** | 共享 helper 三件套：一个键一行声明，不再一个键一条内联分支（`engine` 与 `chunking_reason_code` 走同一条路） | `tests/test_document_catalog_api.py`（新增 4 条 + 分面/游标/旧库拒绝断言），落地记录见 §R |
 
 `core/embedding.py` / `core/llm.py` / `core/reranker.py` 经核实**本就已经到位**：
 全部经 `ProviderRegistry`，`server/` 与 `config/` 里没有任何残留 `if provider ==`；
@@ -526,3 +527,51 @@ DB `CHECK (format IN ('ndjson','csv'))` 仍是写死的（属 §B 里"要迁移"
 1. 参数化跑在集合上时，另钉一条字面值断言，否则"少一项"表现为"少跑一条"。
 2. 黑名单式栅栏要把"这一行是谁的"（id / tenant_id / created_at）与"这一行是什么状态"一起保护，
    或者干脆改成白名单。
+
+---
+
+## R. `parser_meta` 字符串键筛选/分面 落地记录（切分诊断二期）
+
+**这条轴不在 B 表里**——它不是普查时按"字面量等值分派点"数出来的，而是做
+`docs/compose/智能体交接审查.md` §9 第 2 条时顺手量出来的：`core/catalog.py` 的
+`_document_catalog_filter_criteria` 里，`engine` 的筛选是**内联**的一整段
+（JSON 取值 + `unknown` 三值 or + 旧库能力错）。要再加一个可筛选的 `parser_meta` 键，
+照抄就是第二段同样的逻辑。
+
+| | 改前 | 改后 |
+|---|---|---|
+| 加一个可筛选的 `parser_meta` 字符串键要改几处 | 3 段逻辑各抄一遍（取值写法 / `unknown` 语义 / 旧库失败模式），且都要记得同步游标哈希 | 1 行 criteria 声明 + 1 行 facet 表达式 + 1 个返回键 |
+| `unknown` 的定义处数 | 每键各一份（会漂移） | 全仓一份（`_document_catalog_meta_key_criteria` / `_facet_expression`） |
+
+落点：`core/catalog.py` 的 `_document_catalog_meta_key_expression` /
+`_document_catalog_meta_facet_expression` / `_document_catalog_meta_key_criteria`。
+旧符号 `_document_catalog_engine_expression` **删除**而非兼容转发（唯一调用方同步改）。
+消费方两处：`_document_catalog_filter_criteria`（`engine`、`chunking_reason_code`）与
+`summarize_documents`（`engines`、`chunking_reasons` 两个分面）。
+
+**语义不变量（这条比代码重要）**：`unknown` 不是某个键的取值，而是"这一列/这一键还没写"的桶。
+所以旧库（无 `parser_meta` 列）上筛 `unknown` 成立（等于不加条件，因为"没写"对所有行为真），
+筛具体值必须 `DocumentCatalogCapabilityError` 显式拒绝——静默返回全部会让操作员读成
+"这个库没有这类文档"。两个键共用这段推理，所以不会各漂一份。
+
+**游标哈希**：新键进了 `_document_cursor_query_hash` 载荷，否则 A 筛选发出的 cursor 能续读
+B 筛选的结果（不报错，只是给出另一批行）。代价是**载荷变了 → 上线前的 cursor 上线后一律 422**，
+这是安全失败。
+
+**反向验证**（脚本 `%TEMP%\mutate_catalog.py`，4/4 转红，还原后 sha256 与改前相同、复跑 23 passed）：
+筛选分支失效 → 3 条红；游标哈希漏键 → `test_chunking_reason_code_cursor_cannot_page_a_different_filter` 红；
+旧库不再抛能力错 → `test_chunking_reason_code_filter_refuses_schema_without_parser_meta` 红；
+分面不吐 → 2 条红。用例名与读数详见 `chunking-reason-filter.md` §4.1。
+
+**诚实边界**：
+1. **无索引扫描**。谓词在 `parser_meta[key]` 上，MySQL 走不到索引，只靠同一 WHERE 里
+   `tenant_id` + `dataset_id`（有索引）把扫描面收窄到一个库内。要 generated column + 索引
+   是独立迁移切片（新 `catalog_migrations/versions/` + `tests/head_catalog.py` 夹具声明 +
+   capability 白名单），本片没做。
+2. **本片没有常驻的"宿主文件逐字节不变"守卫**。判据靠的是"两个键共用同一 helper"这个结构事实
+   + 4 路变异；与 §I/§J/§K 那些带宿主守卫的轴相比弱一档。要补齐就是加一条
+   "criteria/facet 里不许出现第二个 `parser_meta[` 字面量取值"的源码扫描守卫，
+   与 `tests/test_chunk_writers.py` 同型。**登记为下一轮候选，不当场糊。**
+3. 分面对旧库返回单个 `unknown` 桶而不是报错——分面是"看见现状"，筛选具体值才是"要求答案"，
+   两者失败模式必须不同。
+

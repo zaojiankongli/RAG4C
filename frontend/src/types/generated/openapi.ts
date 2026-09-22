@@ -3347,6 +3347,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/knowledge-bases/{dataset_id}/documents/{doc_id}/source-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Source Preview
+         * @description Hand back the recorded original file for this document, as the declared content type.
+         */
+        get: operations["read_source_preview_api_knowledge_bases__dataset_id__documents__doc_id__source_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/knowledge-bases/{dataset_id}/consistency/summary": {
         parameters: {
             query?: never;
@@ -8327,6 +8347,7 @@ export interface operations {
                 folder_mode?: "exact" | "subtree";
                 tag?: string;
                 lifecycle_state?: string;
+                chunking_reason_code?: string;
                 sort?: "updated_at_desc" | "created_at_asc" | "name_asc";
                 cursor?: string | null;
             };
@@ -15978,6 +15999,40 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_source_preview_api_knowledge_bases__dataset_id__documents__doc_id__source_preview_get: {
+        parameters: {
+            query?: {
+                disposition?: "inline" | "attachment";
+            };
+            header?: never;
+            path: {
+                dataset_id: string;
+                doc_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

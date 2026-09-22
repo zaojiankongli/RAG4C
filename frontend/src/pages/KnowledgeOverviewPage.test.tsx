@@ -76,6 +76,7 @@ const MODERN_OVERVIEW_SUMMARY: DocumentCatalogSummaryResponse & {
     },
     types: [{ value: "pdf", count: 64 }],
     engines: [{ value: "vision", count: 88 }],
+    chunking_reasons: [{ value: "complex_or_structured", count: 88 }],
     folders: [{ path: "制度/人力", documents: 40, chunks: 6400 }],
     tags: [{ name: "制度", documents: 32, chunks: 5200 }],
   },

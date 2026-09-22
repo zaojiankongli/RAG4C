@@ -26,8 +26,21 @@ const api = vi.hoisted(() => {
     }
   }
 
+  class MockSourcePreviewRefusedError extends Error {
+    code: string;
+    status: number;
+
+    constructor(message: string, code: string, status: number) {
+      super(message);
+      this.name = "SourcePreviewRefusedError";
+      this.code = code;
+      this.status = status;
+    }
+  }
+
   return {
     ApiError: MockApiError,
+    SourcePreviewRefusedError: MockSourcePreviewRefusedError,
     fetchDocuments: vi.fn(),
     fetchDocumentPage: vi.fn(),
     fetchDocumentSummary: vi.fn(),
@@ -42,6 +55,7 @@ const api = vi.hoisted(() => {
     setParseChunkEnabled: vi.fn(),
     fetchParseChunkRevisions: vi.fn(),
     revertParseChunk: vi.fn(),
+    fetchDocumentSource: vi.fn(),
     ingestDocument: vi.fn(),
     ingestFolder: vi.fn(),
     reindexDocument: vi.fn(),
@@ -88,6 +102,8 @@ vi.mock("../parse-intervention/api/parseInterventionApi", () => ({
   setParseChunkEnabled: api.setParseChunkEnabled,
   fetchParseChunkRevisions: api.fetchParseChunkRevisions,
   revertParseChunk: api.revertParseChunk,
+  fetchDocumentSource: api.fetchDocumentSource,
+  SourcePreviewRefusedError: api.SourcePreviewRefusedError,
 }));
 vi.mock("../context/ConnectionContext", () => ({
   ConnectionProvider: ({ children }: { children: ReactNode }) => children,
@@ -202,6 +218,7 @@ function makeModernSummary(
       },
       types: [{ value: "markdown", count: 1 }],
       engines: [{ value: "vision", count: 1 }],
+      chunking_reasons: [{ value: "complex_or_structured", count: 1 }],
       folders: [{ path: "人力资源", documents: 1, chunks: 12 }],
       tags: [{ name: "制度", documents: 1, chunks: 12 }],
     },
@@ -319,6 +336,15 @@ describe("DocumentsPage shared knowledge workspace", () => {
       missing_parent_ids: [],
     });
     api.fetchParseChunkDetail.mockResolvedValue(CHUNK);
+    // 原文查看默认按"这台服务没开这个能力"拒绝：这些用例考的是切片编辑与导航，
+    // 不该因为读不到原文而失败，也不该走进需要 URL.createObjectURL 的成功分支。
+    api.fetchDocumentSource.mockRejectedValue(
+      new api.SourcePreviewRefusedError(
+        "这台服务没有开放原文查看",
+        "source_preview_disabled",
+        409,
+      ),
+    );
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn(() => ({
@@ -443,7 +469,7 @@ describe("DocumentsPage shared knowledge workspace", () => {
     window.history.replaceState(
       null,
       "",
-      "/documents?q=%E8%96%AA%E9%85%AC&status=completed&type=pdf&engine=vision&category=%E5%88%B6%E5%BA%A6%2F%E8%96%AA%E9%85%AC&tag=%E5%88%B6%E5%BA%A6",
+      "/documents?q=%E8%96%AA%E9%85%AC&status=completed&type=pdf&engine=vision&category=%E5%88%B6%E5%BA%A6%2F%E8%96%AA%E9%85%AC&tag=%E5%88%B6%E5%BA%A6&chunking_reason_code=table_doc_type",
     );
     api.fetchDocumentPage.mockResolvedValue({
       items: [SECOND_MODERN_DOCUMENT],
@@ -472,6 +498,7 @@ describe("DocumentsPage shared knowledge workspace", () => {
         folder_mode: "exact",
         tag: "制度",
         lifecycle_state: "all",
+        chunking_reason_code: "table_doc_type",
         sort: "updated_at_desc",
       }),
       expect.objectContaining({
@@ -487,6 +514,48 @@ describe("DocumentsPage shared knowledge workspace", () => {
         actorToken: "signed-test-token",
         signal: expect.any(AbortSignal),
       }),
+    );
+  });
+
+  it("filters by chunking reason from the facet list and keeps the choice in the URL", async () => {
+    window.history.replaceState(null, "", "/documents");
+    api.fetchDocumentPage.mockResolvedValue({
+      items: [MODERN_DOCUMENT],
+      total: 1,
+      offset: 0,
+      limit: 10,
+      next_cursor: null,
+    });
+    api.fetchDocumentSummary.mockResolvedValue(makeModernSummary());
+
+    renderModernDocuments();
+    await screen.findByText(MODERN_DOCUMENT.name);
+    // 侧栏显示的是中文判定名，不是裸的原因码：原因码是给 SQL 用的，不是给人读的。
+    const facet = screen.getByRole("button", { name: /长文或含版面结构/ });
+    api.fetchDocumentPage.mockClear();
+
+    fireEvent.click(facet);
+
+    await waitFor(() =>
+      expect(new URLSearchParams(window.location.search).get("chunking_reason_code")).toBe(
+        "complex_or_structured",
+      ),
+    );
+    expect(api.fetchDocumentPage).toHaveBeenLastCalledWith(
+      "default",
+      expect.objectContaining({ chunking_reason_code: "complex_or_structured" }),
+      expect.objectContaining({ tenantId: "tenant-1" }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /全部判定/ }));
+
+    await waitFor(() =>
+      expect(new URLSearchParams(window.location.search).has("chunking_reason_code")).toBe(false),
+    );
+    expect(api.fetchDocumentPage).toHaveBeenLastCalledWith(
+      "default",
+      expect.objectContaining({ chunking_reason_code: "all" }),
+      expect.objectContaining({ tenantId: "tenant-1" }),
     );
   });
 

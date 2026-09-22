@@ -1278,13 +1278,49 @@ def _document_catalog_tag_membership_predicate(tag: str, dialect_name: str) -> A
     )
 
 
-def _document_catalog_engine_expression(table: Any, available: set[str]) -> Any:
+def _document_catalog_meta_key_expression(table: Any, key: str) -> Any:
+    return table.c.parser_meta[key].as_string()
+
+
+def _document_catalog_meta_facet_expression(table: Any, available: set[str], key: str) -> Any:
+    """parser_meta 上某个字符串键的分组取值：缺列、缺键、空串都归到 ``unknown`` 桶。"""
     from sqlalchemy import func, literal
 
     if "parser_meta" not in available:
         return literal("unknown")
-    raw_engine = table.c.parser_meta["engine"].as_string()
-    return func.coalesce(func.nullif(raw_engine, ""), literal("unknown"))
+    raw = _document_catalog_meta_key_expression(table, key)
+    return func.coalesce(func.nullif(raw, ""), literal("unknown"))
+
+
+def _document_catalog_meta_key_criteria(
+    table: Any,
+    available: set[str],
+    *,
+    key: str,
+    value: str,
+    capability: str,
+) -> list[Any]:
+    """按 parser_meta 的字符串键筛选。
+
+    ``unknown`` 不是一个键值，而是"这列/这键还没写"的桶，所以在没有 parser_meta 的旧库上
+    它依然成立（等于不加条件）；筛选具体值时旧库给不出答案，必须显式拒绝而不是静默返回全部。
+    """
+    from sqlalchemy import or_
+
+    if "parser_meta" not in available:
+        if value != "unknown":
+            raise DocumentCatalogCapabilityError(capability)
+        return []
+    expression = _document_catalog_meta_key_expression(table, key)
+    if value == "unknown":
+        return [
+            or_(
+                table.c.parser_meta.is_(None),
+                expression.is_(None),
+                expression == "",
+            )
+        ]
+    return [expression == value]
 
 
 def _document_catalog_updated_sort_expression(table: Any, available: set[str]) -> Any:
@@ -1345,6 +1381,7 @@ def _document_catalog_filter_criteria(
     folder_mode: str,
     tag: str,
     lifecycle_state: str,
+    chunking_reason_code: str,
 ) -> list[Any]:
     from sqlalchemy import func, literal, or_
 
@@ -1370,21 +1407,25 @@ def _document_catalog_filter_criteria(
         _document_catalog_require_columns(available, "doc_type")
         criteria.append(table.c.doc_type == doc_type)
     if engine != "all":
-        if "parser_meta" not in available:
-            if engine != "unknown":
-                raise DocumentCatalogCapabilityError("engine filtering requires parser_meta")
-        else:
-            engine_expression = table.c.parser_meta["engine"].as_string()
-            if engine == "unknown":
-                criteria.append(
-                    or_(
-                        table.c.parser_meta.is_(None),
-                        engine_expression.is_(None),
-                        engine_expression == "",
-                    )
-                )
-            else:
-                criteria.append(engine_expression == engine)
+        criteria.extend(
+            _document_catalog_meta_key_criteria(
+                table,
+                available,
+                key="engine",
+                value=engine,
+                capability="engine filtering requires parser_meta",
+            )
+        )
+    if chunking_reason_code != "all":
+        criteria.extend(
+            _document_catalog_meta_key_criteria(
+                table,
+                available,
+                key="chunking_reason_code",
+                value=chunking_reason_code,
+                capability="chunking_reason_code filtering requires parser_meta",
+            )
+        )
     if folder != "all":
         _document_catalog_require_columns(available, "logical_folder_path")
         if folder_mode == "subtree":
@@ -1432,6 +1473,7 @@ def _document_cursor_query_hash(
     folder_mode: str,
     tag: str,
     lifecycle_state: str,
+    chunking_reason_code: str,
     sort: str,
     limit: int,
 ) -> str:
@@ -1449,6 +1491,7 @@ def _document_cursor_query_hash(
         "folder_mode": folder_mode,
         "tag": tag,
         "lifecycle_state": lifecycle_state,
+        "chunking_reason_code": chunking_reason_code,
         "sort": sort,
         "limit": limit,
     }
@@ -1579,6 +1622,7 @@ def list_documents_page(
     folder_mode: str = "exact",
     tag: str = "all",
     lifecycle_state: str = "all",
+    chunking_reason_code: str = "all",
     sort: str = "updated_at_desc",
     cursor: str | None = None,
     engine_override: Any | None = None,
@@ -1613,6 +1657,7 @@ def list_documents_page(
     normalized_folder_mode = _normalized_catalog_value(folder_mode, default="exact").casefold()
     normalized_tag = _normalized_catalog_value(tag)
     normalized_lifecycle = _normalized_catalog_value(lifecycle_state).casefold()
+    normalized_chunking_reason_code = _normalized_catalog_value(chunking_reason_code).casefold()
     normalized_sort = _normalized_catalog_value(sort, default="updated_at_desc").casefold()
     if normalized_folder_mode not in {"exact", "subtree"}:
         raise ValueError("folder_mode must be exact or subtree")
@@ -1645,6 +1690,7 @@ def list_documents_page(
             folder_mode=normalized_folder_mode,
             tag=normalized_tag,
             lifecycle_state=normalized_lifecycle,
+            chunking_reason_code=normalized_chunking_reason_code,
         )
         total = int(
             session.execute(
@@ -1665,6 +1711,7 @@ def list_documents_page(
             folder_mode=normalized_folder_mode,
             tag=normalized_tag,
             lifecycle_state=normalized_lifecycle,
+            chunking_reason_code=normalized_chunking_reason_code,
             sort=normalized_sort,
             limit=limit,
         )
@@ -1787,7 +1834,10 @@ def summarize_documents(
             if "doc_type" in available
             else literal("unknown")
         )
-        engine_expression = _document_catalog_engine_expression(table, available)
+        engine_expression = _document_catalog_meta_facet_expression(table, available, "engine")
+        chunking_reason_expression = _document_catalog_meta_facet_expression(
+            table, available, "chunking_reason_code"
+        )
         folder_expression = (
             func.coalesce(func.nullif(table.c.logical_folder_path, ""), literal("unknown"))
             if "logical_folder_path" in available
@@ -1852,6 +1902,9 @@ def summarize_documents(
         )
         type_rows = _document_catalog_grouped_counts(session, table, criteria, type_expression)
         engine_rows = _document_catalog_grouped_counts(session, table, criteria, engine_expression)
+        chunking_reason_rows = _document_catalog_grouped_counts(
+            session, table, criteria, chunking_reason_expression
+        )
 
         folder_rows = (
             session.execute(
@@ -1955,6 +2008,7 @@ def summarize_documents(
             "statuses": status_facets,
             "types": sort_facets(type_rows),
             "engines": sort_facets(engine_rows),
+            "chunking_reasons": sort_facets(chunking_reason_rows),
             "folders": folders,
             "tags": tags,
         },

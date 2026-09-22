@@ -383,6 +383,12 @@ export async function fetchDocumentPage(
   appendNonDefaultDocumentFilter(params, "folder_mode", query.folder_mode, "exact");
   appendNonDefaultDocumentFilter(params, "tag", query.tag, "all");
   appendNonDefaultDocumentFilter(params, "lifecycle_state", query.lifecycle_state, "all");
+  appendNonDefaultDocumentFilter(
+    params,
+    "chunking_reason_code",
+    query.chunking_reason_code,
+    "all",
+  );
   appendNonDefaultDocumentFilter(params, "sort", query.sort, "updated_at_desc");
   if (query.cursor?.trim()) params.set("cursor", query.cursor.trim());
 

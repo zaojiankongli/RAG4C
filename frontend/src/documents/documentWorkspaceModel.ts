@@ -6,6 +6,7 @@ export interface DocumentFilters {
   status: string;
   type: string;
   engine: string;
+  chunkingReason: string;
   category?: string;
   tag?: string;
 }
@@ -20,9 +21,15 @@ function documentEngine(document: DocumentItem): string {
   return document.parser_meta?.engine?.trim().toLowerCase() || "unknown";
 }
 
+/** 与后端 `parser_meta.chunking_reason_code` 的 unknown 桶同义：没写就是没写，不猜。 */
+function documentChunkingReason(document: DocumentItem): string {
+  return document.parser_meta?.chunking_reason_code?.trim().toLowerCase() || "unknown";
+}
+
 export function buildDocumentFacets(documents: DocumentItem[]) {
   const types: Record<string, number> = {};
   const engines: Record<string, number> = {};
+  const chunkingReasons: Record<string, number> = {};
   const categories: Record<string, number> = {};
   const tags: Record<string, number> = {};
   const statuses = { all: documents.length, completed: 0, processing: 0, error: 0 };
@@ -32,13 +39,15 @@ export function buildDocumentFacets(documents: DocumentItem[]) {
     else if (IN_FLIGHT_DOCUMENT_STATUSES.has(document.status)) statuses.processing += 1;
     const type = documentType(document);
     const engine = documentEngine(document);
+    const chunkingReason = documentChunkingReason(document);
     types[type] = (types[type] ?? 0) + 1;
     engines[engine] = (engines[engine] ?? 0) + 1;
+    chunkingReasons[chunkingReason] = (chunkingReasons[chunkingReason] ?? 0) + 1;
     const category = document.logical_folder_path?.trim() || "未分类";
     categories[category] = (categories[category] ?? 0) + 1;
     for (const tag of document.tags ?? []) tags[tag] = (tags[tag] ?? 0) + 1;
   }
-  return { statuses, types, engines, categories, tags };
+  return { statuses, types, engines, chunkingReasons, categories, tags };
 }
 
 export function filterDocuments(documents: DocumentItem[], filters: DocumentFilters): DocumentItem[] {
@@ -48,6 +57,7 @@ export function filterDocuments(documents: DocumentItem[], filters: DocumentFilt
     if (filters.status !== "all" && filters.status !== "processing" && document.status !== filters.status) return false;
     if (filters.type !== "all" && documentType(document) !== filters.type) return false;
     if (filters.engine !== "all" && documentEngine(document) !== filters.engine) return false;
+    if (filters.chunkingReason !== "all" && documentChunkingReason(document) !== filters.chunkingReason) return false;
     if (filters.category && filters.category !== "all") {
       const category = document.logical_folder_path?.trim() || "未分类";
       if (category !== filters.category) return false;

@@ -68,6 +68,7 @@ import type {
 } from "../types/rag";
 import { FONT_SIZE } from "../theme/tokens";
 import {
+  CHUNK_REASON_CODE_LABELS,
   chunkingDecisionAria,
   formatChunkingDecision,
 } from "../parse-intervention/model/chunkDiagnostics";
@@ -245,6 +246,7 @@ type DocumentsFilterState = {
   status: string;
   type: string;
   engine: string;
+  chunkingReason: string;
   category: string;
   tag: string;
 };
@@ -254,8 +256,17 @@ const DEFAULT_DOCUMENT_FILTERS: DocumentsFilterState = {
   status: "all",
   type: "all",
   engine: "all",
+  chunkingReason: "all",
   category: "all",
   tag: "all",
+};
+
+/** URL 参数名与筛选键的对照：只列不同名的那几个，其余同名直通。 */
+const DOCUMENT_FILTER_PARAMETERS: Partial<Record<keyof DocumentsFilterState, string>> = {
+  keyword: "q",
+  type: "type",
+  category: "category",
+  chunkingReason: "chunking_reason_code",
 };
 
 function readDocumentsFilters(
@@ -269,6 +280,7 @@ function readDocumentsFilters(
     status: params.get("status") || "all",
     type: params.get("type") || params.get("doc_type") || "all",
     engine: params.get("engine") || "all",
+    chunkingReason: params.get("chunking_reason_code") || "all",
     category: params.get("category") || params.get("folder") || "all",
     tag: params.get("tag") || "all",
   };
@@ -282,8 +294,7 @@ function replaceDocumentsFilter(
   const route = parseDocumentsSearchRoute(location);
   if (!route) return;
   const params = route.params;
-  const parameter =
-    key === "keyword" ? "q" : key === "type" ? "type" : key === "category" ? "category" : key;
+  const parameter = DOCUMENT_FILTER_PARAMETERS[key] ?? key;
   const normalized = value.trim();
   if (normalized && normalized !== "all") params.set(parameter, normalized);
   else params.delete(parameter);
@@ -304,6 +315,7 @@ function projectSummaryFacets(facets: DocumentCatalogSummaryResponse["facets"] |
       statuses: { all: 0, completed: 0, processing: 0, error: 0 },
       types: {} as Record<string, number>,
       engines: {} as Record<string, number>,
+      chunkingReasons: {} as Record<string, number>,
       categories: {} as Record<string, number>,
       tags: {} as Record<string, number>,
     };
@@ -318,6 +330,9 @@ function projectSummaryFacets(facets: DocumentCatalogSummaryResponse["facets"] |
     },
     types: Object.fromEntries(facets.types.map((item) => [item.value, item.count])),
     engines: Object.fromEntries(facets.engines.map((item) => [item.value, item.count])),
+    chunkingReasons: Object.fromEntries(
+      facets.chunking_reasons.map((item) => [item.value, item.count]),
+    ),
     categories: Object.fromEntries(
       facets.folders.map((item) => [item.path || "未分类", item.documents]),
     ),
@@ -368,6 +383,9 @@ export default function DocumentsPage({
   const [statusFilter, setStatusFilter] = useState<string>(initialDocumentFilters.status);
   const [typeFilter, setTypeFilter] = useState<string>(initialDocumentFilters.type);
   const [engineFilter, setEngineFilter] = useState<string>(initialDocumentFilters.engine);
+  const [chunkingReasonFilter, setChunkingReasonFilter] = useState<string>(
+    initialDocumentFilters.chunkingReason,
+  );
   const [categoryFilter, setCategoryFilter] = useState<string>(initialDocumentFilters.category);
   const [tagFilter, setTagFilter] = useState<string>(initialDocumentFilters.tag);
   const [ingestOpen, setIngestOpen] = useState(false);
@@ -460,6 +478,7 @@ export default function DocumentsPage({
       folder_mode: "exact",
       tag: tagFilter,
       lifecycle_state: "all",
+      chunking_reason_code: chunkingReasonFilter,
       sort: "updated_at_desc",
     };
     if (modernCursor) query.cursor = modernCursor;
@@ -491,6 +510,7 @@ export default function DocumentsPage({
     active,
     actorToken,
     categoryFilter,
+    chunkingReasonFilter,
     datasetId,
     engineFilter,
     modernCatalogEnabled,
@@ -715,6 +735,7 @@ export default function DocumentsPage({
             status: statusFilter,
             type: typeFilter,
             engine: engineFilter,
+            chunkingReason: chunkingReasonFilter,
             category: categoryFilter,
             tag: tagFilter,
           }),
@@ -722,6 +743,7 @@ export default function DocumentsPage({
       catalogDocuments,
       docs,
       engineFilter,
+      chunkingReasonFilter,
       modernCatalogEnabled,
       keyword,
       statusFilter,
@@ -753,6 +775,7 @@ export default function DocumentsPage({
     else if (key === "status") setStatusFilter(normalized);
     else if (key === "type") setTypeFilter(normalized);
     else if (key === "engine") setEngineFilter(normalized);
+    else if (key === "chunkingReason") setChunkingReasonFilter(normalized);
     else if (key === "category") setCategoryFilter(normalized);
     else if (key === "tag") setTagFilter(normalized);
     replaceDocumentsFilter(window.location, key, value);
@@ -764,6 +787,7 @@ export default function DocumentsPage({
     applyDocumentFilter("status", "all");
     applyDocumentFilter("type", "all");
     applyDocumentFilter("engine", "all");
+    applyDocumentFilter("chunkingReason", "all");
     applyDocumentFilter("category", "all");
     applyDocumentFilter("tag", "all");
   };
@@ -1763,6 +1787,34 @@ export default function DocumentsPage({
                     onClick={() => applyDocumentFilter("engine", value)}
                   >
                     <span>{ENGINE_LABELS[value] ?? (value === "unknown" ? "待记录" : value)}</span>
+                    <b>{count}</b>
+                  </button>
+                ))}
+              </div>
+              <div className="facet-group">
+                <h3>切分判定</h3>
+                <button
+                  type="button"
+                  className={
+                    chunkingReasonFilter === "all" ? "facet-item is-active" : "facet-item"
+                  }
+                  onClick={() => applyDocumentFilter("chunkingReason", "all")}
+                >
+                  <span>全部判定</span>
+                  <b>{stats.total}</b>
+                </button>
+                {Object.entries(facets.chunkingReasons).map(([value, count]) => (
+                  <button
+                    type="button"
+                    key={value}
+                    className={
+                      chunkingReasonFilter === value ? "facet-item is-active" : "facet-item"
+                    }
+                    onClick={() => applyDocumentFilter("chunkingReason", value)}
+                  >
+                    <span>
+                      {CHUNK_REASON_CODE_LABELS[value] ?? (value === "unknown" ? "待记录" : value)}
+                    </span>
                     <b>{count}</b>
                   </button>
                 ))}

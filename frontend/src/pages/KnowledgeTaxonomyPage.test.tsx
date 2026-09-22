@@ -166,6 +166,7 @@ function makeModernSummary(
       },
       types: [{ value: "pdf", count: 23 }],
       engines: [{ value: "vision", count: 22 }],
+      chunking_reasons: [{ value: "complex_or_structured", count: 22 }],
       folders: [
         { path: "制度/人力", documents: 8, chunks: 1024 },
         { path: "产品", documents: 15, chunks: 1024 },

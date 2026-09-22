@@ -76,6 +76,7 @@ const documentSummaryResponse = {
     },
     types: [{ value: "pdf", count: 48 }],
     engines: [{ value: "vision", count: 35 }],
+    chunking_reasons: [{ value: "complex_or_structured", count: 35 }],
     folders: [{ path: "制度/人力", documents: 20, chunks: 2400 }],
     tags: [{ name: "员工", documents: 18, chunks: 2100 }],
   },
@@ -161,6 +162,7 @@ describe("document chunk authority client", () => {
           folder_mode: "subtree",
           tag: "员工&制度",
           lifecycle_state: "active",
+          chunking_reason_code: "table_doc_type",
           sort: "name_asc",
         },
         { tenantId: "tenant-a", actorToken: "actor-token" },
@@ -174,7 +176,7 @@ describe("document chunk authority client", () => {
         "&status=processing&doc_type=pdf&engine=vision" +
         "&folder=%E5%88%B6%E5%BA%A6%2F%E4%BA%BA%E5%8A%9B&folder_mode=subtree" +
         "&tag=%E5%91%98%E5%B7%A5%26%E5%88%B6%E5%BA%A6" +
-        "&lifecycle_state=active&sort=name_asc",
+        "&lifecycle_state=active&chunking_reason_code=table_doc_type&sort=name_asc",
     );
     expect(init).toEqual(
       expect.objectContaining({
@@ -206,6 +208,7 @@ describe("document chunk authority client", () => {
         folder_mode: "exact",
         tag: "all",
         lifecycle_state: "all",
+        chunking_reason_code: "all",
         sort: "updated_at_desc",
       },
       { tenantId: "tenant-a", actorToken: "actor-token" },

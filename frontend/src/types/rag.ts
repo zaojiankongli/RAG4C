@@ -454,6 +454,8 @@ export interface DocumentPageQuery {
   folder_mode?: "exact" | "subtree";
   tag?: string;
   lifecycle_state?: "all" | DocumentLifecycleState;
+  /** 按 parser_meta.chunking_reason_code 过滤；"unknown" = 这一列还没写。 */
+  chunking_reason_code?: string;
   sort?: "updated_at_desc" | "created_at_asc" | "name_asc";
 }
 
@@ -510,6 +512,7 @@ export interface DocumentCatalogSummaryResponse {
     };
     types: Array<{ value: string; count: number }>;
     engines: Array<{ value: string; count: number }>;
+    chunking_reasons: Array<{ value: string; count: number }>;
     folders: Array<{ path: string; documents: number; chunks: number }>;
     tags: Array<{ name: string; documents: number; chunks: number }>;
   };
