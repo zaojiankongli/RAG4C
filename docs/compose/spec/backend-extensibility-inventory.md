@@ -107,7 +107,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 > | 5 `RagExecutor` 漏值 | **已修**：`Literal[tuple(RAG_EXECUTORS)]` 从单一声明集派生 |
 > | 6 `_ALLOWED_KINDS` + SourceKind else fail-open | **已修**（`4cdd051`，行内已记） |
 > | 7 `info` 严重度是死的 | **仍在**：`core/enterprise_notification_center.py:24` 仍收 `{info,warning,critical}` |
-> | 8 mineru 两个分派器 | **本轮没定位到**：普查给的 `mineru/base.py` / `mineru/plugins.py` 在本仓不存在（`find` 无命中）。要么路径记错，要么模块已搬；**不要按这条排活**，先重新定位 |
+> | 8 mineru 两个分派器 | **定位到了，而且已修**（见 §Z）。我先前写「路径不存在、不要按这条排活」**是我自己搜错了目录**：普查记的是短文件名，实际在 `indexing/parsers/` 下。同一批里 §D-12 那条也是这样找回来的 |
 > | 9 `gate_state` 别名 | **仍在，且普查低估**：是 5 处不是 2 处（3 处转换含筛选入参那一处，2 处并列两种拼写），详见行内 |
 > | 10 `state_mode` | **词表那一半已收口（§W）**：实际是 2 处词表 + **五**处成员判断，不止普查记的那几处；`server/source_dispatcher.py:238` 的硬编码仍是**行为变更**，留在片外等裁定 |
 > | 11 `risk_tier` 写三遍 | 词表确在 `catalog_migrations/versions/0029-0031` 与 CHECK 里 → **需要迁移**，维持原判（单独成切片） |
@@ -174,8 +174,8 @@ reranker 要处理 HTTP 状态，共性只有名字）。
    `tests/test_source_kind_registry.py`。
 7. **`info` 严重度是死的**：`center.py:24` 接受 `{info,warning,critical}`，但没有任何生产者能发出
    `info`（质量告警走 2 值 `_observation_alert_severity`，审批硬编码 `warning`）。
-8. **`mineru.provider` 有两个分派器**（`base.py:167-177` 与 `plugins.py:16-22`），前者不传 `mode`，
-   只被 smoke 脚本用到；只在一边加 provider 会在另一边静默失效。
+8. **`mineru.provider` 有两个分派器** —— **已修（§Z）**。普查那句「前者不传 `mode`，只被 smoke 脚本用到」是对的，但它漏了更重的一侧：**生产那条**（`indexing/parsers/plugins.py`）把「不是 cli」直接当 `http`，而 `MineruSettings.provider` 在配置层是**裸 `str`**（`config/settings.py:884`，没有字面量校验），所以一个拼错的 provider 会把本该只在本机跑的文档送去外部付费 HTTP API —— **出口由 fallthrough 决定**。另一条（`base.py::create_parser`）会拒未知值，却永不传 `mode`，于是它**永远只测 free 分支**。
+
 9. **`gate_state` 存储值 `passing`、对外 `passed`** —— **曾仍在、现已收口（见 §V）**；普查记的"两遍"是低估。
    本轮读码数出来是 **5 处**知道这个别名，分两种性质：
    * 三处**做转换**（各写一遍方向相反的三元式）：
@@ -998,4 +998,41 @@ SM6 声明表里 `json` 整个改名 → 两条红（属性 + 对账）。
 | F4 的理由写错了：我说保护 `updated_by` 会「在写侧才炸，也就是线上」 | **评审是对的**：`_validate_spec` 对每个 kind 探一次 `release_values`，而内建 kind 在 import 期注册，所以那是**注册期就炸**（响的，不是静默的）。决定本身没错，理由错了 —— 已改源码注释、用例 docstring，并且不再靠约定：注册期改成查一张 `PROTECTED_REASONS` 的原因表（键集合就是执行面），加新集合忘了配理由会红 |
 | B1 还剩一处：`DOCUMENT_FILTER_PARAMETERS` 是 `Partial` + `?? key` 兜底 | **成立，已修**：改成 `Record<keyof DocumentsFilterState, string>` 逐个列出（含同名的那几个），兜底删掉。现在少登记一个键是类型错误 —— 「少一处」这个形状才算真的没有落点 |
 | c0db716 说前端只有「1 处」认双拼法 | **数错了，是 3 处**：`QualityOperationsDetailDrawer.tsx` 的类型联合、`GATE_LABELS` 的键、`gateTheme` 里的 `or` 分支。对外契约留不留 `passing` 那次裁定仍然悬着，但计数已更正 |
+
+
+## Z. §D-8 落地记录：一个 provider 值只由一张表决定它建哪个解析器
+
+先记一件我自己的错：这一条我今晚先写成「普查给的 `mineru/base.py`、`mineru/plugins.py` 在本仓不存在
+（`find` 无命中），不要按这条排活」。**那句话是错的** —— 文件在 `indexing/parsers/` 下，
+普查只记了短文件名。同一晚 §D-12 也是这样才找回来的。**「grep 不到」在这种短文件名账本里没有
+"不存在"的含义**，这句话对下一位同样成立。
+
+修完的真实形状（`indexing/parsers/mineru_providers.py`）：
+
+| | 改前 | 改后 |
+|---|---|---|
+| provider 决定实现 | 两处各写一串 `if provider ==` | 一张 `MINERU_PROVIDERS` 声明表 + 一次查表 |
+| 未知值 | 生产侧**落到 http**（文档出境）；smoke 侧 raise | 两侧同一个 `ValueError`，不兜默认实现 |
+| mode 透传 | 生产侧传、smoke 侧**永不传**（配置写 paid 也只测 free） | 两条路径都传；测试拿非法 mode 当探针，传不到就报不出错 |
+| 加一个 provider | 改两处，且两处的默认行为相反 | 加一行声明 |
+
+**这里最该被记住的不是形状，是那条 fallthrough 的代价**：`provider` 没有配置层字面量校验，
+所以"写错的值"在生产里不是报错而是**换出口**。我**没有**顺手把 `provider: str` 改成
+`Literal["cli","http"]` —— 那会让一个已经带着怪值跑着的部署在升级后启动失败，属于改契约，
+登记为待裁定（交接 §9 第 31 条）。出口安全靠的是查表必拒，不依赖配置层校验。
+
+常驻守卫 `tests/test_mineru_provider_registry.py`（11 条）里两处刻意的设计：
+1. 未知值那条**三条路径都问**（注册表工厂 / 声明表 / smoke 工厂）。一开始我只测后两条，
+   而 fallthrough 恰恰住在第一条里 —— 那样写会得到一个"全绿的假守卫"。
+2. 回潮栅栏扫 `indexing/` 与 `core/` 里所有 `provider (==|!=|in|not in)`，
+   **盯的是形状而不是某个文件的行数**；两处手写曾对同一个未知值给出相反答案，
+   第三个分派器长出来时同样会分歧。
+
+反向验证 4/4 转红（脚本 `finally` 还原，跑完 `git diff` 与我的编辑逐行相符）：
+MM1 把生产侧退回 fallthrough → 未知值用例 8 条红 + 栅栏红；MM2 声明表不再拒未知值 → 7 条红；
+MM3 smoke 工厂退回不传 mode → mode 那条红；MM4 新加一个模块级 `provider ==` 分派器 → 栅栏红。
+
+**覆盖面的诚实边界**：`tests/` 里原本**没有任何**测试引用 `create_vision_engine` /
+`_mineru_factory` / `register_builtin_plugins`（grep 零命中），所以生产装配路径在本次之前是
+零覆盖的，这比"两个分派器形状不好"更值得记。新用例是第一次钉住它。
 

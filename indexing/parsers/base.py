@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from indexing.parsers.mineru_providers import build_mineru_parser
 
 from config.settings import MineruSettings
 
@@ -154,7 +155,7 @@ class DocumentParser(ABC):
             )
 
 
-def create_parser(settings: MineruSettings) -> DocumentParser:
+def create_parser(settings: MineruSettings, *, mode: str = "free") -> DocumentParser:
     """按 ``settings.provider`` 创建文档解析器（注册表 / 工厂函数）。
 
     - ``provider="cli"``  -> :class:`indexing.parsers.mineru_cli.MineruCliParser`
@@ -172,17 +173,7 @@ def create_parser(settings: MineruSettings) -> DocumentParser:
     Raises:
         ValueError: provider 非法。
     """
-    if settings.provider == "cli":
-        from indexing.parsers.mineru_cli import MineruCliParser
-
-        return MineruCliParser(settings)
-    if settings.provider == "http":
-        from indexing.parsers.mineru_http import MineruHttpParser
-
-        return MineruHttpParser(settings)
-    raise ValueError(
-        f"未知 mineru provider: {settings.provider!r}（可选 cli / http）"
-    )
+    return build_mineru_parser(settings, mode=mode)
 
 
 __all__ = [

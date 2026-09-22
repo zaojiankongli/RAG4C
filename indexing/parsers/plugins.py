@@ -7,19 +7,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from indexing.parsers.mineru_providers import build_mineru_parser
 from indexing.parsers.registry import ParserPlugin, register_parser_plugin
 
 
 def _mineru_factory(engine_cfg: Any, settings: Any) -> Any:
     """mineru 插件工厂：按 mode（free / paid）+ mineru.provider（cli / http）装配。"""
     mode = str(getattr(engine_cfg, "mode", "free"))
-    if settings.mineru.provider == "cli":
-        from indexing.parsers.mineru_cli import MineruCliParser
-
-        return MineruCliParser(settings.mineru, mode=mode)
-    from indexing.parsers.mineru_http import MineruHttpParser
-
-    return MineruHttpParser(settings.mineru, mode=mode)
+    # 一张声明表决定 provider 落到哪个实现。过去这里是「不是 cli 就当 http」，
+    # 而 provider 在配置层是裸 str（不设字面量校验），所以一个拼错的值会把本该只在
+    # 本机跑的文档送去外部付费 API —— 出口由 fallthrough 决定，这是要拒的，不是要兜的。
+    return build_mineru_parser(settings.mineru, mode=mode)
 
 
 def _docling_factory(engine_cfg: Any, settings: Any) -> Any:
