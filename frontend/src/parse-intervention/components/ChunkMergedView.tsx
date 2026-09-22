@@ -58,6 +58,7 @@ export default function ChunkMergedView(p: {
             segment.kind === "tombstone" ? (
               <div
                 key={segment.chunkId}
+                aria-current={segment.chunkId === p.selectedId ? "true" : undefined}
                 className={"parse-chunk-row parse-merged-gap" + (segment.chunkId === p.selectedId ? " is-selected" : "")}
               >
                 <div className="parse-chunk-row-top">
@@ -76,6 +77,7 @@ export default function ChunkMergedView(p: {
             ) : (
               <div
                 key={segment.chunkId}
+                aria-current={segment.chunkId === p.selectedId ? "true" : undefined}
                 className={"parse-chunk-row" + (segment.chunkId === p.selectedId ? " is-selected" : "")}
               >
                 <div className="parse-chunk-row-top">

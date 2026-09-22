@@ -128,6 +128,31 @@ describe("切片列表与整篇合并视图的切换", () => {
     expect(document.activeElement).toBe(body);
   });
 
+  it("当前编辑的那一段有非视觉的选中信号", async () => {
+    const user = userEvent.setup();
+    renderPane();
+    await user.click(screen.getByRole("button", { name: "整篇合并" }));
+    const region = await waitFor(() =>
+      screen.getByRole("region", { name: "整篇合并视图" }),
+    );
+    // 只有 is-selected 这个 CSS 类的话，读屏用户完全不知道"编辑的是哪一段"。
+    const current = region.querySelectorAll('[aria-current="true"]');
+    expect(current).toHaveLength(1);
+    expect(current[0].textContent).toContain("正文 c1");
+  });
+
+  it("选中的是已停用那段时，占位行同样带选中信号", async () => {
+    const user = userEvent.setup();
+    renderPane({ selectedId: "c2" });
+    await user.click(screen.getByRole("button", { name: "整篇合并" }));
+    const region = await waitFor(() =>
+      screen.getByRole("region", { name: "整篇合并视图" }),
+    );
+    const current = region.querySelectorAll('[aria-current="true"]');
+    expect(current).toHaveLength(1);
+    expect(current[0].textContent).toContain("此处已被人工停用");
+  });
+
   it("处在服务端搜索结果里时，合并视图不拿命中数当全篇总数", async () => {
     const user = userEvent.setup();
     // 带搜索词时后端返回的 total 是"命中数"（count 也带 where 条件），
