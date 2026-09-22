@@ -26,11 +26,23 @@ export const REFUSAL_COPY: Record<string, string> = {
  * NEVER_RENDERED 是第二道：表态说 inline 也照样不渲染、不给链接（blob: 链接继承本站源）。 */
 const NEVER_RENDERED = new Set(["text/html", "image/svg+xml", "application/xhtml+xml"]);
 
+/** `Content-Disposition` 的权威形态是 ``inline; filename="…"; filename*=UTF-8''…``
+ * （`server/knowledge_source_preview_api.py:_content_disposition`，`tests/…:210` 钉着
+ * `startswith("inline;")`），**从来不是光秃秃的 `inline`**。所以这里只取前导 token，
+ * 并且区分"后端说 attachment"与"我没听到表态"：跨源时这个头不在 CORS 的白名单里，
+ * 客户端可能拿到空串 —— 把空串当成"要求下载"会一刀切掉整条在线查看。 */
+export function dispositionToken(header: string | null | undefined): "inline" | "attachment" | null {
+  const value = (header ?? "").trim().toLowerCase();
+  if (value.startsWith("inline")) return "inline";
+  if (value.startsWith("attachment")) return "attachment";
+  return null;
+}
+
 export function previewKind(
   mediaType: string,
-  disposition: DocumentSourceBlob["disposition"] = "inline",
+  disposition?: string | null,
 ): "pdf" | "image" | "text" | "download" {
-  if (disposition !== "inline") return "download";
+  if (dispositionToken(disposition) === "attachment") return "download";
   const type = mediaType.split(";")[0].trim().toLowerCase();
   if (NEVER_RENDERED.has(type)) return "download";
   if (type === "application/pdf") return "pdf";

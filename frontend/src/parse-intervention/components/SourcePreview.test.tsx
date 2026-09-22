@@ -21,13 +21,19 @@ vi.mock("../api/parseInterventionApi", async () => {
   return { ...actual, fetchDocumentSource: api.fetchDocumentSource, SourcePreviewRefusedError: Refused };
 });
 
-const { default: SourcePreview, previewKind, REFUSAL_COPY } = await import("./SourcePreview");
+const { default: SourcePreview, previewKind, dispositionToken, REFUSAL_COPY } =
+  await import("./SourcePreview");
 
 const SCOPE: ParseScope = { datasetId: "ds-1", docId: "doc-1", actorToken: "tok", tenantId: "t-1" } as ParseScope;
 const OTHER: ParseScope = { ...SCOPE, docId: "doc-2" };
 
+/** 与后端 `_content_disposition()` 同形态：`inline; filename="…"; filename*=UTF-8''…`。
+ * 之前这里写的是光秃秃的 "inline" —— 那是后端**永远不会发出**的值，于是整条在线查看
+ * 在真后端前已经全灭，而 16 条用例全绿（第九轮评审的 blocker）。 */
+const INLINE_HEADER = `inline; filename="指南.pdf"; filename*=UTF-8''%E6%8C%87%E5%8D%97.pdf`;
+
 function blobResponse(mediaType: string, over: Partial<DocumentSourceBlob> = {}): DocumentSourceBlob {
-  return { blob: new Blob(["x".repeat(2048)], { type: mediaType }), mediaType, disposition: "inline", etag: '"3-aaaa"', ...over };
+  return { blob: new Blob(["x".repeat(2048)], { type: mediaType }), mediaType, disposition: INLINE_HEADER, etag: '"3-aaaa"', ...over };
 }
 
 let created: string[];
@@ -71,14 +77,27 @@ describe("previewKind", () => {
     expect(previewKind("")).toBe("download");
   });
 
-  it("表态优先于类型：后端说 attachment，text/ 前缀也拿不到渲染面", () => {
-    // 只按 mediaType 的前缀判，等于界面替后端决定"这一类可以 inline"。将来任何登记成
-    // 只下载的 text 型后缀都会从这条前缀规则里白拿到一个"新标签页打开"的 blob 链接。
-    expect(previewKind("text/plain", "attachment")).toBe("download");
-    expect(previewKind("application/pdf", "attachment")).toBe("download");
-    expect(previewKind("text/plain", "inline")).toBe("text");
-    // 默认值是 inline：只问类型的老调用口不变。
+  it("只认 attachment 表态；表态听不到时退回类型规则，而不是一刀切降级成下载", () => {
+    // 只按 mediaType 前缀判，等于界面替后端决定"这一类可以 inline"；但反过来把
+    // "没听到表态"当成"要求下载"，就会在跨源时安静地干掉整条在线查看（第九轮 blocker）。
+    expect(previewKind("text/plain", 'attachment; filename="x.txt"')).toBe("download");
+    expect(previewKind("application/pdf", 'attachment; filename="x.pdf"')).toBe("download");
+    expect(previewKind("text/plain", INLINE_HEADER)).toBe("text");
+    // 后端真实形态：带参数的整串，从来不是裸 token。
+    expect(previewKind("application/pdf", INLINE_HEADER)).toBe("pdf");
+    expect(previewKind("application/pdf", "")).toBe("pdf");
+    expect(previewKind("application/pdf", null)).toBe("pdf");
     expect(previewKind("application/pdf")).toBe("pdf");
+    // 看不懂的表态同样算"没有信息"，但仍然过第二道类型闸门。
+    expect(previewKind("text/html", "weird-thing")).toBe("download");
+  });
+
+  it("dispositionToken 只取前导 token，大小写与参数都不影响判断", () => {
+    expect(dispositionToken(INLINE_HEADER)).toBe("inline");
+    expect(dispositionToken('ATTACHMENT; FileName="a"')).toBe("attachment");
+    expect(dispositionToken("")).toBeNull();
+    expect(dispositionToken(undefined)).toBeNull();
+    expect(dispositionToken("proxy-broke-this")).toBeNull();
   });
 });
 
@@ -94,6 +113,29 @@ describe("SourcePreview", () => {
     expect(screen.getByText("2.0 KB")).toBeTruthy();
     expect(screen.getByText("revision 3-aaaa")).toBeTruthy();
     expect(api.fetchDocumentSource).toHaveBeenCalledWith(SCOPE, "inline", expect.any(AbortSignal));
+  });
+
+  it("跨源听不到 Content-Disposition 时仍然照常在线查看", async () => {
+    // `Content-Disposition` 不在 CORS 的响应头白名单里，客户端在 Vite dev / Tauri 下
+    // 可能拿到空串（服务端已用 expose_headers 显式放行，但界面不能假设那一步一定生效）。
+    // 上一版的写法是 `disposition !== "inline"` 就降级成下载 —— 那正好把整条在线查看
+    // 在真后端面前关掉，而当时 16 条用例全绿，因为夹具发的是后端从不发的裸 "inline"。
+    api.fetchDocumentSource.mockResolvedValue(blobResponse("application/pdf", { disposition: "" }));
+    render(<SourcePreview scope={SCOPE} documentName="指南.pdf" />);
+    const frame = await waitFor(() => screen.getByTitle("指南.pdf 原文预览"));
+    expect(frame.getAttribute("sandbox")).toBe("");
+    expect(screen.queryByText("这一类原文不支持在线查看")).toBeNull();
+  });
+
+  it("后端明确要 attachment 时不给任何渲染面，也不给 blob 链接", async () => {
+    api.fetchDocumentSource.mockResolvedValue(
+      blobResponse("text/plain", { disposition: 'attachment; filename="a.txt"' }),
+    );
+    const { container } = render(<SourcePreview scope={SCOPE} documentName="a.txt" />);
+    await waitFor(() => screen.getByText("下载原文"));
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector("pre")).toBeNull();
+    expect(container.querySelector('a[href^="blob:"]')).toBeNull();
   });
 
   it("会执行文档自身内容的类型：DOM 里既没有渲染面也没有 blob 链接，但仍给下载", async () => {

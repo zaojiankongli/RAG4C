@@ -34,6 +34,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from config.settings import get_settings  # noqa: E402
+from sources.state_modes import source_state_mode  # noqa: E402
 from sources import (  # noqa: E402
     SourceSpec,
     SourceSyncer,
@@ -100,7 +101,10 @@ def _build_pipeline(settings, contextual: bool):
 def _build_syncer(settings, pipeline, cache_dir: Path) -> SourceSyncer:
     state_mode = str(getattr(settings.sources, "state_mode", "json"))
     ledger = None
-    if state_mode in {"dual", "database"}:
+    # 这曾经是第四处 `in {"dual", "database"}` 手抄（第十轮评审 B1）：新登记一种
+    # uses_ledger=True 的模式时，CLI 这条路会建出 ledger=None，runner 里的 ledger 分支
+    # 静默短路，状态就写到错的存储上，而全部测试照旧绿。现在它问声明。
+    if source_state_mode(state_mode).uses_ledger:
         from core import catalog
         from core.source_sync_ledger import SourceSyncLedger
 

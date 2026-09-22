@@ -22,6 +22,7 @@ import core.enterprise_identity_control as control
 from core.identity_revocations import (
     FENCE_COLUMNS,
     PROTECTED_COLUMNS,
+    PROTECTED_REASONS,
     PROVENANCE_COLUMNS,
     SCOPE_COLUMNS,
     RevocationKindSpec,
@@ -232,11 +233,13 @@ def test_the_protected_column_sets_are_exactly_what_the_ceremony_owns() -> None:
 
 
 def test_updated_by_is_the_one_provenance_column_a_kind_still_owns() -> None:
-    """``updated_by`` 看着像溯源列，所以"顺手把它一起保护起来"是**错**的：仪式自己盖
-    ``updated_at``，而"是谁做的这次释放"只有声明知道 —— 内建 ``domain_revoke`` 返回的正是
-    ``{"updated_by": actor_id}``（:330 那条字面值钉用例）。把它列进禁区不会在注册期报错
-    （那条 lambda 会走 PROVENANCE 分支），而会在写侧被仪式拒绝 —— 也就是线上才炸。
-    这一条钉的是"没有越界保护"，不是"能写"。
+    """``updated_by`` 看着像溯源列，但它是 kind **该有**的一条：仪式自己盖 ``updated_at``，
+    而"是谁做的这次释放"只有声明知道 —— 内建 ``domain_revoke`` 返回的正是
+    ``{"updated_by": actor_id}``（:330 那条字面值钉用例）。
+
+    把它列进禁区会在 **import 期**就炸（``_validate_spec`` 对每个内建 kind 探一次
+    ``release_values``，第九轮评审把我这句旧注释纠正了过来），所以真出问题时是响的；
+    这一条钉的不是"炸不炸"，而是"这一列归谁写"。
     """
     assert "updated_by" not in PROTECTED_COLUMNS
     assert "updated_by" not in PROVENANCE_COLUMNS
@@ -247,6 +250,17 @@ def test_updated_by_is_the_one_provenance_column_a_kind_still_owns() -> None:
         assert resolve_revocation_kind("probe_revoke") is not None
     finally:
         unregister_revocation_kind("probe_revoke")
+
+
+def test_every_protected_column_carries_a_reason_and_the_reason_set_is_the_check() -> None:
+    """注册期查的是 ``PROTECTED_REASONS`` 的键集合，不是三个成员集合各写一遍。
+
+    少一条理由 = 那一列同时躲过注册期与写侧（写侧查 ``PROTECTED_COLUMNS``，两边就此脱钩）。
+    加一个新集合忘了登记理由，这里就红，而不是安静地放行。
+    """
+    assert frozenset(PROTECTED_REASONS) == PROTECTED_COLUMNS
+    assert set(PROTECTED_REASONS) & {"updated_by", "txt_value", "active_name_key"} == set()
+    assert all(reason.strip() for reason in PROTECTED_REASONS.values())
 
 
 @pytest.mark.parametrize("column", sorted(PROTECTED_COLUMNS))

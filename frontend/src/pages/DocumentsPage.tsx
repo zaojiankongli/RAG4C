@@ -261,12 +261,17 @@ const DEFAULT_DOCUMENT_FILTERS: DocumentsFilterState = {
   tag: "all",
 };
 
-/** URL 参数名与筛选键的对照：只列不同名的那几个，其余同名直通。 */
-const DOCUMENT_FILTER_PARAMETERS: Partial<Record<keyof DocumentsFilterState, string>> = {
+/** URL 参数名对照表。**每个键都必须列出来**，包括与键同名的那几个 —— 写成 `Partial`
+ * 再用 `?? key` 兜底，等于允许"加第 8 个筛选键时忘了登记"照样编译过，而第八轮评审 B1
+ * 漏掉的正是这种少一处。现在少一列是类型错误。 */
+const DOCUMENT_FILTER_PARAMETERS: Record<keyof DocumentsFilterState, string> = {
   keyword: "q",
+  status: "status",
   type: "type",
-  category: "category",
+  engine: "engine",
   chunkingReason: "chunking_reason_code",
+  category: "category",
+  tag: "tag",
 };
 
 function readDocumentsFilters(

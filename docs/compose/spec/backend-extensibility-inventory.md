@@ -111,7 +111,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 > | 9 `gate_state` 别名 | **仍在，且普查低估**：是 5 处不是 2 处（3 处转换含筛选入参那一处，2 处并列两种拼写），详见行内 |
 > | 10 `state_mode` | **词表那一半已收口（§W）**：实际是 2 处词表 + **五**处成员判断，不止普查记的那几处；`server/source_dispatcher.py:238` 的硬编码仍是**行为变更**，留在片外等裁定 |
 > | 11 `risk_tier` 写三遍 | 词表确在 `catalog_migrations/versions/0029-0031` 与 CHECK 里 → **需要迁移**，维持原判（单独成切片） |
-> | 12 通知 `source_kind` 不在契约 | **未核实**：`server/` 里没 grep 到通知侧的 `source_kind` Literal，而 `openapi.json` 有 `source_kinds`（复数）三处 schema。普查那句需要先重定位再说 |
+> | 12 通知 `source_kind` 不在契约 | **普查把三个不同的东西混成了一条**（本轮重定位，见 §X）：`core/enterprise_notification_center.py:21` 的 `_ALLOWED_SOURCE_KINDS` 是**通知主题**词表（`quality_alert` / `approval_pending_for_me`），与来源连接器无关；`answer_evidence_facts.py:85` 那个是 `qa`/`document`；真正与连接器同名的是 `tenant_task_projections.source_kind`。**它确实有可修的那一半，但不是「通知不在 OpenAPI」**：任务侧词表在两个模块里各抄一遍而没人对账 —— 已补栅栏（§X）。通知主题词表要不要进契约，另说。 |
 > | 13 落库 doc_type 词汇不一致 | 需要产品裁定，维持原判 |
 >
 > 抄一条给自己和下一位：**普查记的是短文件名**（`receipts.py` / `materializer.py` / `base.py`），
@@ -899,4 +899,103 @@ SM6 声明表里 `json` 整个改名 → 两条红（属性 + 对账）。
 覆盖 json/dual/database 三种模式与跨租户抑制）**38 passed / 182.29s**；`ruff check sources/` 干净。
 `sources/runner.py` 是**逐行混合行尾**（818 行里 585 CRLF / 233 LF），所以每条替换都按
 它自己那一行的 EOL 匹配，改完 `git diff --numstat` 与 `--ignore-cr-at-eol` 同为 19/8。
+
+
+## X. 任务侧词表对账栅栏（§D-12 重定位后才看得见的那一半）
+
+§D-12 原句是「通知 `source_kind` 不在 OpenAPI 也不在前端类型里，加 kind 抓不到」。重定位后：
+通知侧那个 `_ALLOWED_SOURCE_KINDS` 是**通知主题**词表（两个值），跟来源连接器不是一回事；
+真正「两份抄本、没人对账」的是**任务侧**：
+
+| 概念 | python 侧（校验入参） | schema 侧（喂 `CHECK`） |
+|---|---|---|
+| source_kind | `enterprise_task_operations.py:20` | `catalog_schema.py:3901` |
+| category | `:64` | `:3910` |
+| action | `:44` | `:3920` |
+| action_status | `:46` | `:3921` |
+| event_type | `:48` | `:3928` |
+| view_status | `:62` | `:3937` |
+| normalized_status | `:32`（连名字都不同） | `:3911` |
+
+七个概念、两份抄本、跨两个模块，而**改之前没有任何测试比较过它们**。失败是不对称且安静的：
+只加 python 侧 → 这种行 flush 时被 `CHECK` 拒，报一个看不出根因的完整性错误；
+只加 schema 侧 → 库里能存在一行而所有校验都拒读它。
+
+`tests/test_enterprise_task_vocabulary_reconciliation.py` 把七对**按对象直接比**（不是正则读文本），
+外加两条「栅栏自己不能变成摆设」的断言：每对两侧都非空（空集对空集会自己放过自己）；
+以及 `CHECK` 确实仍从被比较的那个元组构造（那张映射是 `{表名: {约束名: 值}}` 分层的，
+哪天改从别处取值，上面七条就成了对着空气较劲）。**实跑 10 passed —— 七对当前全部一致，
+今天没有漂移。** 反向验证 2/2：只给 schema 侧加一个 `billing` 分类 → `...still_agree[category]` 红；
+把 projections 的 `source_kind` CHECK 指向别的元组 → 结构那条红。
+
+**一条刻意没抹平的矛盾（待裁定，别当已解决）**：`_normalize_reconciliation_status`
+（`enterprise_task_operations.py:586-593`）认 `started`，而
+`ck_tenant_task_reconciliation_runs_status`（`catalog_schema.py:3938`）只认 `running`。
+相邻的两张别名表都**不**服务这条路径：`_STATUS_ALIASES` 管的是投影的 normalized status，
+`_RECONCILIATION_ALIASES` 是**字段名**别名（`started` → `started_at`）。
+本轮只找到读路径（`list_reconciliation_runs`），**没找到把 `canonical_task_reconciliation`
+的结果写进那一列的地方，所以不下结论、不改语义**，只把差异钉成字面事实
+（对称差恰为 `{started, running}`）—— 任何人只动一边就红。裁定项见交接文档 §9 第 28 条。
+
+## Y. 第九/十轮独立评审处置：我自己引入的一个 blocker，和两次「面已数清」被打脸
+
+### Y-1 blocker（第九轮）：我上一轮的 nit5 把整条在线查看在真后端面前关掉了
+
+`nit5` 我当时写成「表态优先于类型」，比较是 `disposition !== "inline"`。但后端
+`_content_disposition()` 发的是 `inline; filename="…"; filename*=UTF-8''…`
+（`tests/test_knowledge_source_preview_api.py:210` 本来就钉着 `startswith("inline;")`），
+**从来不是裸 `inline`** → `previewKind` 恒返回 `download`，PDF iframe、图片、文本链接三面全灭，
+每个文档都显示「不支持在线查看」。
+
+为什么 16 条用例全绿：`SourcePreview.test.tsx` 的夹具发的是 `disposition: "inline"` ——
+**后端永远不会发出的值**。这是「夹具自证」那一类，而同一批提交里我刚给别处补过同类守卫。
+
+更狠的第二层：`Content-Disposition` 不在 CORS 的响应头白名单里，而 `server/app.py` 的
+`CORSMiddleware` 当时没有 `expose_headers` —— 所以跨源（Vite dev / Tauri）时那个头对 JS
+就是空串，**光把比较改成 `startsWith("inline")` 依然是坏的**。修法因此是两件事：
+
+1. 界面侧：`dispositionToken()` 只取前导 token；并且**区分「后端说 attachment」与
+   「我没听到表态」** —— 空/看不懂一律按「没有信息」处理，退回类型规则，
+   绝不当成「要求下载」（后者就是一刀切掉在线查看）。
+2. 服务端：`expose_headers=["Content-Disposition", "ETag", "Content-Type"]`。
+   `ETag` 同样不在白名单里，界面的「revision …」在跨源下此前一直静默为空。
+3. 夹具改成后端**真实形态**的整串，并补三条：真 header 能渲染、空 header 仍能渲染
+   （跨源）、真 `attachment` 才降级。
+
+反向验证 3/3（脚本还原后按字节相同）：退回精确串比较 / `dispositionToken` 内部改用裸等值比 /
+把「听不到表态」当成下载要求 —— 三条各自转红。（Y-2 那批是另一组 6/6。）
+
+**给自己的一条流程教训**：跑这批变异的脚本在 GBK 控制台打印 vitest 输出时崩了，
+崩在「已经改坏文件、还没还原」的那一步 —— 我据此以为已还原，直到 grep 发现那行
+`disposition !== "inline"` 还在。**变异脚本必须把还原放进 finally，并且崩溃后要重新读盘**，
+不能按记忆继续往下走（这条 §13 早就记过一次，这次是我自己踩）。
+
+### Y-2 两次「我把面数清了」都被评审推翻（同一句话我错了两次）
+
+* §W 说 state_mode 是「2 份词表 + 5 处行为问句，面已数清」→ 第十轮在
+  `scripts/ingest_source.py:103` 找到**第 6 处**：CLI 用 `if state_mode in {"dual","database"}`
+  自己回答 `uses_ledger`。这条不是洁癖：新登记一种 `uses_ledger=True, requires_ledger=False`
+  的模式，CLI 这条路会建出 `ledger=None`，runner 的 ledger 分支静默短路，**状态写到错的存储上**，
+  而全部测试照旧绿 —— 正是我在提交信息里当作动机的症状。已改成问声明。
+* §W 的回潮栅栏按形状匹配（只覆盖 `in {…}` 与 `== "…"`）→ 元组、`!=`、`not in`、模块级
+  `frozenset` 全都能躲过；而且 `_save_state` 从 `writes_json` 误接到 `uses_ledger`
+  能躲过所有守卫并真的翻转存储位置。
+
+两条都已修，且这次**盯词 + 盯形状 + 盯行为**三层一起：
+`"dual"` 这个词除声明表与设置侧之外不许再出现在任何 `.py`（形状会变，词不会变）；
+比较式扫描覆盖 `==/!=/in/not in/if … :`；
+`tests/test_source_state_mode_behaviour.py` 用真 `SourceSyncer` 跑三种模式，
+钉住 `writes_json` 决定 JSON 落不落盘、`ledger_failures_are_fatal` 决定 ledger 挂了是吞还是抛
+——**属性表里翻一个布尔必须在这里变红**，而不是只在字面值用例里变红。
+反向验证 6/6：CLI 抄成元组 / 抄成 `not in` / 抄成 `==` / 抄成模块级 frozenset /
+`_save_state` 接错属性 / fatal 接错属性 —— 全部转红。（第一轮跑时 `not in` 存活，
+因为我自己写了个 `state_mode not in` 的豁免条件；删掉豁免后重跑才转红。）
+
+### Y-3 第九轮其余三条的处置
+
+| 发现 | 处置 |
+|---|---|
+| F4 的理由写错了：我说保护 `updated_by` 会「在写侧才炸，也就是线上」 | **评审是对的**：`_validate_spec` 对每个 kind 探一次 `release_values`，而内建 kind 在 import 期注册，所以那是**注册期就炸**（响的，不是静默的）。决定本身没错，理由错了 —— 已改源码注释、用例 docstring，并且不再靠约定：注册期改成查一张 `PROTECTED_REASONS` 的原因表（键集合就是执行面），加新集合忘了配理由会红 |
+| B1 还剩一处：`DOCUMENT_FILTER_PARAMETERS` 是 `Partial` + `?? key` 兜底 | **成立，已修**：改成 `Record<keyof DocumentsFilterState, string>` 逐个列出（含同名的那几个），兜底删掉。现在少登记一个键是类型错误 —— 「少一处」这个形状才算真的没有落点 |
+| c0db716 说前端只有「1 处」认双拼法 | **数错了，是 3 处**：`QualityOperationsDetailDrawer.tsx` 的类型联合、`GATE_LABELS` 的键、`gateTheme` 里的 `or` 分支。对外契约留不留 `passing` 那次裁定仍然悬着，但计数已更正 |
 

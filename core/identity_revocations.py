@@ -35,6 +35,7 @@ __all__ = [
     "SCOPE_COLUMNS",
     "PROVENANCE_COLUMNS",
     "PROTECTED_COLUMNS",
+    "PROTECTED_REASONS",
     "register_revocation_kind",
     "unregister_revocation_kind",
     "resolve_revocation_kind",
@@ -59,12 +60,35 @@ SCOPE_COLUMNS = frozenset({"id", "tenant_id", "created_at"})
 #:
 #: ``updated_by`` is deliberately **not** here. It is the one provenance column a kind owns:
 #: the ceremony stamps ``updated_at`` itself and the kind stamps who did it — the builtin
-#: ``domain_revoke`` returns exactly ``{"updated_by": actor_id}``. Protecting it would break
-#: that kind at the write-side check rather than at registration, i.e. in production.
+#: ``domain_revoke`` returns exactly ``{"updated_by": actor_id}``. Putting it here would make
+#: that builtin fail to *register* at import time (``_validate_spec`` probes ``release_values``
+#: once per kind), which is loud; the point of excluding it is that the column is legitimately
+#: the kind's to write, not that a check would be inconvenient.
 PROVENANCE_COLUMNS = frozenset({"created_by", "verified_by", "issued_by", "issued_at"})
 
 #: Everything the ceremony refuses to take from a declaration.
 PROTECTED_COLUMNS = FENCE_COLUMNS | SCOPE_COLUMNS | PROVENANCE_COLUMNS
+
+#: Why each protected column is protected. Its key set **is** the enforcement surface:
+#: registration checks this map rather than the three member sets, so a new protected set
+#: that is added to ``PROTECTED_COLUMNS`` without a reason here fails the guard test instead
+#: of slipping past both checks.
+PROTECTED_REASONS: dict[str, str] = {
+    **{
+        column: "that column is the revoke itself"
+        for column in FENCE_COLUMNS
+    },
+    **{
+        column: "that column says which row this is and whose it is; moving it would leave"
+        " the audit trail false"
+        for column in SCOPE_COLUMNS
+    },
+    **{
+        column: "that column records who originated this row and when; a kind does not get"
+        " to restamp history"
+        for column in PROVENANCE_COLUMNS
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -112,20 +136,11 @@ def _validate_spec(spec: RevocationKindSpec) -> None:
     for key in probe:
         if not isinstance(key, str) or not key.strip():
             raise ValueError(f"{kind}: release_values keys must be non-empty column names")
-        if key in FENCE_COLUMNS:
-            raise ValueError(
-                f"{kind}: release_values may not write {key!r} — that column is the revoke itself"
-            )
-        if key in SCOPE_COLUMNS:
-            raise ValueError(
-                f"{kind}: release_values may not write {key!r} — that column says which row this"
-                " is and whose it is; moving it would leave the audit trail false"
-            )
-        if key in PROVENANCE_COLUMNS:
-            raise ValueError(
-                f"{kind}: release_values may not write {key!r} — that column records who"
-                " originated this row and when; a kind does not get to restamp history"
-            )
+        # 一张原因表、一次成员检查。三列各写一个 `if key in …` 的话，将来加第四个集合只要
+        # 忘了配一个分支，那批列就能同时躲过注册期与写侧（写侧查的是 PROTECTED_COLUMNS）。
+        reason = PROTECTED_REASONS.get(key)
+        if reason is not None:
+            raise ValueError(f"{kind}: release_values may not write {key!r} — {reason}")
 
 
 def register_revocation_kind(spec: RevocationKindSpec, *, replace: bool = False) -> None:
