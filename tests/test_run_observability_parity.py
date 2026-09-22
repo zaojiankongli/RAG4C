@@ -207,7 +207,9 @@ def _isolate_server(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(server_app, "get_settings", _fake_settings, raising=False)
     monkeypatch.setattr(server_app.time, "perf_counter", lambda: 100.0)
     monkeypatch.setattr(rag_stream.time, "perf_counter", lambda: 100.0)
-    monkeypatch.setattr("retrieval.pipeline.time.perf_counter", lambda: 100.0)
+    # 计时发生在阶段驱动器里（retrieval/stages.py 的 time 就是标准库 time
+    # 模块本身，patch 它对管线与阶段同样生效）。
+    monkeypatch.setattr("retrieval.stages.time.perf_counter", lambda: 100.0)
     yield
     server_app._aio_flights.clear()
     server_app._pending = 0

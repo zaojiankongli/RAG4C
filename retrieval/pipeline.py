@@ -47,117 +47,22 @@ pymilvus / FlagEmbedding / openai。
 from __future__ import annotations
 
 import threading
-import time
-from concurrent.futures import Future, ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
-from config.settings import get_settings, resolve_tenant
+from config.settings import get_settings
 from core.document_serving import DocumentServingContext, KnowledgeChanged, current_document_serving
-from core.reranker import RerankError
-from core.tracing import current_run_observer, current_trace
 from models.schemas import Chunk, RetrievedChunk, RouteDecision
 
-from .diversity import mmr_select
 from .graph_retriever import GraphRetrieverError
-
-# 需要图谱分支的路由目标
-_GRAPH_TARGETS: tuple[str, ...] = ("vector_graph_rag", "full")
-
-
-def _notify_observer(method: str, *args: Any, **kwargs: Any) -> Any:
-    """Best-effort run-event emission that can never affect retrieval."""
-    observer = current_run_observer()
-    if observer is None:
-        return None
-    try:
-        return getattr(observer, method)(*args, **kwargs)
-    except Exception:
-        # The observer is strictly out-of-band. This also protects callers that
-        # bind a custom observer facade rather than core.run_events.RunObserver.
-        return None
-
-
-def _start_node(node_id: str, **attributes: Any) -> None:
-    _notify_observer("start_node", node_id, attributes=attributes or None)
-
-
-def _complete_node(node_id: str, duration_ms: float | None = None, **attributes: Any) -> None:
-    _notify_observer(
-        "complete_node",
-        node_id,
-        duration_ms=duration_ms,
-        attributes=attributes or None,
-    )
-
-
-def _fail_node(
-    node_id: str,
-    *,
-    error_type: str,
-    reason: str,
-    recoverable: bool,
-    duration_ms: float | None = None,
-    **attributes: Any,
-) -> None:
-    _notify_observer(
-        "fail_node",
-        node_id,
-        duration_ms=duration_ms,
-        error_type=error_type,
-        error_code=reason,
-        recoverable=recoverable,
-        attributes={"reason": reason, **attributes},
-    )
-
-
-def _skip_node(node_id: str, reason: str, **attributes: Any) -> None:
-    _notify_observer("skip_node", node_id, attributes={"reason": reason, **attributes})
-
-
-def _degraded(node_id: str, reason: str, **attributes: Any) -> None:
-    _notify_observer("degraded", node_id, attributes={"reason": reason, **attributes})
-
-
-def _selected_route(
-    node_id: str,
-    route: RouteDecision,
-    *,
-    effective: str | None = None,
-) -> None:
-    _notify_observer(
-        "route_selected",
-        node_id,
-        route=effective or route.target,
-        confidence=float(route.confidence),
-        degraded=bool(route.degraded),
-    )
-
-
-def _report_rerank_degraded(kind: str, detail: str) -> None:
-    """重排降级时对外发一次信号（指标 + 日志）。
-
-    在此之前，重排失败**只**往 ``traces`` 里追加一行。traces 是单次问答的调试
-    轨迹，不落盘、不聚合、不告警——也就是说重排彻底挂掉时，服务照样 200，
-    日志一片干净，唯一的症状是"检索质量莫名其妙变差了"。这是最难查的那类故障：
-    没有任何一个信号告诉你系统正在降级运行。
-
-    降级本身是对的（重排挂了也该出答案，只是顺序退回融合序），错的是**降级
-    得无声无息**。所以这里只加可观测性，不改降级行为：
-    - ``retrieval.rerank.degraded`` 计数器，可在 /api/metrics 看到、可告警；
-    - warning 级日志，带上具体原因，便于定位是鉴权、超时还是协议不符。
-
-    埋点异常一律吞掉：可观测性代码把主链路搞挂就本末倒置了。
-    """
-    try:
-        from core.metrics import get_metrics
-        from core.observability import get_logger
-
-        get_metrics().incr("retrieval.rerank.degraded")
-        get_logger(__name__).warning("重排降级（%s），改用召回顺序：%s", kind, detail)
-    except Exception:
-        pass
+from .stages import (
+    RetrievalState,
+    StageContext,
+    StageRunner,
+    add_span as _add_span_record,
+    retrieval_stage_order,
+)
 
 
 def dense_cosines_of(chunks: list[RetrievedChunk]) -> list[float]:
@@ -230,6 +135,9 @@ class RetrievalPipeline:
             默认 None（禁用）。
         sentence_window: 父块回取展开器
             （``expand(items) -> list[RetrievedChunk]``），默认 None（禁用）。
+        components: 注册表驱动的可选策略组件（``{组件名: 组件 | None}``）。
+            具名参数保留是为了既有调用方；**新增一个可选策略走这里，不必再改
+            本签名**（阶段与装配点都从 ``retrieval.stages`` 的注册表拿名字）。
     """
 
     def __init__(
@@ -248,6 +156,7 @@ class RetrievalPipeline:
         auto_filter: Any = None,
         reranker_cb: Any = None,
         serving_guard: Any = None,
+        components: Optional[dict[str, Any]] = None,
     ) -> None:
         self.embedder = embedder
         self.milvus = milvus
@@ -256,12 +165,20 @@ class RetrievalPipeline:
         self.reranker_cb = reranker_cb
         self.rewriter = rewriter
         self.router = router
-        self.graph_retriever = graph_retriever
-        self.hyde = hyde
-        self.subqueries = subqueries
-        self.stepback = stepback
-        self.sentence_window = sentence_window
-        self.auto_filter = auto_filter
+        # 可选策略组件的唯一存放处；具名属性是它的镜像（历史接线与
+        # ``rag_topology.available_components_from_pipeline`` 都按属性读）。
+        self._components: dict[str, Any] = {
+            "hyde": hyde,
+            "subqueries": subqueries,
+            "stepback": stepback,
+            "sentence_window": sentence_window,
+            "graph_retriever": graph_retriever,
+            "auto_filter": auto_filter,
+        }
+        for name, value in (components or {}).items():
+            self._components[name] = value
+        for name, value in self._components.items():
+            setattr(self, name, value)
         self.serving_guard = serving_guard
         self.settings = settings if settings is not None else get_settings()
         # 兼容传入完整 Settings（含 .pipeline）或直接传入 PipelineSettings
@@ -279,15 +196,24 @@ class RetrievalPipeline:
         self._enhance_lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
+    # 可选策略组件存取（注册表名 ↔ 属性）
+    # ------------------------------------------------------------------ #
+    def component(self, name: str) -> Any:
+        """按注册表名取可选策略组件；未装配 / 装配失败即为 None。"""
+        return self._components.get(name)
+
+    def set_component(self, name: str, value: Any) -> None:
+        """登记一个可选策略组件（属性与注册表字典保持同源）。"""
+        self._components[name] = value
+        setattr(self, name, value)
+
+    # ------------------------------------------------------------------ #
     # 追踪
     # ------------------------------------------------------------------ #
     @staticmethod
     def _add_span(name: str, duration_ms: float, traces: list[str]) -> None:
         """记录 span 到当前 trace（若存在）与结果 traces。"""
-        trace = current_trace()
-        if trace is not None:
-            trace.add_span(name, duration_ms)
-        traces.append(f"{name}:{duration_ms:.2f}ms")
+        _add_span_record(name, duration_ms, traces)
 
     # ------------------------------------------------------------------ #
     # 子查询并发检索执行器（性能：把 N 路子查询检索从串行变并发）
@@ -333,11 +259,6 @@ class RetrievalPipeline:
     # ------------------------------------------------------------------ #
     #: 三个查询端增强器的名字，顺序即池宽的上界（每个增强器一条线程）。
     _ENHANCER_NAMES = ("hyde", "subqueries", "stepback")
-    _ENHANCER_NODE_IDS = {
-        "hyde": "plugin.hyde.expand",
-        "subqueries": "plugin.subqueries.expand",
-        "stepback": "plugin.stepback.expand",
-    }
 
     def _ensure_enhance_executor(self) -> ThreadPoolExecutor:
         """惰性创建查询端增强的生成线程池（实例级复用，跨查询共用）。
@@ -356,76 +277,6 @@ class RetrievalPipeline:
                     thread_name_prefix="rag-enhance",
                 )
             return self._enhance_executor
-
-    @staticmethod
-    def _timed_generate(component: Any, query: str) -> tuple[Any, float, Optional[Exception]]:
-        """跑一次 ``component.generate(query)``，返回 ``(产出, 耗时ms, 异常)``。
-
-        异常在这里就地接住而不是让它穿过 ``Future``：三个增强器**互不影响**
-        是原本就有的语义（每个都各自 try / 各自降级），放进线程池以后要保持
-        这一点，就必须让每个任务自己收尾。耗时也在这里量——量的是这次生成
-        真正花了多久，而不是主线程等了多久，否则先取回的那个会把后面几个的
-        等待时间算到自己头上。
-        """
-        t0 = time.perf_counter()
-        try:
-            return component.generate(query), (time.perf_counter() - t0) * 1000.0, None
-        except Exception as exc:  # noqa: BLE001 - 由调用方按各自语义降级
-            return None, (time.perf_counter() - t0) * 1000.0, exc
-
-    def _start_enhancers(self, query: str, traces: list[str]) -> dict[str, Future]:
-        """把已启用的查询端增强的 LLM 生成**同时**发出去。
-
-        三者都只吃 ``search_query``，彼此没有任何数据依赖，从前却是一次
-        HyDE、等它回来做完检索、再一次子查询、再一次后退提问——默认全开时
-        这是三次完整的 LLM 往返，一条接一条地摞在用户等待里。它们唯一的时
-        序约束是 HyDE 必须早于 ``embed_query``，而那个约束在下面取回结果的
-        地方自然满足（用到谁才等谁）。
-
-        只有一个（或没有）增强器启用时不动线程池：那时并发无从谈起，多绕
-        一层反而把栈搞复杂。返回空字典即表示"就地同步生成"，见
-        :meth:`_take_enhancer`。
-        """
-        enabled = [
-            (name, component)
-            for name, on, component in (
-                ("hyde", self.pipeline.hyde_on, self.hyde),
-                ("subqueries", self.pipeline.subqueries_on, self.subqueries),
-                ("stepback", self.pipeline.stepback_on, self.stepback),
-            )
-            if on and component is not None
-        ]
-        for name, _component in enabled:
-            _start_node(self._ENHANCER_NODE_IDS[name])
-        if len(enabled) < 2:
-            return {}
-        try:
-            executor = self._ensure_enhance_executor()
-            jobs = {
-                name: executor.submit(self._timed_generate, component, query)
-                for name, component in enabled
-            }
-        except Exception as exc:  # noqa: BLE001 - 线程池不可用就退回串行
-            traces.append(f"查询端增强并发生成不可用，退回串行: {exc}")
-            return {}
-        traces.append(
-            "查询端增强并发生成："
-            + " / ".join(name for name, _ in enabled)
-            + " 的 LLM 调用已同时发出（各自的 span 因此相互重叠）"
-        )
-        return jobs
-
-    def _take_enhancer(
-        self, jobs: dict[str, Future], name: str, component: Any, query: str
-    ) -> tuple[Any, float, Optional[Exception]]:
-        """取回预先发出的生成结果；没预发过就地同步生成（语义完全一致）。"""
-        job = jobs.pop(name, None)
-        if job is None:
-            return self._timed_generate(component, query)
-        try:
-            return job.result()
-        except Exception as exc:  # noqa: BLE001 - 线程池自身出问题（已关闭等）
-            return None, 0.0, exc
 
     # ------------------------------------------------------------------ #
     # 混合检索开关
@@ -532,765 +383,33 @@ class RetrievalPipeline:
         Returns:
             :class:`RetrievalResult`。全程不抛错：LLM / 重排 / 图谱分支
             的失败都降级为可用的默认行为。
+
+        Note:
+            阶段化之后本方法只剩编排：开作用域 -> 按注册表驱动阶段 -> 出界收口。
+            每个阶段的 span / skip / fail / degrade 仪式由
+            :class:`retrieval.stages.StageRunner` 统一负责。
         """
-        p = self.pipeline
-        traces: list[str] = []
-        # 租户强制解析（enforced=True 时空 / None 回退 default_tenant）
-        tenant = resolve_tenant(tenant_id, self.settings)
-        # 知识库维度不做强制回退：空即全域检索
-        dataset = (dataset_id or "").strip()
-        serving_context = self._serving_context(tenant, dataset)
+        ctx = StageContext.open(self, acl, tenant_id, dataset_id)
+        state = RetrievalState.start(query)
+        state = StageRunner(retrieval_stage_order()).run(state, ctx)
 
         # ------------------------------------------------------------------ #
-        # 1. 复杂度门控 + 2. 查询改写（简单查询一次调用即完成两者）
+        # 全部阶段（门控 / 改写 / 路由 / 预取发起 / HyDE / 嵌入 / 过滤表达式 /
+        # 混合检索 / 伺服栅栏 / 子查询 / stepback / 多样性 / 图谱分支 / 重排 /
+        # 父块回取 / 作用域收口 / 裁剪）都在注册表里，由上面的 StageRunner 驱动；
+        # 顺序与仪式都由 retrieval/stages.py 申报，这里不再内联任何一段。
         # ------------------------------------------------------------------ #
-        if p.complexity_gate_on:
-            _start_node("complexity_gate")
-        else:
-            _skip_node("complexity_gate", "disabled")
-        t0 = time.perf_counter()
-        rewritten, changed = query, False
-        gate_skipped = False
-        try:
-            if p.complexity_gate_on:
-                rewritten, changed = self.rewriter.rewrite(query)
-                gate_skipped = not changed  # 具体查询：跳过改写与路由
-        except Exception as exc:
-            gate_ms = (time.perf_counter() - t0) * 1000.0
-            _fail_node(
-                "complexity_gate",
-                error_type=type(exc).__name__,
-                reason="evaluation_failed",
-                recoverable=False,
-                duration_ms=gate_ms,
-            )
-            raise
-        gate_ms = (time.perf_counter() - t0) * 1000.0
-        self._add_span("gate", gate_ms, traces)
-        if p.complexity_gate_on:
-            _complete_node(
-                "complexity_gate",
-                gate_ms,
-                rewrite_required=bool(changed),
-            )
-
-        route = RouteDecision(target="hybrid", confidence=1.0, degraded=False)
-        search_query = query
-        if gate_skipped:
-            _skip_node("rewrite", "gate_simple")
-            self._add_span("rewrite", 0.0, traces)
-            _skip_node("route", "gate_simple")
-            self._add_span("route", 0.0, traces)
-        else:
-            if not p.complexity_gate_on:
-                # 门控关闭：此处显式执行改写
-                _start_node("rewrite")
-                t0 = time.perf_counter()
-                try:
-                    rewritten, changed = self.rewriter.rewrite(query)
-                except Exception as exc:
-                    rewrite_ms = (time.perf_counter() - t0) * 1000.0
-                    _fail_node(
-                        "rewrite",
-                        error_type=type(exc).__name__,
-                        reason="rewrite_failed",
-                        recoverable=False,
-                        duration_ms=rewrite_ms,
-                    )
-                    raise
-                rewrite_ms = (time.perf_counter() - t0) * 1000.0
-                self._add_span("rewrite", rewrite_ms, traces)
-                _complete_node("rewrite", rewrite_ms, changed=bool(changed))
-            else:
-                # 门控开启且查询复杂：改写已在门控阶段完成
-                _start_node("rewrite")
-                self._add_span("rewrite", 0.0, traces)
-                _complete_node("rewrite", 0.0, changed=bool(changed))
-            search_query = (rewritten or "").strip() or query
-            _start_node("route")
-            t0 = time.perf_counter()
-            try:
-                route = self.router.route(search_query)
-            except Exception as exc:
-                route_ms = (time.perf_counter() - t0) * 1000.0
-                _fail_node(
-                    "route",
-                    error_type=type(exc).__name__,
-                    reason="route_failed",
-                    recoverable=False,
-                    duration_ms=route_ms,
-                )
-                raise
-            route_ms = (time.perf_counter() - t0) * 1000.0
-            self._add_span("route", route_ms, traces)
-            _complete_node("route", route_ms)
-        _selected_route("route", route)
-
-        # ------------------------------------------------------------------ #
-        # 3. 嵌入（HyDE 可选增强在嵌入前：假设文档向量替换查询向量）
-        # ------------------------------------------------------------------ #
-        # 3a. HyDE：开关开启且注入 hyde 组件时，先用 LLM 生成"假设文档"，
-        #     稠密检索用假设文档的向量，BM25 文本检索仍用 search_query
-        #     （混合检索语义不变）。生成失败 / 无产出时静默降级为原查询
-        #     嵌入（span 记 0ms），绝不中断管线。
-        #
-        # 三个查询端增强的生成在这里一起发出（见 _start_enhancers）：它们都
-        # 只依赖 search_query，各自的结果在下面各自的阶段里取回。
-        enhance_jobs = self._start_enhancers(search_query, traces)
-
-        hyde_doc: Optional[str] = None
-        if not p.hyde_on:
-            _skip_node("plugin.hyde.expand", "disabled")
-        elif self.hyde is None:
-            _skip_node("plugin.hyde.expand", "unavailable")
-        else:
-            hyde_doc, hyde_ms, hyde_exc = self._take_enhancer(
-                enhance_jobs, "hyde", self.hyde, search_query
-            )
-            hyde_work_ms = hyde_ms
-            if hyde_exc is not None:
-                traces.append(f"hyde 生成失败，降级为普通嵌入: {hyde_exc}")
-                hyde_doc = None
-            if not (isinstance(hyde_doc, str) and hyde_doc.strip()):
-                hyde_ms = 0.0  # 未产出假设文档：不改变嵌入
-                hyde_doc = None
-                traces.append("hyde 未产出假设文档，使用原查询嵌入")
-            self._add_span("hyde", hyde_ms, traces)
-            if hyde_exc is not None:
-                _fail_node(
-                    "plugin.hyde.expand",
-                    error_type=type(hyde_exc).__name__,
-                    reason="generation_failed",
-                    recoverable=True,
-                    duration_ms=hyde_work_ms,
-                )
-                _degraded("plugin.hyde.expand", "generation_failed")
-            elif hyde_doc is None:
-                _fail_node(
-                    "plugin.hyde.expand",
-                    error_type="EmptyResult",
-                    reason="no_output",
-                    recoverable=True,
-                    duration_ms=hyde_ms,
-                )
-                _degraded("plugin.hyde.expand", "no_output")
-            else:
-                _complete_node("plugin.hyde.expand", hyde_ms, output_present=True)
-
-        _start_node("embed", source="hyde" if hyde_doc else "query")
-        t0 = time.perf_counter()
-        try:
-            query_vec = self.embedder.embed_query(hyde_doc if hyde_doc else search_query)
-        except Exception as exc:
-            embed_ms = (time.perf_counter() - t0) * 1000.0
-            _fail_node(
-                "embed",
-                error_type=type(exc).__name__,
-                reason="embed_failed",
-                recoverable=False,
-                duration_ms=embed_ms,
-            )
-            raise
-        embed_ms = (time.perf_counter() - t0) * 1000.0
-        self._add_span("embed", embed_ms, traces)
-        _complete_node("embed", embed_ms, source="hyde" if hyde_doc else "query")
-
-        # ------------------------------------------------------------------ #
-        # 4. 混合检索（候选放大到 top_k * 2，重排后裁剪）
-        # ------------------------------------------------------------------ #
-        group_by_field: Optional[str] = None
-        group_size: Optional[int] = None
-        if p.source_diversity in ("group_only", "group_mmr"):
-            group_by_field = p.group_by_field
-            group_size = p.group_size
-
-        # 租户 + 知识库 + ACL 过滤表达式（AND 组合）：tenant 无条件启用，
-        # dataset 非空时参与，ACL 受 acl_filter_on 控制（与图谱分支语义一致）。
-        # 组合逻辑统一收敛到 RagMilvusClient.build_filters，避免此处与客户端
-        # 各写一份而漏掉维度（dataset_id 此前就是这样被漏掉的）。
-        filter_expr = self.milvus.build_filters(
-            tenant_id=tenant,
-            acl=acl,
-            acl_filter_on=p.acl_filter_on,
-            dataset_id=dataset,
-        )
-
-        # 自动元数据过滤（可选增强）：LLM 按元数据 schema 生成过滤表达式，
-        # 与租户/ACL/dataset 表达式 AND 组合。任何失败（LLM 不可用、schema
-        # 读取失败、校验失败）都静默降级为不过滤——过滤是优化而非正确性约束。
-        if self.auto_filter is not None:
-            auto_expr = self._auto_filter_expr(query, dataset, traces)
-            if auto_expr:
-                if filter_expr:
-                    filter_expr = f"({filter_expr}) and ({auto_expr})"
-                else:
-                    filter_expr = auto_expr
-                traces.append(f"auto_filter: {auto_expr}")
-
-        # rerank 一旦不生效，score 就退化成 RRF 融合分，弃权闸那道"知识库有没有
-        # 相关内容"的检查会整个失效（见 verify.abstention 的说明）。稠密余弦是
-        # 那种情况下唯一还能用的信号，但取回向量要额外传 dim×4 字节/条，所以
-        # **只在确实用得上时才要**。
-        #
-        # 这里只能预判 rerank 的三条"事前就知道"的失效路径（关闭 / 熔断 /
-        # 没有重排器）；第四条——调用到一半抛错——事前无从得知，那种情况仍旧
-        # 退回"如实承认不可评估"。为这一条罕见路径给每次查询都加上传输代价，
-        # 不划算。
-        #
-        # HyDE 打开时 query_vec 是**假设文档**的向量，不是查询本身的；余弦因此
-        # 落在另一个分布上，而阈值是按真实查询量出来的。这种情况下不索取，
-        # 免得拿一把没校准过的尺子去判弃权。
-        want_cosine = hyde_doc is None and (
-            not p.rerank_on
-            or self.reranker is None
-            or (self.reranker_cb is not None and not self.reranker_cb.allow())
-        )
-
-        search_mode = "hybrid" if p.hybrid_search_on else "dense"
-        _start_node("search", mode=search_mode, requested_count=p.top_k * 2)
-        t0 = time.perf_counter()
-        try:
-            candidates = self.milvus.hybrid_search(
-                query_dense=query_vec,
-                top_k=p.top_k * 2,
-                query_text=self._bm25_text(search_query),
-                group_by_field=group_by_field,
-                group_size=group_size,
-                filter_expr=filter_expr,
-                with_cosine=want_cosine,
-            )
-        except Exception as exc:
-            search_ms = (time.perf_counter() - t0) * 1000.0
-            _fail_node(
-                "search",
-                error_type=type(exc).__name__,
-                reason="search_failed",
-                recoverable=False,
-                duration_ms=search_ms,
-                mode=search_mode,
-            )
-            raise
-        if not p.hybrid_search_on:
-            traces.append("hybrid_search 关闭：仅执行稠密语义检索（无 BM25 分支）")
-        search_ms = (time.perf_counter() - t0) * 1000.0
-        self._add_span("search", search_ms, traces)
-        _complete_node(
-            "search",
-            search_ms,
-            mode=search_mode,
-            candidate_count=len(candidates),
-        )
-        candidates = self._filter_serving_candidates(
-            candidates, serving_context, traces, stage="milvus.initial"
-        )
-
-        # ------------------------------------------------------------------ #
-        # 4b. 子查询拆解（SubQueries，可选增强）：拆解多主题查询分别检索后合并
-        # ------------------------------------------------------------------ #
-        # 编排理由：查询端增强的目的是**扩大候选**（提升召回），因此放在
-        # 混合检索之后、来源多样性之前——增强合并出的候选先经过多样性
-        # / MMR 的文档级去重与过滤，再进入图谱分支与重排，避免增强结果
-        # 被多样性之前的裁剪丢弃；图谱分支保持在其后（不改动既有编排）。
-        # 多次检索均带与主检索一致的 group_by_field / group_size /
-        # filter_expr，保证分组与 ACL 语义一致。
-        if not p.subqueries_on:
-            _skip_node("plugin.subqueries.expand", "disabled")
-        elif self.subqueries is None:
-            _skip_node("plugin.subqueries.expand", "unavailable")
-        if p.subqueries_on and self.subqueries is not None:
-            subs: list[str] = []
-            raw, sub_gen_ms, sub_exc = self._take_enhancer(
-                enhance_jobs, "subqueries", self.subqueries, search_query
-            )
-            sub_failure_reason: Optional[str] = None
-            sub_error_type = "SubqueryFailure"
-            sub_failure_count = 0
-            sub_success_count = 0
-            sub_added_count = 0
-            # 计时器起点在取回生成结果**之后**：这一段要报的是"子查询这一步
-            # 花了多少"，而不是"主线程在这里坐了多久"。并发以后主线程可能在
-            # 这里等（HyDE 更慢时）也可能一秒不等（生成早已完成），把等待算
-            # 进来会让同一份工作量在两次查询里报出完全不同的数。生成耗时由
-            # 线程内自测后加回来，串行退化时两者之和与从前逐字相等。
-            t0 = time.perf_counter()
-            if sub_exc is not None:
-                traces.append(f"subqueries 生成失败，使用主查询: {sub_exc}")
-                sub_failure_reason = "generation_failed"
-                sub_error_type = type(sub_exc).__name__
-            elif isinstance(raw, list):
-                subs = [s for s in raw if isinstance(s, str) and s.strip() and s != search_query]
-            else:
-                sub_failure_reason = "invalid_output"
-                sub_error_type = "InvalidSubqueryOutput"
-            if subs:
-                # 性能优化：N 路子查询原先是 N 次「串行 embed_query + 串行
-                # hybrid_search」，每路都是一次独立网络往返，总延迟随子
-                # 查询数线性叠加。改为：
-                #   1) 一次 embed_texts 批量嵌入全部子查询（单次请求），
-                #   2) 用实例级复用的线程池并发发起 N 次 hybrid_search。
-                # 单路失败仍逐路捕获、跳过，不影响其余路（语义与原实现
-                # 一致）；批量嵌入整体失败按「全部子查询检索失败」降级。
-                searched_any = False
-                try:
-                    sub_vecs = self.embedder.embed_texts(subs)
-                except Exception as exc:
-                    traces.append(f"subqueries 批量嵌入失败，跳过全部子查询: {exc}")
-                    sub_vecs = []
-                    sub_failure_reason = "batch_embed_failed"
-                    sub_error_type = type(exc).__name__
-                    sub_failure_count = len(subs)
-                if sub_vecs and len(sub_vecs) == len(subs):
-                    executor = self._ensure_fanout_executor()
-                    futures = [
-                        (
-                            sub,
-                            executor.submit(
-                                self.milvus.hybrid_search,
-                                query_dense=sub_vec,
-                                top_k=p.enhance_candidate_k,
-                                query_text=self._bm25_text(sub),
-                                group_by_field=group_by_field,
-                                group_size=group_size,
-                                filter_expr=filter_expr,
-                            ),
-                        )
-                        for sub, sub_vec in zip(subs, sub_vecs)
-                    ]
-                    # 整批共用一个截止时刻，而不是每路各给一份超时：后者会
-                    # 累加成 N × timeout，N 路子查询全卡住时用户要等的是总和。
-                    # 超时本身是保险丝而非调优项——不带超时的 result() 会让
-                    # 一路卡死的 hybrid_search 把整条 HTTP 请求永久挂住，那个
-                    # 请求还占着一个准入名额，几路下来服务对外就是整体不可用。
-                    budget = float(getattr(p, "subquery_fanout_timeout_s", 0.0) or 0.0)
-                    deadline = (time.perf_counter() + budget) if budget > 0 else None
-                    for sub, future in futures:
-                        try:
-                            if deadline is None:
-                                extra = future.result()
-                            else:
-                                # 剩余预算可能已经是负数，留一点点让最后一路
-                                # 也有机会立刻交出已完成的结果。
-                                extra = future.result(
-                                    timeout=max(0.001, deadline - time.perf_counter())
-                                )
-                        except FuturesTimeoutError:
-                            sub_failure_reason = "search_timeout"
-                            sub_error_type = "TimeoutError"
-                            sub_failure_count += 1
-                            # 超时不取消已发出的检索（线程还占着），但本次
-                            # 查询照常带着主检索结果返回，不陪着一起卡死。
-                            traces.append(
-                                f"subqueries 子查询检索超时（{budget:.1f}s 预算耗尽），"
-                                f"放弃剩余路（{sub!r}）"
-                            )
-                            break
-                        except Exception as exc:
-                            sub_failure_reason = "search_failed"
-                            sub_error_type = type(exc).__name__
-                            sub_failure_count += 1
-                            # 单路子查询检索失败：跳过该路，不影响其余路
-                            traces.append(f"subqueries 子查询检索失败，跳过（{sub!r}）: {exc}")
-                            continue
-                        sub_added_count += self._merge_extra(candidates, extra)
-                        sub_success_count += 1
-                        searched_any = True
-                elif sub_vecs:
-                    traces.append("subqueries 批量嵌入返回数量与子查询数不符，跳过全部子查询")
-                    sub_failure_reason = "invalid_embedding_count"
-                    sub_error_type = "InvalidEmbeddingCount"
-                    sub_failure_count = len(subs)
-                else:
-                    sub_failure_reason = "empty_embeddings"
-                    sub_error_type = "EmptyEmbeddingBatch"
-                    sub_failure_count = len(subs)
-                if not searched_any:
-                    # 全部子查询都失败：回退单次主检索结果（候选保持不变）
-                    traces.append("subqueries 全部子查询检索失败，回退主查询结果")
-            sub_ms = sub_gen_ms + (time.perf_counter() - t0) * 1000.0
-            self._add_span("subqueries", sub_ms, traces)
-            if sub_failure_count and sub_success_count:
-                sub_failure_reason = "partial_search_failure"
-            if sub_failure_reason is not None:
-                _fail_node(
-                    "plugin.subqueries.expand",
-                    error_type=sub_error_type,
-                    reason=sub_failure_reason,
-                    recoverable=True,
-                    duration_ms=sub_ms,
-                    subquery_count=len(subs),
-                    successful_count=sub_success_count,
-                    failure_count=sub_failure_count,
-                    added_count=sub_added_count,
-                )
-                _degraded(
-                    "plugin.subqueries.expand",
-                    sub_failure_reason,
-                    successful_count=sub_success_count,
-                    failure_count=sub_failure_count,
-                )
-            else:
-                _complete_node(
-                    "plugin.subqueries.expand",
-                    sub_ms,
-                    subquery_count=len(subs),
-                    successful_count=sub_success_count,
-                    added_count=sub_added_count,
-                )
-
-        # ------------------------------------------------------------------ #
-        # 4c. Stepback 后退式提问（可选增强）：抽象问题补充检索后合并
-        # ------------------------------------------------------------------ #
-        if not p.stepback_on:
-            _skip_node("plugin.stepback.expand", "disabled")
-        elif self.stepback is None:
-            _skip_node("plugin.stepback.expand", "unavailable")
-        if p.stepback_on and self.stepback is not None:
-            sb_query, sb_gen_ms, sb_exc = self._take_enhancer(
-                enhance_jobs, "stepback", self.stepback, search_query
-            )
-            sb_failure_reason: Optional[str] = None
-            sb_error_type = "StepbackFailure"
-            sb_added_count = 0
-            t0 = time.perf_counter()  # 起点在取回之后，理由同 4b
-            if sb_exc is not None:
-                traces.append(f"stepback 生成失败，跳过: {sb_exc}")
-                sb_failure_reason = "generation_failed"
-                sb_error_type = type(sb_exc).__name__
-                sb_query = None
-            if isinstance(sb_query, str) and sb_query.strip() and sb_query != search_query:
-                try:
-                    sb_vec = self.embedder.embed_query(sb_query)
-                    extra = self.milvus.hybrid_search(
-                        query_dense=sb_vec,
-                        top_k=p.enhance_candidate_k,
-                        query_text=self._bm25_text(sb_query),
-                        group_by_field=group_by_field,
-                        group_size=group_size,
-                        filter_expr=filter_expr,
-                    )
-                    sb_added_count = self._merge_extra(candidates, extra)
-                except Exception as exc:
-                    traces.append(f"stepback 检索失败，跳过: {exc}")
-                    sb_failure_reason = "search_failed"
-                    sb_error_type = type(exc).__name__
-            elif sb_exc is None:
-                sb_failure_reason = "no_output"
-                sb_error_type = "EmptyResult"
-            sb_ms = sb_gen_ms + (time.perf_counter() - t0) * 1000.0
-            self._add_span("stepback", sb_ms, traces)
-            if sb_failure_reason is not None:
-                _fail_node(
-                    "plugin.stepback.expand",
-                    error_type=sb_error_type,
-                    reason=sb_failure_reason,
-                    recoverable=True,
-                    duration_ms=sb_ms,
-                    added_count=sb_added_count,
-                )
-                _degraded("plugin.stepback.expand", sb_failure_reason)
-            else:
-                _complete_node(
-                    "plugin.stepback.expand",
-                    sb_ms,
-                    added_count=sb_added_count,
-                )
-
-        candidates = self._filter_serving_candidates(
-            candidates, serving_context, traces, stage="milvus.enhanced"
-        )
-
-        # ------------------------------------------------------------------ #
-        # 5. 来源多样性（group_mmr：分组检索后再做文档感知 MMR）
-        # ------------------------------------------------------------------ #
-        diversity_before = len(candidates)
-        if p.source_diversity == "off":
-            _skip_node("diversity", "disabled", mode="off")
-        else:
-            _start_node("diversity", mode=p.source_diversity)
-        t0 = time.perf_counter()
-        if p.source_diversity == "group_mmr":
-            candidates = mmr_select(
-                candidates,
-                lambda_=p.mmr_lambda,
-                k=p.top_k * 2,
-            )
-        diversity_ms = (time.perf_counter() - t0) * 1000.0
-        self._add_span("diversity", diversity_ms, traces)
-        if p.source_diversity != "off":
-            _complete_node(
-                "diversity",
-                diversity_ms,
-                mode=p.source_diversity,
-                input_count=diversity_before,
-                output_count=len(candidates),
-            )
-
-        # ------------------------------------------------------------------ #
-        # 6. 图谱分支（vector_graph_rag / full 路由）
-        # ------------------------------------------------------------------ #
-        graph_selected = route.target in _GRAPH_TARGETS
-        graph_available = p.graph_retrieval_on and self.graph_retriever is not None
-        if graph_selected and graph_available:
-            _start_node("graph.retrieve", configured_route=route.target)
-        t0 = time.perf_counter()
-        if graph_selected:
-            try:
-                route, graph_fact = self._run_graph_branch(
-                    route=route,
-                    search_query=search_query,
-                    candidates=candidates,
-                    acl=acl,
-                    tenant=tenant,
-                    traces=traces,
-                    serving_context=serving_context,
-                )
-            except Exception as exc:
-                graph_ms = (time.perf_counter() - t0) * 1000.0
-                _fail_node(
-                    "graph.retrieve",
-                    error_type=type(exc).__name__,
-                    reason="graph_failed",
-                    recoverable=False,
-                    duration_ms=graph_ms,
-                )
-                raise
-        else:
-            graph_fact = {"status": "skipped", "reason": "route_not_selected"}
-        graph_ms = (time.perf_counter() - t0) * 1000.0
-        self._add_span("graph", graph_ms, traces)
-        graph_status = graph_fact["status"]
-        graph_reason = str(graph_fact.get("reason") or "")
-        if graph_status == "skipped":
-            _skip_node("graph.retrieve", graph_reason)
-        elif graph_status == "failed":
-            _fail_node(
-                "graph.retrieve",
-                error_type=str(graph_fact["error_type"]),
-                reason=graph_reason,
-                recoverable=True,
-                duration_ms=graph_ms,
-                added_count=int(graph_fact.get("added_count") or 0),
-            )
-        else:
-            _complete_node(
-                "graph.retrieve",
-                graph_ms,
-                added_count=int(graph_fact.get("added_count") or 0),
-            )
-        if graph_status == "failed" or (graph_selected and route.degraded):
-            _degraded("graph.retrieve", graph_reason, effective_route="hybrid")
-        if graph_selected:
-            _selected_route(
-                "graph.retrieve",
-                route,
-                effective="hybrid" if route.degraded else route.target,
-            )
-
-        # ------------------------------------------------------------------ #
-        # 7. 重排序（关闭或失败时保持召回顺序）
-        # ------------------------------------------------------------------ #
-        if not p.rerank_on:
-            rerank_skip_reason: Optional[str] = "disabled"
-        elif self.reranker is None:
-            rerank_skip_reason = "unavailable"
-        elif self.reranker_cb is not None and not self.reranker_cb.allow():
-            rerank_skip_reason = "circuit_open"
-        else:
-            rerank_skip_reason = None
-        if rerank_skip_reason is None:
-            _start_node("rerank", candidate_count=len(candidates))
-        else:
-            _skip_node("rerank", rerank_skip_reason)
-
-        t0 = time.perf_counter()
-        # 只有走到「分数数量对得上」那一支才算重排真正生效——其余每一条路
-        # 留在 item.score 里的都是 RRF 融合分，量纲和 reranker 相关度完全不同。
-        reranked = False
-        rerank_failure_reason: Optional[str] = None
-        rerank_error_type = "RerankFailure"
-        if rerank_skip_reason == "disabled":
-            traces.append("rerank 关闭：保留召回顺序（RRF 融合序）")
-        elif rerank_skip_reason == "unavailable":
-            _report_rerank_degraded("未注入 reranker", "rerank_on=True 但 reranker 为 None")
-            traces.append("rerank 未注入：保留召回顺序（RRF 融合序）")
-        elif rerank_skip_reason == "circuit_open":
-            _report_rerank_degraded("熔断打开", f"{self.reranker_cb.name} 冷却中")
-            traces.append("rerank 熔断打开：快速跳过，使用召回顺序")
-        else:
-            try:
-                scores = self.reranker.rerank(search_query, [c.chunk for c in candidates])
-                if len(scores) != len(candidates):
-                    if self.reranker_cb is not None:
-                        self.reranker_cb.record_failure()
-                    _report_rerank_degraded(
-                        "分数数量不符",
-                        f"期望 {len(candidates)} 个，实际 {len(scores)} 个",
-                    )
-                    traces.append("rerank 失败：分数数量不符，使用原始顺序")
-                    rerank_failure_reason = "invalid_score_count"
-                    rerank_error_type = "InvalidRerankScoreCount"
-                else:
-                    if self.reranker_cb is not None:
-                        self.reranker_cb.record_success()
-                    paired = sorted(
-                        zip(candidates, scores),
-                        key=lambda item: item[1],
-                        reverse=True,
-                    )
-                    candidates = [c for c, _ in paired]
-                    for rank, (item, score) in enumerate(paired):
-                        item.rank = rank
-                        item.score = float(score)
-                    reranked = True
-            except RerankError as exc:
-                if self.reranker_cb is not None:
-                    self.reranker_cb.record_failure()
-                _report_rerank_degraded("调用失败", f"{type(exc).__name__}: {exc}")
-                traces.append("rerank 失败，使用原始顺序")
-                rerank_failure_reason = "rerank_failed"
-                rerank_error_type = type(exc).__name__
-            except Exception as exc:
-                rerank_ms = (time.perf_counter() - t0) * 1000.0
-                _fail_node(
-                    "rerank",
-                    error_type=type(exc).__name__,
-                    reason="rerank_failed",
-                    recoverable=False,
-                    duration_ms=rerank_ms,
-                )
-                raise
-        if not reranked:
-            # 说清楚代价：这不只是"顺序没优化"，而是**检索分数这把尺子作废了**。
-            # 有稠密余弦时换那把尺子接着量；没有时才真正让这道闸空着。
-            if any(rc.dense_cosine is not None for rc in candidates):
-                traces.append("rerank 未生效：分数为 RRF 融合序，改用稠密余弦参与弃权判定")
-            else:
-                traces.append("rerank 未生效：分数为 RRF 融合序，检索阈值本轮不参与弃权判定")
-        rerank_ms = (time.perf_counter() - t0) * 1000.0
-        self._add_span("rerank", rerank_ms, traces)
-        if rerank_skip_reason is None:
-            if rerank_failure_reason is not None:
-                _fail_node(
-                    "rerank",
-                    error_type=rerank_error_type,
-                    reason=rerank_failure_reason,
-                    recoverable=True,
-                    duration_ms=rerank_ms,
-                    candidate_count=len(candidates),
-                )
-                _degraded("rerank", rerank_failure_reason)
-            else:
-                _complete_node(
-                    "rerank",
-                    rerank_ms,
-                    candidate_count=len(candidates),
-                )
-        elif rerank_skip_reason != "disabled":
-            _degraded("rerank", rerank_skip_reason)
-
-        # ------------------------------------------------------------------ #
-        # 7b. SentenceWindow 父块回取（可选增强）：重排后展开，父块参与裁剪
-        # ------------------------------------------------------------------ #
-        # 编排理由：放在重排序之后、裁剪之前——展开依赖命中项的 rank /
-        # score 继承（父块继承子块的最小 rank），重排后展开可让父块以完整
-        # 上下文参与最终 top_k 裁剪；展开失败时组件内部已降级（原样返回），
-        # 此处再兜底一次异常，绝不中断管线。
-        if not p.sentence_window_on:
-            _skip_node("sentence_window", "disabled")
-        elif self.sentence_window is None:
-            _skip_node("sentence_window", "unavailable")
-        if p.sentence_window_on and self.sentence_window is not None:
-            _start_node("sentence_window", input_count=len(candidates))
-            sentence_failure_reason: Optional[str] = None
-            sentence_error_type = "SentenceWindowFailure"
-            t0 = time.perf_counter()
-            try:
-                expanded = self.sentence_window.expand(candidates)
-                if isinstance(expanded, list):
-                    # 防御性租户二次过滤：展开可能回取父块（get_chunks_by_ids），
-                    # 父块必须归属当前租户（空 tenant_id 视为存量 / 桩数据放行）
-                    candidates = [
-                        rc
-                        for rc in expanded
-                        if not tenant or not rc.chunk.tenant_id or rc.chunk.tenant_id == tenant
-                    ]
-                else:
-                    traces.append("sentence_window 展开返回异常类型，保留原结果")
-                    sentence_failure_reason = "invalid_output"
-                    sentence_error_type = "InvalidSentenceWindowOutput"
-            except Exception as exc:
-                traces.append(f"sentence_window 展开失败，保留原结果: {exc}")
-                sentence_failure_reason = "expand_failed"
-                sentence_error_type = type(exc).__name__
-            sentence_ms = (time.perf_counter() - t0) * 1000.0
-            self._add_span("sentence_window", sentence_ms, traces)
-            if sentence_failure_reason is not None:
-                _fail_node(
-                    "sentence_window",
-                    error_type=sentence_error_type,
-                    reason=sentence_failure_reason,
-                    recoverable=True,
-                    duration_ms=sentence_ms,
-                    output_count=len(candidates),
-                )
-                _degraded("sentence_window", sentence_failure_reason)
-            else:
-                _complete_node(
-                    "sentence_window",
-                    sentence_ms,
-                    output_count=len(candidates),
-                )
-
-        candidates = self._filter_serving_candidates(
-            candidates, serving_context, traces, stage="rerank.final"
-        )
-
-        # ------------------------------------------------------------------ #
-        # 8. 知识库范围收口 + 裁剪到 top_k
-        # ------------------------------------------------------------------ #
-        # 图谱分支与 sentence_window 父块回取都按 id 直取，绕过了向量检索的
-        # filter_expr，可能带回其它知识库的 chunk。此处统一收口一次，语义与
-        # build_dataset_filter 严格一致（dataset_id == x），因此空 dataset_id
-        # 的存量行在指定知识库时同样被排除——两条路径判定必须一致，否则
-        # 主路径过滤掉的行会从旁路漏回来。
-        if dataset:
-            _start_node("dataset_scope", scoped=True, input_count=len(candidates))
-            before = len(candidates)
-            candidates = [rc for rc in candidates if rc.chunk.dataset_id == dataset]
-            if len(candidates) != before:
-                traces.append(
-                    f"知识库收口：{before - len(candidates)} 条越界 chunk 被剔除"
-                    f"（dataset_id != {dataset!r}）"
-                )
-            _complete_node(
-                "dataset_scope",
-                scoped=True,
-                input_count=before,
-                output_count=len(candidates),
-                removed_count=before - len(candidates),
-            )
-        else:
-            _skip_node("dataset_scope", "unscoped", scoped=False)
-
-        _start_node("truncate", input_count=len(candidates), top_k=p.top_k)
-        chunks = candidates[: p.top_k]
-        _complete_node(
-            "truncate",
-            input_count=len(candidates),
-            output_count=len(chunks),
-            top_k=p.top_k,
-        )
-        if serving_context is not None:
+        if ctx.serving_context is not None:
             # The next orchestration step is generation.  No evidence may cross
             # that boundary if durable delete advanced the serving generation.
-            serving_context.guard.assert_current(serving_context.snapshot)
+            ctx.serving_context.guard.assert_current(ctx.serving_context.snapshot)
 
         return RetrievalResult(
-            query=query,
-            chunks=chunks,
-            route=route,
-            traces=traces,
-            reranked=reranked,
+            query=state.query,
+            chunks=state.chunks,
+            route=state.route,
+            traces=state.traces,
+            reranked=state.reranked,
         )
 
     # ------------------------------------------------------------------ #

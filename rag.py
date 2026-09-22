@@ -56,6 +56,7 @@ from rag_common import (
 from retrieval.pipeline import RetrievalPipeline, dense_cosines_of
 from retrieval.rewrite import QueryRewriter
 from retrieval.router import EmbeddingRouter, LlmRouterFallback, RouteResolver
+from retrieval.stages import ComponentDeps, build_optional_components
 from verify.abstention import AbstentionGate
 from verify.verifier import CitationVerifier, resolve_verify_settings
 
@@ -100,101 +101,26 @@ def _build_optional_components(
 ) -> dict[str, Any]:
     """构造可插拔的查询端 / 检索端增强组件（全部容错，失败降级为 None）。
 
-    每个组件只在对应开关打开时构造：关闭时返回 None，管线里的
-    ``if 开关 and 组件 is not None`` 判断自然短路，零开销。
-
-    构造本身不联网、不加载模型（LLM 客户端与模板均为惰性），但仍逐个
-    包在 try 里——任一组件构造失败（模板缺失、可选依赖未装等）只让该
-    策略退化为不可用，绝不影响其余策略与主链路可用性。
+    组件清单、各自的开关、各自的构造方式都来自
+    :mod:`retrieval.stages` 的注册表（``OPTIONAL_STRATEGIES``）。这里过去是一份
+    写死的 ``{"hyde": None, "subqueries": None, ...}`` 加六段 ``if``，新增一个
+    可选策略要同时改本函数、``RetrievalPipeline.__init__`` 的参数表和 ``run()``
+    的内联分支——三处。现在装配声明与阶段的 ``requires_component`` /
+    ``requires_flag`` 同源，本函数只负责遍历注册表。
 
     Returns:
-        ``{"hyde": ..., "subqueries": ..., "stepback": ...,
-        "sentence_window": ..., "graph_retriever": ...}``，值可能为 None。
+        ``{组件名: 组件 | None}``；键与 ``OPTIONAL_STRATEGIES`` 同源，值可能为
+        None（开关关闭或构造失败）。
     """
-    p = settings.pipeline
     log = get_logger(__name__)
-    components: dict[str, Any] = {
-        "hyde": None,
-        "subqueries": None,
-        "stepback": None,
-        "sentence_window": None,
-        "graph_retriever": None,
-        "auto_filter": None,
-    }
 
-    def _try(name: str, factory: Any) -> None:
-        try:
-            components[name] = factory()
-        except Exception as exc:  # noqa: BLE001 - 单个策略不可用不影响主链路
-            log.warning("可选策略 %s 装配失败，本次运行按关闭处理: %s", name, exc)
+    def _warn(name: str, exc: Exception) -> None:
+        log.warning("可选策略 %s 装配失败，本次运行按关闭处理: %s", name, exc)
 
-    if p.hyde_on:
-        from retrieval.query_enhance import HydeGenerator
-
-        _try(
-            "hyde",
-            lambda: HydeGenerator(
-                llm_client=create_client(settings.llm.hyde),
-                template_path=_PROJECT_ROOT / "prompts" / "hyde_v1.txt",
-                enabled=True,
-            ),
-        )
-
-    if p.subqueries_on:
-        from retrieval.query_enhance import SubQueryGenerator
-
-        _try(
-            "subqueries",
-            lambda: SubQueryGenerator(
-                llm_client=create_client(settings.llm.subqueries),
-                template_path=_PROJECT_ROOT / "prompts" / "subqueries_v1.txt",
-                enabled=True,
-            ),
-        )
-
-    if p.stepback_on:
-        from retrieval.query_enhance import StepbackGenerator
-
-        _try(
-            "stepback",
-            lambda: StepbackGenerator(
-                llm_client=create_client(settings.llm.stepback),
-                template_path=_PROJECT_ROOT / "prompts" / "stepback_v1.txt",
-                enabled=True,
-            ),
-        )
-
-    if p.sentence_window_on:
-        from retrieval.sentence_window import SentenceWindowExpander
-
-        # 依赖入库期的父子块切分：只有 parent_child 模式会写 parent_chunk_id，
-        # 用 recursive / qa 切分入库的文档展开时取不到子块，组件内部会原样返回。
-        _try(
-            "sentence_window",
-            lambda: SentenceWindowExpander(milvus=milvus, replace=True, enabled=True),
-        )
-
-    if p.graph_retrieval_on:
-        from core.graph_store_registry import create_graph_store
-        from retrieval.graph_retriever import GraphRetriever
-
-        _try(
-            "graph_retriever",
-            lambda: GraphRetriever(
-                store=create_graph_store(settings),
-                embedder=embedder,
-                # 图谱关系重排复用 judge 槽位（温度 0，确定性输出）；
-                # graph.use_llm_rerank 关闭时不传 LLM，按检索分数排序。
-                llm=create_client(settings.llm.judge) if settings.graph.use_llm_rerank else None,
-            ),
-        )
-
-    if getattr(settings.catalog, "auto_filter_on", False):
-        from retrieval.auto_filter import create_auto_filter
-
-        _try("auto_filter", lambda: create_auto_filter(settings))
-
-    return components
+    return build_optional_components(
+        ComponentDeps(settings=settings, embedder=embedder, milvus=milvus),
+        _warn,
+    )
 
 
 def _build_pipeline(settings: Settings) -> dict[str, Any]:

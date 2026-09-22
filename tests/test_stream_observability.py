@@ -215,7 +215,10 @@ def test_observer_and_throwing_sink_do_not_change_retrieval_result(
 
     def reset_clock() -> None:
         ticks = itertools.count(1)
-        monkeypatch.setattr("retrieval.pipeline.time.perf_counter", lambda: next(ticks) / 1000.0)
+        # 计时已搬到阶段驱动器（同一个标准库 time 模块对象）。
+        monkeypatch.setattr(
+            "retrieval.stages.time.perf_counter", lambda: next(ticks) / 1000.0
+        )
 
     reset_clock()
     baseline = pipeline.run("question")
