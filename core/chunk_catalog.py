@@ -356,6 +356,7 @@ class ChunkCatalog:
         *,
         expected_revision: int,
         editor_id: str,
+        metadata_patch: dict[str, Any] | None = None,
         session: Session | None = None,
     ) -> ChunkHead:
         """Disable a head; repeating the current tombstone is idempotent."""
@@ -372,6 +373,7 @@ class ChunkCatalog:
                 editor_id=editor_id,
                 edit_source="delete",
                 enabled=False,
+                metadata_patch=metadata_patch,
                 session=session,
             )
         with Session(self.engine, expire_on_commit=False) as owned:
@@ -379,6 +381,7 @@ class ChunkCatalog:
                 chunk_id,
                 expected_revision=expected_revision,
                 editor_id=editor_id,
+                metadata_patch=metadata_patch,
                 session=owned,
             )
             owned.commit()

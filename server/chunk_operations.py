@@ -566,6 +566,7 @@ def _write_tombstone(
         m.chunk_id,
         expected_revision=m.expected_revision,
         editor_id=m.editor_id,
+        metadata_patch=m.metadata_patch,
         session=session,
     )
 
@@ -885,6 +886,12 @@ def apply_chunk_mutation(
         ChunkAuthorityIncomplete: authority is absent, stale or incomplete.
         ChunkRevisionConflict: ``expected_revision`` no longer matches the head.
     """
+    if authority_mode not in CHUNK_WRITERS.names():
+        # The registry lower-cases keys for provider ergonomics; the rollout mode is a
+        # release-switch, so an unexpected casing must not silently pick a writer.
+        raise ValueError(
+            f"chunk authority mode 必须是 {' / '.join(CHUNK_WRITERS.names())}"
+        )
     writer = CHUNK_WRITERS.create(authority_mode, None)
     doc = _document(m.doc_id, catalog_api=catalog_api)
     return writer.apply(

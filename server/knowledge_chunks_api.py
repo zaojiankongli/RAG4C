@@ -66,9 +66,11 @@ class ChunkPatch(StrictModel):
     expected_revision: int = Field(ge=0)
 
     @model_validator(mode="after")
-    def _requires_a_change(self) -> "ChunkPatch":
+    def _requires_one_change(self) -> "ChunkPatch":
         if self.text is None and self.enabled is None:
             raise ValueError("text 与 enabled 至少给出一个")
+        if self.text is not None and self.enabled is not None:
+            raise ValueError("text 与 enabled 不能同时给出：改正文与改启停是两次可审计的动作")
         return self
 
 

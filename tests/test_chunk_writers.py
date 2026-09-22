@@ -117,7 +117,7 @@ def test_new_writer_is_reached_without_touching_existing_writers() -> None:
 
 
 def test_unknown_mode_reports_the_registered_choices() -> None:
-    with pytest.raises(ValueError, match="unknown chunk writer provider") as exc:
+    with pytest.raises(ValueError, match="chunk authority mode 必须是") as exc:
         co.apply_chunk_mutation(
             _mutation("edit", text="body"),
             authority_mode="quorum",
@@ -127,6 +127,21 @@ def test_unknown_mode_reports_the_registered_choices() -> None:
     message = str(exc.value)
     for name in co.CHUNK_WRITERS.names():
         assert name in message
+
+
+def test_mode_casing_is_not_silently_normalized() -> None:
+    """A release switch must not be case-insensitive.
+
+    The shared registry lower-cases provider keys for ergonomics; applying that to
+    ``chunk_authority_mode`` would let "ACTIVE" silently select the active writer.
+    """
+    with pytest.raises(ValueError, match="chunk authority mode 必须是"):
+        co.apply_chunk_mutation(
+            _mutation("edit", text="body"),
+            authority_mode="ACTIVE",
+            catalog_api=_fake_catalog_api(),
+            pipeline=object(),
+        )
 
 
 def test_restore_and_revert_are_refused_without_chunk_head_authority() -> None:

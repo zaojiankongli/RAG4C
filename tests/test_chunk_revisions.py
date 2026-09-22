@@ -185,9 +185,15 @@ def test_list_revisions_is_scoped_to_its_tenant_dataset_and_document(
     engine.dispose()
 
 
-def test_revert_rejects_a_target_revision_outside_the_heads_scope(
+def test_revert_rejects_a_revision_number_that_was_never_recorded(
     tmp_path: Path,
 ) -> None:
+    """A nonexistent target revision must not roll the head back to blank content.
+
+    Scope-foreign revisions are covered at the endpoint level
+    (``tests/test_knowledge_chunks_api.py``), because the production path is
+    ``server.chunk_operations._write_revert`` filtering by the head's own scope.
+    """
     engine, catalog = create_catalog(tmp_path)
     create_head(catalog, "chunk-1")
     catalog.edit_chunk(
@@ -198,6 +204,28 @@ def test_revert_rejects_a_target_revision_outside_the_heads_scope(
         catalog.revert_chunk(
             "chunk-1", target_revision=99, expected_revision=1, editor_id="user-2"
         )
+    engine.dispose()
+
+
+def test_tombstone_keeps_the_operator_reason_on_the_head(tmp_path: Path) -> None:
+    """Disabling a chunk is an auditable action, so its reason must survive.
+
+    Without this, ``PATCH {enabled: false, reason: "…"}`` answers 200 and silently
+    drops the only reason the operator was asked to type.
+    """
+    engine, catalog = create_catalog(tmp_path)
+    create_head(catalog, "chunk-1")
+
+    disabled = catalog.tombstone_chunk(
+        "chunk-1",
+        expected_revision=0,
+        editor_id="user-1",
+        metadata_patch={"edit_reason": "条款已废止", "edit_reason_by": "user-1"},
+    )
+
+    assert disabled.enabled is False
+    assert disabled.chunk_metadata["edit_reason"] == "条款已废止"
+    assert disabled.edit_source == "delete"
     engine.dispose()
 
 

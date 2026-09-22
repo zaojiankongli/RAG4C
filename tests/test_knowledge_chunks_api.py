@@ -182,6 +182,101 @@ def test_patch_delete_use_exact_post_mutation_projection(api, monkeypatch) -> No
     assert again.status_code == 409
 
 
+def test_chunk_revisions_endpoint_lists_snapshots_and_conceals_foreign_chunks(api) -> None:
+    """The revision history endpoint is tenant/dataset/document scoped, not id-keyed.
+
+    A chunk id alone must never resolve another scope's revision content: that was the
+    latent cross-tenant read in ``ChunkCatalog.list_revisions`` before this endpoint
+    existed, and the scoping is what keeps it closed.
+    """
+    client, engine, settings, _ = api
+    base = "/api/knowledge-bases/dataset-a/documents/doc-a/chunks"
+    ChunkCatalog(engine).edit_chunk(
+        "chunk-000", expected_revision=0, content="edited body", editor_id="editor-a"
+    )
+
+    listed = client.get(f"{base}/chunk-000/revisions", headers=_headers(settings, "editor-a"))
+    assert listed.status_code == 200
+    items = listed.json()["items"]
+    assert [(item["revision"], item["content"], item["enabled"]) for item in items] == [
+        (0, "policy body 0", True)
+    ]
+    assert items[0]["editor_id"] == ""  # the seeded head predates any manual edit
+    assert "tenant_id" not in items[0] and "dataset_id" not in items[0]
+
+    # Foreign chunk id, addressed through a scope the caller does own.
+    assert client.get(
+        f"{base}/foreign/revisions", headers=_headers(settings, "owner-a")
+    ).status_code == 404
+    # Foreign dataset: the knowledge permission layer refuses it before any read,
+    # so the revision route inherits the same 403 as every other chunks route.
+    assert client.get(
+        "/api/knowledge-bases/dataset-b/documents/doc-b/chunks/foreign/revisions",
+        headers=_headers(settings, "owner-a"),
+    ).status_code == 403
+    # Read scope still requires a credential at all.
+    assert client.get(f"{base}/chunk-000/revisions").status_code == 401
+
+
+def test_patch_rejects_text_and_enabled_together(api) -> None:
+    """Editing text and flipping enabled are two auditable actions, never one silent one."""
+    client, _, settings, _ = api
+    response = client.patch(
+        "/api/knowledge-bases/dataset-a/documents/doc-a/chunks/chunk-000",
+        headers=_headers(settings, "editor-a"),
+        json={"text": "both", "enabled": True, "expected_revision": 0},
+    )
+    assert response.status_code == 422
+    assert "不能同时给出" in str(response.json()["detail"])
+
+
+def test_patch_requires_at_least_one_change(api) -> None:
+    client, _, settings, _ = api
+    response = client.patch(
+        "/api/knowledge-bases/dataset-a/documents/doc-a/chunks/chunk-000",
+        headers=_headers(settings, "editor-a"),
+        json={"expected_revision": 0},
+    )
+    assert response.status_code == 422
+
+
+def test_revert_endpoint_maps_unknown_revision_to_conflict_and_needs_write_scope(api, monkeypatch) -> None:
+    from server import knowledge_chunks_api
+
+    client, _, settings, _ = api
+    monkeypatch.setattr(knowledge_chunks_api, "_reserve", lambda _doc_id: None)
+    monkeypatch.setattr(knowledge_chunks_api, "_release", lambda _doc_id: None)
+    monkeypatch.setattr(
+        knowledge_chunks_api.documents, "_get_ingest_pipeline", lambda: SimpleNamespace()
+    )
+    monkeypatch.setattr(knowledge_chunks_api, "_revert", _raising_conflict)
+
+    base = "/api/knowledge-bases/dataset-a/documents/doc-a/chunks"
+    forbidden = client.post(
+        f"{base}/chunk-000/revert",
+        headers=_headers(settings, "member-a"),
+        json={"target_revision": 0, "expected_revision": 1},
+    )
+    assert forbidden.status_code == 403
+    conflicted = client.post(
+        f"{base}/chunk-000/revert",
+        headers=_headers(settings, "editor-a"),
+        json={"target_revision": 99, "expected_revision": 1},
+    )
+    assert conflicted.status_code == 409
+    assert conflicted.json()["detail"]["code"] == "knowledge_chunk_conflict"
+    missing = client.post(
+        f"{base}/foreign/revert",
+        headers=_headers(settings, "owner-a"),
+        json={"target_revision": 0, "expected_revision": 0},
+    )
+    assert missing.status_code == 404
+
+
+def _raising_conflict(*_args, **_kwargs):
+    raise ChunkRevisionConflict("target revision does not exist")
+
+
 def test_legacy_chunk_http_routes_are_gone(monkeypatch) -> None:
     from server.documents import router as legacy_router
     app = FastAPI()

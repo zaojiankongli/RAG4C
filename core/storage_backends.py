@@ -5,9 +5,10 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from sqlalchemy import Engine, select
@@ -15,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from models.orm import Dataset, StorageBackend, Tenant
 
-PROVIDERS = ("local", "minio", "s3", "cos", "oss", "tos", "obs")
 SECRET_FIELDS = frozenset({"secret_access_key", "access_key_id"})
 _MASKED_SECRET = "***"
 
@@ -54,47 +54,201 @@ def mask_config(config: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
+@dataclass(frozen=True)
+class _FieldRequirement:
+    """Config fields a provider cannot work without, plus their operator-facing messages.
+
+    ``keys`` is plural because the historical contract accepted ``bucket_name`` as an
+    alias of ``bucket``; dropping that alias would break already-stored configs.
+    """
+
+    keys: tuple[str, ...]
+    message: str
+
+    def satisfied(self, cfg: dict[str, Any]) -> bool:
+        return any(str(cfg.get(key) or "").strip() for key in self.keys)
+
+
+@dataclass(frozen=True)
+class _FormField:
+    name: str
+    label: str
+    required: bool
+    secret: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "name": self.name,
+            "label": self.label,
+            "required": self.required,
+        }
+        if self.secret:
+            payload["secret"] = True
+        return payload
+
+
+@dataclass(frozen=True)
+class StorageProviderSpec:
+    """Everything that differs between object-storage providers, in one declaration.
+
+    ``probe`` is optional on purpose: only ``local`` can be verified for real without
+    an SDK, and a provider must never claim a remote write succeeded.  Wiring a real
+    client later means supplying a probe, not editing the shared paths.
+    """
+
+    name: str
+    label: str
+    fields: tuple[_FormField, ...]
+    requirements: tuple[_FieldRequirement, ...]
+    probe: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+
+
+def _probe_local(cfg: dict[str, Any]) -> dict[str, Any]:
+    root = Path(str(cfg.get("root_path") or ""))
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        probe = root / ".rag4c-storage-test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return {"status": "ok", "detail": f"local root writable: {root}"}
+    except OSError as exc:
+        return {"status": "error", "detail": f"local root not writable: {exc}"}
+
+
+_COMMON_REMOTE_FIELDS = (
+    _FormField("endpoint", "Endpoint", False),
+    _FormField("bucket", "Bucket", False),
+    _FormField("region", "Region", False),
+    _FormField("path_prefix", "Path prefix", False),
+    _FormField("access_key_id", "Access key", False, secret=True),
+    _FormField("secret_access_key", "Secret key", False, secret=True),
+    _FormField("use_ssl", "Use SSL", False),
+    _FormField("force_path_style", "Force path style", False),
+)
+
+#: 凭据类字段在远端 provider 上是必填的，``minio`` 还额外要求 endpoint。
+_REMOTE_REQUIREMENTS = (
+    _FieldRequirement(("bucket", "bucket_name"), "{p} requires bucket"),
+    _FieldRequirement(("access_key_id",), "{p} requires access_key_id"),
+    _FieldRequirement(("secret_access_key",), "{p} requires secret_access_key"),
+)
+
+
+def _remote_requirements(*, endpoint_required: bool = False) -> tuple[_FieldRequirement, ...]:
+    prefix = (
+        (_FieldRequirement(("endpoint",), "{p} requires endpoint"),)
+        if endpoint_required
+        else ()
+    )
+    return prefix + _REMOTE_REQUIREMENTS
+
+
+_PROVIDER_SPECS: tuple[StorageProviderSpec, ...] = (
+    StorageProviderSpec(
+        name="local",
+        label="本地目录",
+        fields=(_FormField("root_path", "Root path", True),),
+        requirements=(
+            _FieldRequirement(("root_path",), "{p} provider requires root_path"),
+        ),
+        probe=_probe_local,
+    ),
+    StorageProviderSpec(
+        name="minio",
+        label="MinIO",
+        fields=(
+            _FormField("endpoint", "Endpoint", True),
+            _FormField("bucket", "Bucket", True),
+            _FormField("access_key_id", "Access key", True, secret=True),
+            _FormField("secret_access_key", "Secret key", True, secret=True),
+            _FormField("use_ssl", "Use SSL", False),
+        ),
+        requirements=_remote_requirements(endpoint_required=True),
+    ),
+    StorageProviderSpec(
+        name="s3",
+        label="S3",
+        fields=(
+            _FormField("endpoint", "Endpoint", False),
+            _FormField("bucket", "Bucket", True),
+            _FormField("region", "Region", False),
+            _FormField("access_key_id", "Access key", True, secret=True),
+            _FormField("secret_access_key", "Secret key", True, secret=True),
+        ),
+        requirements=_remote_requirements(),
+    ),
+    *[
+        StorageProviderSpec(
+            name=name,
+            label=label,
+            fields=_COMMON_REMOTE_FIELDS,
+            requirements=_remote_requirements(),
+        )
+        for name, label in (
+            ("cos", "COS"),
+            ("oss", "OSS"),
+            ("tos", "TOS"),
+            ("obs", "OBS"),
+        )
+    ],
+)
+
+#: 注册顺序即控制台 provider 下拉顺序；不要在运行时改用 sorted(names())。
+PROVIDERS: tuple[str, ...] = tuple(spec.name for spec in _PROVIDER_SPECS)
+_PROVIDER_BY_NAME: dict[str, StorageProviderSpec] = {spec.name: spec for spec in _PROVIDER_SPECS}
+_PROVIDER_ORDER: list[str] = list(PROVIDERS)
+
+
+def registered_provider_specs() -> tuple[StorageProviderSpec, ...]:
+    """Live provider list in registration order (built-ins first)."""
+    return tuple(_PROVIDER_BY_NAME[name] for name in _PROVIDER_ORDER)
+
+
+def register_provider_spec(spec: StorageProviderSpec, *, replace: bool = False) -> None:
+    """Register an object-storage provider so validation, connectivity test and the
+    console field schema all pick it up without editing this module's shared paths."""
+    if spec.name in _PROVIDER_BY_NAME and not replace:
+        raise StorageBackendInvalid(f"provider already registered: {spec.name}")
+    if spec.name not in _PROVIDER_ORDER:
+        _PROVIDER_ORDER.append(spec.name)
+    _PROVIDER_BY_NAME[spec.name] = spec
+
+
+def unregister_provider_spec(name: str) -> None:
+    """Drop a provider registration (tests and teardown of optional integrations)."""
+    key = (name or "").strip().lower()
+    _PROVIDER_BY_NAME.pop(key, None)
+    if key in _PROVIDER_ORDER:
+        _PROVIDER_ORDER.remove(key)
+
+
+def storage_provider_spec(provider: str) -> StorageProviderSpec:
+    """Look up a provider spec; unknown names raise with the registered list."""
+    key = (provider or "").strip().lower()
+    spec = _PROVIDER_BY_NAME.get(key)
+    if spec is None:
+        raise StorageBackendInvalid(f"unsupported provider: {key}")
+    return spec
+
+
 def validate_provider_config(provider: str, config: dict[str, Any]) -> None:
-    provider = (provider or "").strip().lower()
-    if provider not in PROVIDERS:
-        raise StorageBackendInvalid(f"unsupported provider: {provider}")
+    spec = storage_provider_spec(provider)
     cfg = dict(config or {})
-    if provider == "local":
-        root = str(cfg.get("root_path") or "").strip()
-        if not root:
-            raise StorageBackendInvalid("local provider requires root_path")
-        return
-    if provider == "minio":
-        if not str(cfg.get("endpoint") or "").strip():
-            raise StorageBackendInvalid("minio requires endpoint")
-    if not str(cfg.get("bucket") or cfg.get("bucket_name") or "").strip():
-        if provider != "local":
-            raise StorageBackendInvalid(f"{provider} requires bucket")
-    if provider != "local":
-        if not str(cfg.get("access_key_id") or "").strip():
-            raise StorageBackendInvalid(f"{provider} requires access_key_id")
-        if not str(cfg.get("secret_access_key") or "").strip():
-            raise StorageBackendInvalid(f"{provider} requires secret_access_key")
+    for requirement in spec.requirements:
+        if not requirement.satisfied(cfg):
+            raise StorageBackendInvalid(requirement.message.format(p=spec.name))
 
 
 def test_storage_config(provider: str, config: dict[str, Any]) -> dict[str, Any]:
-    """Validate config; local does a real write probe; remotes are config-only when SDK absent."""
+    """Validate config; providers with a probe get a real test, others are config-only."""
     try:
+        spec = storage_provider_spec(provider)
         validate_provider_config(provider, config)
     except StorageBackendInvalid as exc:
         return {"status": "error", "detail": str(exc)}
-    provider = provider.lower()
     cfg = dict(config or {})
-    if provider == "local":
-        root = Path(str(cfg.get("root_path") or ""))
-        try:
-            root.mkdir(parents=True, exist_ok=True)
-            probe = root / ".rag4c-storage-test"
-            probe.write_text("ok", encoding="utf-8")
-            probe.unlink(missing_ok=True)
-            return {"status": "ok", "detail": f"local root writable: {root}"}
-        except OSError as exc:
-            return {"status": "error", "detail": f"local root not writable: {exc}"}
+    if spec.probe is not None:
+        return spec.probe(cfg)
     endpoint = str(cfg.get("endpoint") or "").strip()
     detail_parts = ["config fields valid"]
     if endpoint:
@@ -148,81 +302,15 @@ class StorageBackendRepository:
         return row
 
     def list_types(self) -> dict[str, Any]:
-        fields_common = [
-            {"name": "endpoint", "label": "Endpoint", "required": False},
-            {"name": "bucket", "label": "Bucket", "required": False},
-            {"name": "region", "label": "Region", "required": False},
-            {"name": "path_prefix", "label": "Path prefix", "required": False},
-            {
-                "name": "access_key_id",
-                "label": "Access key",
-                "required": False,
-                "secret": True,
-            },
-            {
-                "name": "secret_access_key",
-                "label": "Secret key",
-                "required": False,
-                "secret": True,
-            },
-            {"name": "use_ssl", "label": "Use SSL", "required": False},
-            {"name": "force_path_style", "label": "Force path style", "required": False},
-        ]
+        """Console schema, derived from the provider registry in declaration order."""
         return {
             "providers": [
                 {
-                    "provider": "local",
-                    "label": "本地目录",
-                    "fields": [
-                        {"name": "root_path", "label": "Root path", "required": True}
-                    ],
-                },
-                {
-                    "provider": "minio",
-                    "label": "MinIO",
-                    "fields": [
-                        {"name": "endpoint", "label": "Endpoint", "required": True},
-                        {"name": "bucket", "label": "Bucket", "required": True},
-                        {
-                            "name": "access_key_id",
-                            "label": "Access key",
-                            "required": True,
-                            "secret": True,
-                        },
-                        {
-                            "name": "secret_access_key",
-                            "label": "Secret key",
-                            "required": True,
-                            "secret": True,
-                        },
-                        {"name": "use_ssl", "label": "Use SSL", "required": False},
-                    ],
-                },
-                {
-                    "provider": "s3",
-                    "label": "S3",
-                    "fields": [
-                        {"name": "endpoint", "label": "Endpoint", "required": False},
-                        {"name": "bucket", "label": "Bucket", "required": True},
-                        {"name": "region", "label": "Region", "required": False},
-                        {
-                            "name": "access_key_id",
-                            "label": "Access key",
-                            "required": True,
-                            "secret": True,
-                        },
-                        {
-                            "name": "secret_access_key",
-                            "label": "Secret key",
-                            "required": True,
-                            "secret": True,
-                        },
-                    ],
-                },
-                {"provider": "cos", "label": "COS", "fields": fields_common},
-                {"provider": "oss", "label": "OSS", "fields": fields_common},
-                {"provider": "tos", "label": "TOS", "fields": fields_common},
-                {"provider": "obs", "label": "OBS", "fields": fields_common},
+                    "provider": spec.name,
+                    "label": spec.label,
+                    "fields": [form_field.as_dict() for form_field in spec.fields],
+                }
+                for spec in registered_provider_specs()
             ]
         }
 
