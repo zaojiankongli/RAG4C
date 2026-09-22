@@ -86,7 +86,9 @@ def test_production_call_sites_use_registry_create_graph_store():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    for rel in ("rag.py", "server/documents.py", "server/app.py"):
+    # 图谱装配从 rag.py 迁进了检索管线的组合根（retrieval/stages.py），所以宿主
+    # 清单跟着改；判据没变 —— 生产侧只能经注册表建 store。
+    for rel in ("retrieval/stages.py", "server/documents.py", "server/app.py"):
         text = (root / rel).read_text(encoding="utf-8")
         assert "create_graph_store" in text, rel
         assert "RagGraphStore(s.milvus" not in text, rel
