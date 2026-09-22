@@ -95,15 +95,6 @@ def _legacy_chunk(
     return chunk
 
 
-def _document_and_chunk(
-    doc_id: str, chunk_id: str, *, catalog_api: Any, pipeline: Any
-) -> tuple[dict[str, Any], Any]:
-    """Compatibility helper retained for authority-off callers."""
-    doc = _document(doc_id, catalog_api=catalog_api)
-    chunk = _legacy_chunk(doc_id, chunk_id, doc=doc, pipeline=pipeline)
-    return doc, chunk
-
-
 def _authority_dependencies(
     *,
     catalog_api: Any,

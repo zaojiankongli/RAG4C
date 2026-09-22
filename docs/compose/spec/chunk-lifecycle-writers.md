@@ -212,7 +212,51 @@ R7 §5.2 实测这类推进会带来 20 条测试漂移。**本切片不做**，
 - [ ] T5: 四个端点面（PATCH enabled/reason、GET revisions、POST revert）+ `_projection` 补 4 字段 —— acceptance: admin 闸门与 tenant 绑定测试同步通过（covers: S2.3; covers: S2.4; depends: T3; depends: T4）
 - [ ] T6: 可扩展性守卫测试 —— acceptance: T2.5.1/2/3 三条绿，且人为在 chunk_operations.py 里加回一处 `authority_mode ==` 会让守卫变红（covers: S2.5; depends: T5）
 - [x] T7: 门禁 —— acceptance: 定向 pytest + ruff 实跑读数写入 Report（covers: S2.5; depends: T6）
-- [ ] T8: 独立 review 子 agent 复审后端 —— acceptance: 无 critical 残留才进前端（depends: T7）
+- [x] T8: 独立 review 子 agent 复审后端 —— acceptance: 无 critical 残留才进前端（depends: T7）
+
+## 独立评审结论与处置（T8，子 agent `quality-guardian:quality-reviewer`）
+
+首轮判 **FAIL**。三条 critical 我逐条核对源码后**全部成立**，其中两条正是本 spec 自己写下
+却没兑现的判据（S2.5.4 要求的是端点级跨租户 404，我只测了 catalog 函数级）：
+
+| # | 问题 | 证据 | 处置 |
+|---|---|---|---|
+| C1 | 停用切片时「修改原因」被静默丢弃 | `_write_tombstone` 未透传 `m.metadata_patch`，`tombstone_chunk` 也没有该形参；另三条动词都传了，只漏这一条 | `tombstone_chunk` 加 `metadata_patch` 透传，`_write_tombstone` 传入；补 `test_tombstone_keeps_the_operator_reason_on_the_head` |
+| C2 | `PATCH` 同给 `text` 与 `enabled` 时正文被丢，且 head 本就 enabled 时**一次写都不发生却返 200** | `text=None if enabled is not None else ...` 丢弃正文；`_decide_restore` 判 noop 后无 revision / 无 durable op | 模型校验改为二者互斥 -> 422（"改正文与改启停是两次可审计的动作"） |
+| C3 | 两条新路由零 HTTP 层测试 | `tests/test_knowledge_chunks_api.py` 无 `/revisions`、`/revert` | 补 4 条：revision 列表与形状 + 跨租户 chunk id 404 + 跨 dataset 403 + 缺凭证 401；`text`+`enabled` 422；无变更 422；revert 的 403/409/404 |
+
+评审同时做了两次破坏性验证并还原：插回一处 `authority_mode ==` → 守卫红；删一行
+`ChunkRevision.tenant_id == tenant_id` → 跨租户测试红。
+
+**已采纳的 nit**：`revert_chunk` 上零调用方的 `metadata_patch` 形参撤掉（避免与
+`_write_revert` 两份实现漂移）；名不副实的 `test_revert_rejects_a_target_revision_outside_the_heads_scope`
+改名成它真正测的东西；`apply_chunk_mutation` 增加严格大小写校验（`ProviderRegistry` 会把键
+小写归一，而 rollout mode 是发布开关，`"ACTIVE"` 不该被静默接受）。
+
+**评审未证实的一条推论，登记为在册风险**：active 分支下 tombstone 不调
+`_update_document_after_delete`，因此 `doc.chunk_count` 与 enabled-head 计数可能漂移，
+漂移后同文档的 active 写会长期在完整性栅栏处判不齐。此行为 HEAD 亦如此（非本切片引入），
+但新增的 restore/revert 端点会让它更容易被触发；需要 reconciler 侧确认，见交接文档 §9。
+
+6. **评审的"未证实推论"实测为真并已修（`bc00a46`）**：active 模式下一次 tombstone 会让
+   `documents.chunk_count` 落后于 enabled-head 数量，而 active 的完整性栅栏比对的就是这两个数，
+   于是该文档之后所有切片写（含未触及的切片、含本轮新增的 restore/revert）长期 409。
+   既有测试没暴露它，是因为没有任何一条做"删后再写"。修复：tombstone 在 active 下同样落
+   计数与人工删除审计（计数取权威值而非 `chunk_count-1`），restore/revert 在 enabled 集合
+   变化后按权威重算写回，且**只在两数不符时**写，避免每次编辑多一次 UPDATE。
+   回归：`tests/test_chunk_count_reconciliation.py`（4 条）。
+   **本轮最大教训**：新端点接入一条既有栅栏时，必须验证"栅栏的另一侧数据由谁维护"，
+   而不是假设它一直是对的 —— 这个死锁在 HEAD 就存在，只因为没有面向操作员的
+   restore/revert 入口而从未被走到。
+
+## 处置后的实跑读数| 判据 | 结果 |
+|---|---|
+| 定向快批（writers / revisions / knowledge_chunks_api / storage×2 / chunking / diagnostics） | **52 passed / 65.87s** |
+| 重批（chunk 权威 / doc chunk ops / 删除栅栏 / admin 闸门 / 租户隔离） | **72 passed / 246.53s** |
+| `ruff check .`（项目自身门禁口径） | 受改文件全绿；顺带清掉 **main 上既有的 6 个红**（`graph_store_registry` F401、`qa_matcher` F401×2、3 个测试文件），现为 **All checks passed** |
+| 被 lint 清理波及的 5 个文件复跑 | **34 passed / 1.74s** |
+
+提交：`5541ee9`（切片本体）→ `ba2b048`（切分/存储注册表 + C1/C2/C3 处置）→ `d908314`（lint 收口）。
 
 ## Workspace
 
