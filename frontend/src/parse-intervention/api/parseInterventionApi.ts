@@ -1,4 +1,5 @@
 import { request } from "../../api/client";
+import { getBaseUrl } from "../../api/client";
 import type { DocumentChunkList, DocumentChunkUpdateResponse, DocumentChunkDeleteResponse, DocumentChunkItem, DocumentChunkRevisionList } from "../../types/rag";
 import type { ParseScope } from "../model/parseInterventionModel";
 
@@ -30,4 +31,30 @@ export function revertParseChunk(scope: ParseScope, chunkId: string, targetRevis
 }
 export function tombstoneParseChunk(scope: ParseScope, chunkId: string, expectedRevision: number, signal: AbortSignal): Promise<DocumentChunkDeleteResponse> {
   return request<DocumentChunkDeleteResponse>(`${chunkUrl(scope, chunkId)}?expected_revision=${expectedRevision}`, { method: "DELETE", headers: headers(scope), signal, timeoutMs: 120_000 });
+}
+
+/** 原文字节。类型与 inline/下载由后端的可查看来源表决定，前端不自己猜 content type。 */
+export interface DocumentSourceBlob { blob: Blob; mediaType: string; disposition: string; etag: string | null; }
+export class SourcePreviewRefusedError extends Error {
+  code: string;
+  status: number;
+  constructor(message: string, code: string, status: number) { super(message); this.name = "SourcePreviewRefusedError"; this.code = code; this.status = status; }
+}
+export async function fetchDocumentSource(scope: ParseScope, disposition: "inline" | "attachment", signal: AbortSignal): Promise<DocumentSourceBlob> {
+  const url = `${getBaseUrl()}/api/knowledge-bases/${encodeURIComponent(scope.datasetId)}/documents/${encodeURIComponent(scope.docId)}/source-preview?disposition=${disposition}`;
+  const response = await fetch(url, { method: "GET", headers: headers(scope), signal });
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => null)) as { detail?: { code?: string; message?: string } } | null;
+    throw new SourcePreviewRefusedError(
+      detail?.detail?.message || "原文查看被拒绝",
+      detail?.detail?.code || "source_preview_unavailable",
+      response.status,
+    );
+  }
+  return {
+    blob: await response.blob(),
+    mediaType: response.headers.get("Content-Type") ?? "",
+    disposition: response.headers.get("Content-Disposition") ?? "",
+    etag: response.headers.get("ETag"),
+  };
 }

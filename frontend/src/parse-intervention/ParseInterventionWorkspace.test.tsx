@@ -147,6 +147,17 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
+// 原文查看是真的会去取字节的：保留真类（instanceof 才判得出），只把网络换成一问一答。
+vi.mock("./api/parseInterventionApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./api/parseInterventionApi")>();
+  return {
+    ...actual,
+    fetchDocumentSource: vi.fn(() =>
+      Promise.reject(new actual.SourcePreviewRefusedError("原文文件不存在", "source_preview_missing", 404)),
+    ),
+  };
+});
+
 describe("ParseInterventionWorkspace", () => {
   it("renders three desktop panes, the Knowledge Lifeline, and honest capability gaps", () => {
     const { container } = render(
@@ -170,7 +181,10 @@ describe("ParseInterventionWorkspace", () => {
     expect(screen.getByText(/文本 480 字或存在 8 个版面块/)).toBeTruthy();
     expect(screen.getByText("决策依据")).toBeTruthy();
     expect(screen.getByText(/类型 pdf · 480 字 · 8 版面块 · 阈值 4000/)).toBeTruthy();
-    expect(screen.getByText("当前没有原始文档预览能力")).toBeTruthy();
+    // 原文那一栏不再是"我们没有这个能力"：它真的去取字节，取不到时如实说这一份没有原文。
+    expect(screen.queryByText("当前没有原始文档预览能力")).toBeNull();
+    expect(screen.getByText("原文")).toBeTruthy();
+    expect(screen.getByText("正在读取原文…")).toBeTruthy();
     expect(screen.getByText("原因记在 ChunkHead，不逐版保存")).toBeTruthy();
     expect(screen.queryByText("当前没有切片 Revision 历史接口")).toBeNull();
     expect(screen.queryByText("当前 API 不持久化修改原因")).toBeNull();

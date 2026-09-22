@@ -1,6 +1,8 @@
 import type { DocumentChunkItem, DocumentItem } from "../../types/rag";
 import { Alert, Tag } from "tdesign-react";
 import { buildChunkOutline, sanitizeSourceFact } from "../model/parseInterventionModel";
+import type { ParseScope } from "../model/parseInterventionModel";
+import SourcePreview from "./SourcePreview";
 import { formatChunkingDecision, formatEngineDecision } from "../model/chunkDiagnostics";
 
 const STAGE_LABELS: Record<string, string> = { parse: "解析", split: "切分", contextualize: "上下文增强", embed: "向量化", graph: "图谱", persist: "持久化" };
@@ -9,7 +11,7 @@ function Fact({ label, value, mono = false }: { label: string; value: string; mo
   return <div className="parse-fact"><dt>{label}</dt><dd className={mono ? "is-mono" : undefined}>{value}</dd></div>;
 }
 
-export default function ParsedContextPane({ document, chunks }: { document: DocumentItem; chunks: DocumentChunkItem[] }) {
+export default function ParsedContextPane({ document, chunks, scope }: { document: DocumentItem; chunks: DocumentChunkItem[]; scope?: ParseScope | null }) {
   const meta = document.parser_meta ?? {};
   const chunkDiag = formatChunkingDecision(meta);
   const engineDiag = formatEngineDecision(meta);
@@ -68,7 +70,12 @@ export default function ParsedContextPane({ document, chunks }: { document: Docu
       </div>
       <div className="parse-section-heading"><h3>页码 / 章节大纲</h3><span>{outline.length} 个分组</span></div>
       <nav className="parse-outline" aria-label="文档页码和章节">{outline.map((node) => <div key={node.key} className="parse-outline-node"><strong>{node.label}</strong><span>{node.chunkIds.length} 个切片</span>{node.headings.length ? <ul>{node.headings.map((heading) => <li key={heading}>{heading}</li>)}</ul> : <small>没有标题 metadata</small>}</div>)}</nav>
-      <Alert theme="info" title="当前没有原始文档预览能力" message="界面只展示解析与切片 metadata；不会用切片正文伪装原始文件。建议后端未来提供受控 source-preview 端点。" />
+      <div className="parse-section-heading"><h3>原文</h3><span>{scope ? "受控读取" : "无范围"}</span></div>
+      {scope ? (
+        <SourcePreview scope={scope} documentName={document.name} />
+      ) : (
+        <Alert theme="info" title="没有可用的文档范围" message="原文查看需要有效的 dataset 与 document 范围；缺少范围时界面不去猜测该读哪一份原文。" />
+      )}
     </section>
   );
 }
