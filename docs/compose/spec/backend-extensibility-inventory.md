@@ -947,7 +947,9 @@ SM6 声明表里 `json` 整个改名 → 两条红（属性 + 对账）。
 **从来不是裸 `inline`** → `previewKind` 恒返回 `download`，PDF iframe、图片、文本链接三面全灭，
 每个文档都显示「不支持在线查看」。
 
-为什么 16 条用例全绿：`SourcePreview.test.tsx` 的夹具发的是 `disposition: "inline"` ——
+为什么 16 条用例全绿：~~16~~ **这个数是错的**（第十一轮评审在 `82db680` 上数出实际 10 条；当前
+13 条 = 原有 10 + 本轮新增 3，跟"16"对不上，说明我当时就没数）。下面按"原有夹具"读作 10 条。
+`SourcePreview.test.tsx` 的夹具发的是 `disposition: "inline"` ——
 **后端永远不会发出的值**。这是「夹具自证」那一类，而同一批提交里我刚给别处补过同类守卫。
 
 更狠的第二层：`Content-Disposition` 不在 CORS 的响应头白名单里，而 `server/app.py` 的
@@ -996,7 +998,7 @@ SM6 声明表里 `json` 整个改名 → 两条红（属性 + 对账）。
 | 发现 | 处置 |
 |---|---|
 | F4 的理由写错了：我说保护 `updated_by` 会「在写侧才炸，也就是线上」 | **评审是对的**：`_validate_spec` 对每个 kind 探一次 `release_values`，而内建 kind 在 import 期注册，所以那是**注册期就炸**（响的，不是静默的）。决定本身没错，理由错了 —— 已改源码注释、用例 docstring，并且不再靠约定：注册期改成查一张 `PROTECTED_REASONS` 的原因表（键集合就是执行面），加新集合忘了配理由会红 |
-| B1 还剩一处：`DOCUMENT_FILTER_PARAMETERS` 是 `Partial` + `?? key` 兜底 | **成立，已修**：改成 `Record<keyof DocumentsFilterState, string>` 逐个列出（含同名的那几个），兜底删掉。现在少登记一个键是类型错误 —— 「少一处」这个形状才算真的没有落点 |
+| B1 还剩一处：`DOCUMENT_FILTER_PARAMETERS` 是 `Partial` + `?? key` 兜底 | **成立，已修**：改成 `Record<keyof DocumentsFilterState, string>` 逐个列出（含同名的那几个）。~~兜底删掉~~ **这句话当时是假的**：`?? key` 一直留在 `DocumentsPage.tsx:302`，第十一轮评审查出来的；本轮真删了（完整 `Record` + `noUncheckedIndexedAccess` 关着 ⇒ 那半句是可证死代码）。现在少登记一个键是类型错误 —— 守这件事的是 `Record` 类型，不是 `??`。「少一处」这个形状才算真的没有落点 |
 | c0db716 说前端只有「1 处」认双拼法 | **数错了，是 3 处**：`QualityOperationsDetailDrawer.tsx` 的类型联合、`GATE_LABELS` 的键、`gateTheme` 里的 `or` 分支。对外契约留不留 `passing` 那次裁定仍然悬着，但计数已更正 |
 
 
@@ -1079,4 +1081,59 @@ MM3 smoke 工厂退回不传 mode → mode 那条红；MM4 新加一个模块级
 "全部守住"，读数码起来完全漂亮，其实一条断言都没跑到。**教训：反向验证的 `caught N/N`
 必须配一次绿基线预检，且要报出红的**用例名**；只有退出码的绿/红不叫证据。** 第二版改成
 继承 `os.environ` + 预检不绿就作废本轮读数，才有了上面那张表。
+
+## AB. 扩展轴 #9 落地：`alert_type` 派生收成有序规则表（本轮，无迁移）
+
+`core/quality_alert_types.py`（新）。`_derive_alert_type` 原来是 7 条字面量 `if` + 2 条位置敏感
+的到期启发式 + 兜底；现在是一张 `ALERT_TYPE_RULES` 有序表 + 一张 `REASON_ALERT_TYPES` 映射表，
+`alerts.py` 只剩一行委托。词表 `ALERT_TYPES` 也从 `alerts.py:84` 搬进这里，变成唯一一份。
+
+**为什么这条值得单独设计而不是"抽个函数"**：它的顺序**就是**语义。`gate_blocked` 必须排在两条
+clock 启发式之前 —— 否则"认证已过期且闸口受阻"的观察会派生成 `certification_expired`，运营看到
+的就是一条与真实故障无关的告警。这个次序以前只存在于代码行序里，没地方声明、没测试钉。所以
+`register_alert_type_rule` 强制指名锚点（`after=`），不接受"默默追加到末尾"：落到链尾等于只有
+前面全不命中才生效，那几乎从不是新增者想要的语义。
+
+**行为等价的证据**（本仓 `_KNOWLEDGE_SERVING_ORIGINAL_*` 的老规矩：把旧实现冻结进测试当裁判）：
+`tests/test_quality_alert_type_derivation.py` 里 `_reference` 是重构前那条链的原样副本，与规则表在
+**5120 点网格**（4 severity × 5 gate_state × 10 reason，含大小写/空白/未知值 × 认证与豁免各有无 ×
+分钟数 {None,-5,0,5}）上逐点比对，且反向自查网格确实覆盖了全部 7 个类型。合跑 12 passed。
+
+反向验证 5/5（预检 `8 passed`，跑完 `RESTORE-CHECK 8 passed`）：AM1 `gate_blocked` 挪到两条 clock
+之后 → 网格 + 次序 + 锚点三条红；AM2 声明表少一条 reason → 网格红；AM3 clock 的 `<=0` 改成 `<0`
+→ 网格红；AM4 产出不再对照词表 → fail-closed 那条红；AM5 宿主文件退回字面量分派 → 回潮栅栏红。
+
+**AM5 第一次是绿的：我的回潮栅栏被自己的变异测试打穿了。** 那一版按
+`(reason|gate_state|severity)\s*(==|in…)` 的形状匹配，而 AM5 写的是
+`if str(observation.gate_state) == "blocked"` —— `str(...)` 的右括号插在变量与运算符之间，`\s*`
+跨不过去，于是漏网。改成按**字面量**查（函数体里出现任何字符串常量就红）：重新引入一条分支必然
+要写一个告警类型或 reason 的名字，那个藏不住。这与第十一轮评审对 `"dual"` 词形栅栏的批评是同一
+一课，见 §AC 第 2 条。
+
+诚实边界：迁移 `0031:622` 与 `orm.py:3799` 的 CHECK 一个字没动，所以**新增一个 alert_type 仍需一次
+CHECK 迁移**；栅栏保证的是"忘了迁就当场红"，不是"不需要迁"。
+
+## AC. 第十一轮独立评审处置（VERDICT: PASS-WITH-FIXES）
+
+评审 live 复验了上一轮 blocker 确实成立（`_content_disposition` 实测产出
+`inline; filename=".pdf"; filename*=UTF-8''…`，永不等于裸 `inline`），也确认 CORS `expose_headers`
+在 `961eed2` 之前确实不存在、Vite dev 确实跨源、第 7 处 `state_mode` 成员判断确实不存在。
+
+1. **`Retry-After` 漏在同一个 bug 类里（真缺陷，已修）**：`server/run_ops.py:933` 发出、
+   `frontend/src/api/transport.ts:115/179` 读、不在 CORS 白名单、当时也没 expose —— 限流时前端的
+   退避读数恒为空。比这条更值得记的是**修法**：一次补一个头等于赌"没人再读第三个"，所以
+   `tests/test_cors_exposed_headers.py` 把"前端 `headers.get(...)` 读到的每个头 ∈ 简单响应头白名单
+   ∪ `expose_headers`"做成栅栏，扫真源码而不是抄清单，并带一条自查（它必须真的抓到
+   `content-disposition` 与 `retry-after`，否则"没红"不等于"没瞎"）。
+2. **`"dual"` 词形栅栏比我说得窄（断言过头，认）**：只认双引号形状（`'dual'` 逃逸）、只写
+   `== "database"` 的那份副本里根本不出现 "dual"、扫描是 5 个目录的**顶层非递归**（`scripts/bench`、
+   根目录 `rag*.py` 未扫）、COMPARISON 栅栏只覆盖 2 个文件。§W 里"面已数清/逃不掉"的措辞按这条
+   降级为：栅栏守得住的只是它真扫过的那片地。AB 的 AM5 是同一课第二次，别攒第三次。
+3. **两处不精确（认，不影响上一轮结论）**：`SourcePreview.test.tsx` 的 `INLINE_HEADER` 仍不是字节级
+   真实（真后端对 `指南.pdf` 给的是 `filename=".pdf"`）；`_RaisingLedger.save_state` 模拟的是生产
+   ledger 没有的方法（runner 走 `upsert_state`）。别把这两处当"字节级贴近真实"引用。
+4. **我写进 §Y 的两句话是错的，已纠正**：`16 条用例` 在 `82db680` 实际是 10 条；B1 那条写了"兜底
+   删掉"，而 `?? key` 一直留在 `DocumentsPage.tsx:302`。本轮把它删了 —— 类型是完整 `Record` 且
+   `noUncheckedIndexedAccess` 关着，那半句是可证死代码；"少登记一个键就是类型错误"这半句成立
+   （是 `Record` 在守，不是 `??`）。
 

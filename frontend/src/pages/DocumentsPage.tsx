@@ -299,7 +299,7 @@ function replaceDocumentsFilter(
   const route = parseDocumentsSearchRoute(location);
   if (!route) return;
   const params = route.params;
-  const parameter = DOCUMENT_FILTER_PARAMETERS[key] ?? key;
+  const parameter = DOCUMENT_FILTER_PARAMETERS[key];
   const normalized = value.trim();
   if (normalized && normalized !== "all") params.set(parameter, normalized);
   else params.delete(parameter);

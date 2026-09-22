@@ -751,7 +751,7 @@ app.add_middleware(
     # `Content-Disposition`（后端对这份字节的表态：inline 还是只下载）与 `ETag`
     # （切片修订号，界面用来判断"我看到的是哪一版"），两者都不在白名单里 ——
     # 不显式 expose 的话它们在 Vite dev / Tauri 下恒为空串，界面会安静地丢掉这两个信号。
-    expose_headers=["Content-Disposition", "ETag", "Content-Type"],
+    expose_headers=["Content-Disposition", "ETag", "Content-Type", "Retry-After"],
 )
 
 # 请求体大小闸门 + 管理端点远程准入 + 按 IP 限流 + 访问日志。
