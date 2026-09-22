@@ -22,6 +22,13 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from core.quality_alert_operations import (
+    ACTIVE_ALERT_STATUSES,
+    TERMINAL_ALERT_STATUSES,
+    apply_operation,
+    configure_alert_model,
+    resolve_quality_alert_operation,
+)
 from core.catalog_schema import inspect_enterprise_release_quality_operations_capability
 from core.enterprise_acl_idempotency import engine_serialization_lock, idempotency_key_lock
 from core.enterprise_access_control import DatasetAccessControlUnavailable
@@ -62,7 +69,12 @@ SYSTEM_QUALITY_SCANNER = "system:quality-scanner"
 _SYSTEM_QUALITY_SCANNER_NAME = "Quality Operations Scanner"
 _SYSTEM_QUALITY_SCANNER_EMAIL = ""
 _ALERT_STATUSES = frozenset({"open", "acknowledged", "resolved", "suppressed"})
-_ACTIVE_ALERT_STATUSES = frozenset({"open", "acknowledged", "suppressed"})
+_ACTIVE_ALERT_STATUSES = ACTIVE_ALERT_STATUSES
+
+# 声明里写到的列必须真的存在于模型上：SQLAlchemy 实例上 setattr 一个不存在的名字不会报错，
+# 只会在 flush 时被丢掉 —— 那样一次"成功的"操作其实什么都没改。这里把整张表对着模型核一遍，
+# 之后新注册的声明也在注册当场核。
+configure_alert_model(lambda column: hasattr(DatasetReleaseQualityAlert, column))
 _ALERT_SEVERITIES = frozenset({"warning", "critical"})
 _OBSERVATION_SEVERITIES = frozenset({"healthy", "warning", "critical", "unavailable"})
 _OBSERVATION_GATE_STATES = frozenset(
@@ -699,8 +711,11 @@ def _mutate_alert(
     safe_comment = _safe_comment(comment)
     request, ip = _request_metadata(request_id=request_id, request_ip=request_ip)
     timestamp = _now(now)
+    spec = resolve_quality_alert_operation(operation)
+    if spec is None:
+        raise QualityAlertInvalid("quality alert operation is invalid")
     until: datetime | None = None
-    if operation == "suppress_quality_alert":
+    if spec.sets_bound is not None:
         until = _utc_datetime(suppressed_until, "suppressed_until")
         assert until is not None
         if until <= timestamp:
@@ -744,45 +759,20 @@ def _mutate_alert(
             raise QualityAlertRevisionConflict("quality alert revision fence rejected")
         status = str(alert.status)
         before = _alert_payload(alert)
-        if operation == "acknowledge_quality_alert":
-            if status != "open":
-                raise QualityAlertConflict("only open quality alerts can be acknowledged")
-            alert.status = "acknowledged"
-            alert.acknowledged_at = timestamp
-            alert.acknowledged_by = actor
-            alert.acknowledged_comment = safe_comment or None
-            message = "Quality alert acknowledged"
-            action = "knowledge_base.release_quality.alert_acknowledged"
-        elif operation == "suppress_quality_alert":
-            if status not in {"open", "acknowledged"}:
-                raise QualityAlertConflict(
-                    "only open or acknowledged quality alerts can be suppressed"
-                )
-            alert.status = "suppressed"
-            alert.suppressed_until = until
-            alert.suppressed_by = actor
-            alert.suppressed_comment = safe_comment or None
-            message = "Quality alert suppressed"
-            action = "knowledge_base.release_quality.alert_suppressed"
-        elif operation == "resolve_quality_alert":
-            if status == "resolved":
-                raise QualityAlertConflict("resolved quality alerts are terminal")
-            if status not in _ACTIVE_ALERT_STATUSES:
-                raise QualityAlertConflict(
-                    "quality alert cannot be resolved from its current state"
-                )
-            alert.status = "resolved"
-            alert.active_alert_key = None
-            alert.resolved_at = timestamp
-            alert.resolved_by = actor
-            alert.resolved_comment = safe_comment or None
-            alert.suppressed_until = None
-            alert.suppressed_by = None
-            alert.suppressed_comment = None
-            message = "Quality alert resolved"
-            action = "knowledge_base.release_quality.alert_resolved"
-        else:
-            raise QualityAlertInvalid("quality alert operation is invalid")
+        if spec.terminal_conflict_message is not None and status in TERMINAL_ALERT_STATUSES:
+            raise QualityAlertConflict(spec.terminal_conflict_message)
+        if status not in spec.allowed_from:
+            raise QualityAlertConflict(spec.conflict_message)
+        apply_operation(
+            spec,
+            alert,
+            actor=actor,
+            timestamp=timestamp,
+            comment=safe_comment or None,
+            bound=until,
+        )
+        message = spec.response_message
+        action = spec.audit_action
         alert.revision = int(alert.revision) + 1
         alert.updated_at = timestamp
         session.flush()

@@ -47,7 +47,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 | 4 | ~~来源连接器 `SourceKind`~~ **本轮已完成**，见 A 表与 §D 6 | — | 0（注册 + 挂契约两处声明） | 否 | `openapi.ts:7103,7142,7166` | 已落 `SourcePlugin.config_model/preflight` + `attach_source_contract` |
 | 5 | 审批 `action_type`（控制面校验） | `enterprise_approval_control.py:236,246,269-286,316-355,2742` | 5 + 2 处 ORM CHECK + 1 迁移 | **是**（CHECK 阶梯 `catalog_schema.py:2740-2787` 记录了 6 次加宽） | openapi 5 hits | 声明式字段要求表；**必须保留独立 `if`（publish/rollback ∪ waiver 有重叠）** |
 | 6 | 任务 `source_kind` | API `enterprise_task_operations_api.py:26,39,64,77,81`；核心 `enterprise_task_operations{,_service}.py:20,65,138,143,1480,1489,1506-1522,335,996-1007`；ORM CHECK `orm.py:4980` | 8（含两处 `max_length=7`，第 9 个值会被 422 静默挡掉） | **是** | openapi `:6144,6961` | 三份 dict 合成一张 `TaskSourceKindSpec` |
-| 7 | 告警操作 acknowledge/suppress/resolve | `enterprise_release_quality_alerts.py:703,747,756,767,782` | 2 | 否 | 否 | Strategy+Registry（每个值要行为） |
+| 7 | ~~告警操作 acknowledge/suppress/resolve~~ **本轮已完成**，见 §M | — | 0（注册即全认；两条槽位栅栏 + 列名核对齐模型） | 否 | 否 | 已落 `core/quality_alert_operations.py` |
 | 8 | 通知 `source_kind` | `notification_center.py:465,480,489-496,615,678-695`、`receipts.py:258-324,519`、`materializer.py:572,746` | ~13 | **是**（`orm.py:4183,4203-4210`） | **不在 OpenAPI 里**（`approval_pending_for_me` 命中 0 次）→ 前端契约抓不到 | 声明式规格表 + 每 kind 两个 callable |
 | 9 | `gate_reason → alert_type` 派生 | `alerts.py:1102-1133`（7 条顺序 if），`_ALERT_TYPES:71-80`，CHECK `orm.py:3799` | 3 | **是** | 否 | 有序 matcher 表，保末尾两条启发式的位置 |
 | 10 | 身份 provider `oidc/saml` | `enterprise_identity_control.py:972-1008`，消费 `:1030,1040,1086,1269` | 3 | **是**（`orm.py:1220` + 字段组合 CHECK `0021:171`） | openapi 2 hits | Adapter（每 provider 一份字段形状）；**登录凭据信任形状，须 fail closed** |
@@ -378,3 +378,40 @@ ag4c-verify`。
 **没做到的部分（诚实边界）**：对外可见的排序枚举仍在 OpenAPI 契约与前端字面量里
 （`openapi.ts:8327,8330` 一类），所以"新增一个排序"仍然是**后端 0 处宿主分支 + 契约 1 处枚举**。
 这条轴消掉的是会静默翻错页的那部分，不是跨栈成本为 0。
+
+## M. 轴 #7（质量告警操作）落地记录
+
+`_mutate_alert` 原先用一条 `if/elif/else` 把每个操作的全部差异写在一起：允许从哪些状态出发、
+盖哪几列、让出哪几列、审计动作、回执文案。共享仪式（revision CAS、`session.flush()`、
+来源再校验、before/after 审计信封、幂等重放）本来就是对的，也正是**不该再被逐操作重写**的部分。
+
+两处原先是"实现细节"、其实是**不变量**，现在挪到注册期判定：
+
+1. 目标状态是终态 ⇒ 必须让出 `active_alert_key`。那一列是"同一指纹只允许一条活告警"的
+   部分唯一槽位：终态却不释放，要么把同一指纹的下一条告警永远堵死，要么让已解决的告警占着
+   活跃位。
+2. 目标状态非终态 ⇒ 不许让出 `active_alert_key`。活跃中就把槽位释放，等于允许同一指纹
+   并存两条活告警。
+
+再加一道这一族特有的核对：`configure_alert_model(hasattr 模型列)` 在宿主 import 时把**已声明**
+的列全部对模型重查一遍，之后每条新注册也当场查。为什么需要它：SQLAlchemy 实例上 `setattr`
+一个模型没有的名字**不报错**，只在 flush 时丢掉 —— 那会造出一类"回执 200、审计也写了、
+但什么都没改"的操作。列名也不靠命名约定推导：抑制没有 `suppressed_at`，只有
+`suppressed_until`，用"目标状态 + 后缀"生成列名会直接写出模型上不存在的列。
+
+门禁读数（本机 `.venv`，`PYTHONPATH=.`）：
+
+- 新守卫 `tests/test_quality_alert_operation_registry.py` **19 条 / 13.02s**，含判据的
+  行为半边：注册 `defer_quality_alert`（目标 suppressed、署名列、释放列集都是新声明）后，
+  **未改一行的仪式**真把它执行出来 —— `status=200`、`body["alert"]["status"]=="suppressed"`、
+  `revision` 由 1 推到 2、DB 里 `suppressed_by/comment/until` 与 `active_alert_key` 都在，
+  而 `core/enterprise_release_quality_alerts.py` **逐字节不变**；撤掉声明后同一操作再调用即拒。
+- 行为等价（未改任何既有断言）：`test_enterprise_release_quality_alerts.py` +
+  `test_enterprise_release_quality_operations_api.py` = **16 passed in 70.54s**（宿主二次
+  改动后重跑一遍仍 16 过）；`ruff check .` 全仓通过。
+- 反向验证 5 个变异，**全部由新守卫自己抓住**（不需要拿既有套件当证据）：仪式只改状态不写
+  声明列（2 红）、终态必须释放槽位不拦（1 红）、非终态不许释放不拦（1 红）、列不存在也照收
+  （1 红）、未声明操作被默认接住（1 红）。脚本与输出在仓外 `%TEMP%ag4c-verify`。
+
+顺带消掉的重复：`_ACTIVE_ALERT_STATUSES` 之前在宿主里自己抄了一份状态分区，现在指向表的
+`ACTIVE_ALERT_STATUSES`，状态只有一处定义。
