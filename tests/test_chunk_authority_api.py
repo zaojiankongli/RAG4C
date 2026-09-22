@@ -502,6 +502,104 @@ def test_active_edit_and_delete_run_through_real_worker_and_invalidate_cache(
     engine.dispose()
 
 
+def test_restore_after_tombstone_reprojects_through_the_real_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A restored chunk must actually come back in the projection, not just flip a flag.
+
+    The chunk lifecycle work derives its durable operation from the *resulting* head,
+    so a tombstone queues a delete and a restore queues an upsert.  This runs the real
+    ``IndexOperationWorker`` over both so the claim is proven end to end rather than
+    inferred from the mapping table.
+    """
+    from indexing.index_worker import IndexOperationWorker
+    from indexing.projection_handlers import ProjectionHandlers
+    from models.orm import Dataset, Tenant
+
+    engine, chunk_catalog, queue, ledger = _authority_state(tmp_path)
+    with Session(engine) as session:
+        tenant = session.get(Tenant, "tenant-1")
+        dataset = session.get(Dataset, "dataset-1")
+        assert tenant is not None and dataset is not None
+        tenant.chunk_count = dataset.chunk_count = 1
+        session.commit()
+    chunk_catalog.upsert_head(
+        chunk_id="chunk-1", tenant_id="tenant-1", dataset_id="dataset-1",
+        document_id="doc-1", parent_chunk_id=None, chunk_index=0, chunk_role="flat",
+        document_revision=2, source_content="original body", content="original body",
+    )
+
+    milvus, embedder, graph = FakeMilvus(), FakeEmbedder(), FakeGraph()
+    pipeline = SimpleNamespace(milvus=milvus, embedder=embedder, graph_builder=graph)
+    catalog_api = FakeCatalog()
+    monkeypatch.setattr("server.chunk_operations.cache_epoch.bump", lambda *_a, **_k: None)
+    monkeypatch.setattr("indexing.index_worker.cache_epoch.bump", lambda *_a, **_k: None)
+    handlers = ProjectionHandlers(
+        chunk_catalog=chunk_catalog, embedder=embedder, milvus=milvus, graph_builder=graph
+    )
+    worker = IndexOperationWorker(queue, handlers=handlers.as_mapping(), worker_id="w-restore")
+
+    def drain() -> int:
+        total = 0
+        for _ in range(8):
+            outcome = worker.run_once(limit=10)
+            if not outcome.claimed:
+                break
+            total += outcome.claimed
+        return total
+
+    def kwargs(**extra):
+        base = dict(
+            authority_mode="active", catalog_api=catalog_api, pipeline=pipeline,
+            chunk_catalog=chunk_catalog, operation_queue=queue, ledger=ledger,
+        )
+        base.update(extra)
+        return base
+
+    update_document_chunk_artifacts("doc-1", "chunk-1", "edited body", expected_revision=0, **kwargs())
+    assert drain() == 2
+    assert len(milvus.upserted) == 1
+    assert chunk_catalog.get_head("chunk-1").index_status == "ready"
+
+    delete_document_chunk_artifacts("doc-1", "chunk-1", expected_revision=1, **kwargs())
+    assert drain() == 2
+    assert milvus.deleted == [["chunk-1"]]
+    assert graph.deleted[-1] == (["chunk-1"], "tenant-1")
+    assert len(milvus.upserted) == 1, "停用不应重新写入投影"
+    tombstone = chunk_catalog.get_head("chunk-1")
+    assert tombstone.enabled is False
+    # 观察到的既有行为（非本切片引入，也未在本切片改动）：tombstone 的 delete 操作成功后
+    # ChunkHead 仍停在 index_status=pending / indexed_revision<desired，于是
+    # _projection 的 projection_pending 对"已成功停用"的切片永远报真。
+    # 语义上"投影里没有它"就是期望态，所以这更像对账口径问题而非写失败；
+    # 已登记 docs/compose/智能体交接审查.md §9，改它需要单独裁定。
+    assert tombstone.index_status == "pending"
+    # 本文件的 FakeCatalog 是记录型桩：set_document_status 只 append，不改 self.doc。
+    # 计数同步本身已在 tests/test_chunk_count_reconciliation.py 用持久化桩证过；
+    # 这里按真实 catalog 的行为把桩推进到下一步应有的状态，只 isolate 投影这一段。
+    catalog_api.doc["chunk_count"] = 0
+    catalog_api.doc["parser_meta"]["chunk_count"] = 0
+
+    restored = update_document_chunk_artifacts(
+        "doc-1", "chunk-1", "", enabled=True, reason="恢复误删", expected_revision=2, **kwargs()
+    )
+    assert len(restored.operation_ids) == 2
+    assert drain() == 2
+
+    head = chunk_catalog.get_head("chunk-1")
+    assert head.enabled is True
+    assert head.content_revision == 3 and head.edit_source == "restore"
+    assert head.chunk_metadata["edit_reason"] == "恢复误删"
+    assert head.index_status == "ready" and head.indexed_revision == head.desired_index_revision
+    # 恢复真的把向量与图谱写回去了，而不是只翻开一个标志位。
+    assert len(milvus.upserted) == 2
+    last_upsert = milvus.upserted[-1]
+    last_chunks = last_upsert[0] if isinstance(last_upsert, tuple) else last_upsert
+    assert [chunk.text for chunk in last_chunks] == ["edited body"]
+    assert graph.built[-1] == ([("chunk-1", "edited body")], "tenant-1")
+    engine.dispose()
+
+
 def test_parent_and_child_preserve_historical_document_and_quota_count_semantics(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
