@@ -53,6 +53,7 @@ from core.enterprise_tenant_idempotency import (
     tenant_request_hash,
 )
 from core.knowledge_governance import sanitize_audit_snapshot
+from core.quality_alert_types import ALERT_TYPES, derive_alert_type
 from core.release_quality_gate_states import gate_states_storage
 from models.orm import (
     Account,
@@ -81,17 +82,8 @@ _OBSERVATION_SEVERITIES = frozenset({"healthy", "warning", "critical", "unavaila
 # 校验对象是**库里的行**（见 :517 `str(row.gate_state)`），所以词表等于声明侧的存储集合。
 # 改之前这里还并列着 `passed` —— 那条 CHECK 存不进它，是个永不命中的死成员。
 _OBSERVATION_GATE_STATES = gate_states_storage()
-_ALERT_TYPES = frozenset(
-    {
-        "certification_expiring",
-        "certification_expired",
-        "certification_stale",
-        "waiver_expiring",
-        "waiver_expired",
-        "quality_gate_blocked",
-        "quality_authority_unavailable",
-    }
-)
+# 词表只有一份，在 core/quality_alert_types.py：派生规则与它由同一处栅栏对着存储 CHECK 对账。
+_ALERT_TYPES = ALERT_TYPES
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _COMMENT_SECRET_RE = re.compile(
     r"(?i)(?:"
@@ -1091,37 +1083,7 @@ def get_quality_alert(
 
 
 def _derive_alert_type(observation: DatasetReleaseQualityObservation) -> str:
-    reason = str(observation.gate_reason or "").strip().casefold()
-    if str(observation.severity) == "unavailable" or str(observation.gate_state) == "unavailable":
-        return "quality_authority_unavailable"
-    if reason in {"certification_stale", "stale_evidence", "certification_revoked"}:
-        return "certification_stale"
-    if reason == "certification_expired":
-        return "certification_expired"
-    if reason == "waiver_expired":
-        return "waiver_expired"
-    if reason == "waiver_expiring":
-        return "waiver_expiring"
-    if reason == "certification_expiring":
-        return "certification_expiring"
-    if str(observation.gate_state) == "blocked":
-        return "quality_gate_blocked"
-    if (
-        observation.certification_id is not None
-        and observation.minutes_to_certification_expiry is not None
-    ):
-        return (
-            "certification_expired"
-            if int(observation.minutes_to_certification_expiry) <= 0
-            else "certification_expiring"
-        )
-    if observation.waiver_id is not None and observation.minutes_to_waiver_expiry is not None:
-        return (
-            "waiver_expired"
-            if int(observation.minutes_to_waiver_expiry) <= 0
-            else "waiver_expiring"
-        )
-    return "quality_authority_unavailable"
+    return derive_alert_type(observation)
 
 
 def _observation_alert_severity(observation: DatasetReleaseQualityObservation) -> str:
