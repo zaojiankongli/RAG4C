@@ -137,9 +137,9 @@ export function navigationIntent(location: AppLocationLike, key: PageKey): Navig
   return keyOf(location.pathname) ? { mode: "history", url } : { mode: "hash", url };
 }
 
+/** 侧栏该高亮哪一项：只有"主导航里没有自己那一项"的子页面才折进父项。 */
 export function mainNavigationKey(page: PageKey): PageKey {
   if (page === "knowledge-base-workspace") return "knowledge-bases";
-  if (page === "notifications") return "enterprise";
   return page;
 }
 

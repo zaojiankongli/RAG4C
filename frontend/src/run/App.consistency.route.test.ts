@@ -4,13 +4,15 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+// 主导航清单单独成一份模块（`run/appNav.tsx`），可达性守卫直接读它，不必把整个 App 拖进来。
+const navSource = readFileSync(new URL("./appNav.tsx", import.meta.url), "utf8");
 
 describe("Consistency Console route registration", () => {
   it("lazy-loads the page and places consistency under Quality & Ops", () => {
     expect(source).toMatch(
       /const ConsistencyPage = lazy\(\(\) => import\("\.\/pages\/ConsistencyPage"\)\)/,
     );
-    const operationsGroup = source.match(
+    const operationsGroup = navSource.match(
       /label: "质量与运维",[\s\S]*?children: \[([\s\S]*?)\n\s*\],/,
     );
     expect(operationsGroup?.[1]).toContain('key: "consistency"');

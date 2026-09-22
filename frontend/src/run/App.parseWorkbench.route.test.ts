@@ -4,13 +4,15 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+// 主导航清单单独成一份模块（`run/appNav.tsx`），可达性守卫直接读它，不必把整个 App 拖进来。
+const navSource = readFileSync(new URL("./appNav.tsx", import.meta.url), "utf8");
 
 describe("解析干预 route registration", () => {
   it("lazy-loads the workbench page and puts the entry under 知识库", () => {
     expect(source).toMatch(
       /const ChunkWorkbenchPage = lazy\(\(\) => import\("\.\/pages\/ChunkWorkbenchPage"\)\)/,
     );
-    const knowledgeGroup = source.match(/label: "知识库",[\s\S]*?children: \[([\s\S]*?)\n\s*\],/);
+    const knowledgeGroup = navSource.match(/label: "知识库",[\s\S]*?children: \[([\s\S]*?)\n\s*\],/);
     expect(knowledgeGroup?.[1]).toContain('key: "parse-intervention"');
     expect(knowledgeGroup?.[1]).toContain('label: "解析干预"');
   });

@@ -7,10 +7,10 @@ import {
   ErrorTriangleFilledIcon, ErrorTriangleIcon, FileCodeIcon, FileExcelIcon, FileIcon, FilePdfIcon,
   FileSearchIcon, FileWordIcon, FlashlightIcon, FolderAddIcon, FolderOpenIcon, FullscreenIcon,
   GitBranchIcon,  InfoCircleIcon, LinkIcon, LoadingIcon, MapAimingIcon, MenuFoldIcon,
-  MenuUnfoldIcon, ChatMessageIcon, MinusCircleFilledIcon, MinusCircleIcon, MoonIcon, PauseCircleFilledIcon,
-  PauseCircleIcon, PlayCircleIcon, RefreshIcon, RocketIcon, RollbackIcon, SaveIcon, SearchIcon,
-  SecuredIcon, SendIcon, SettingIcon, StopCircleIcon, SunnyIcon, TagIcon, TreeRoundDotVerticalIcon,
-  UsergroupIcon, ViewListIcon,
+  MenuUnfoldIcon, ChatMessageIcon, MinusCircleFilledIcon, MinusCircleIcon, MoonIcon, NotificationIcon,
+  PauseCircleFilledIcon, PauseCircleIcon, PlayCircleIcon, RefreshIcon, RocketIcon, RollbackIcon,
+  SaveIcon, SearchIcon, SecuredIcon, SendIcon, SettingIcon, StopCircleIcon, SunnyIcon, TagIcon,
+  TreeRoundDotVerticalIcon, UsergroupIcon, ViewListIcon,
 } from "tdesign-icons-react";
 
 type IconComponent = React.ComponentType<any>;
@@ -26,6 +26,7 @@ export const ApartmentOutlined = alias(TreeRoundDotVerticalIcon);
 export const ApiOutlined = alias(ApiIcon);
 export const ArrowDownOutlined = alias(ArrowDownIcon);
 export const BarsOutlined = alias(ChartBarIcon);
+export const BellOutlined = alias(NotificationIcon);
 export const BranchesOutlined = alias(GitBranchIcon);
 export const CaretRightOutlined = alias(ViewListIcon);
 export const CheckCircleFilled = alias(CheckCircleFilledIcon);
