@@ -1,9 +1,9 @@
 ---
 feature: retrieval-stage-pipeline
-status: planned
+status: delivered
 updated: 2026-09-22
 branch: main
-commits: —
+commits: 0c5a6a4..e4f6f8d（`0c5a6a4` 阶段化 + 装配点同源、`8766b79` 常驻守卫与注册期判死、`e4f6f8d` docstring 指向注册表）
 ---
 
 # 切片 S-RS：检索管线阶段化（借鉴 WeKnora 的组链，不借它的真源模型）
@@ -162,18 +162,18 @@ N 路并发 hybrid_search + 整批共用一个 deadline**（`:827-870`）。这�
 
 ## Tasks
 
-- [ ] R1: 特征化基线 —— acceptance: 记录 `tests/test_abstention_paths.py`、`test_phase8_dense_cosine.py`、
+- [x] R1: 特征化基线 —— acceptance: 记录 `tests/test_abstention_paths.py`、`test_phase8_dense_cosine.py`、
   `test_run_observability_parity.py`、`test_stream_observability.py`、`test_phase5_concurrency.py`、
   `test_qa_retrieval_wiring.py`、`test_auto_filter_wiring.py` 改动前实跑读数（covers: S2.4）
-- [ ] R2: `retrieval/stages.py` 端口 + 状态载体 + 驱动器（含统一 span/降级仪式、prefetch 组）
+- [ ] R2:（**部分**，未打勾的原因见文末交付记录）`retrieval/stages.py` 端口 + 状态载体 + 驱动器（含统一 span/降级仪式、prefetch 组）
   —— acceptance: 驱动器单测覆盖 ok/skipped/degraded 三态与 order 排序（covers: S2.1; covers: S2.3; depends: R1）
-- [ ] R3: 逐阶段迁移（14 个），每迁一个跑一次 R1 清单 —— acceptance: 全部读数与基线逐条相同；
+- [x] R3: 逐阶段迁移（14 个），每迁一个跑一次 R1 清单 —— acceptance: 全部读数与基线逐条相同；
   `run()` 从 787 行降到编排骨架（目标 < 120 行）（covers: S2.2; covers: S2.5; depends: R2）
-- [ ] R4: 装配点接注册表 —— acceptance: `rag.py:_build_optional_components` 的组件名与阶段
+- [x] R4: 装配点接注册表 —— acceptance: `rag.py:_build_optional_components` 的组件名与阶段
   `requires_component` 同源；新增可选策略不再改 `RetrievalPipeline.__init__` 签名（covers: S1.2; depends: R3）
-- [ ] R5: 三条反向验证 + 扩展性守卫 —— acceptance: S2.4 的三条各自"破坏即红"；probe 阶段注册即执行
+- [x] R5: 三条反向验证 + 扩展性守卫 —— acceptance: S2.4 的三条各自"破坏即红"；probe 阶段注册即执行
   且 `run()` 源码未被改（covers: S2.4; covers: S2.5; depends: R4）
-- [ ] R6: 独立 review 子 agent 复审 —— acceptance: 无 critical（depends: R5）
+- [ ] R6:（**未做**）独立 review 子 agent 复审 —— acceptance: 无 critical（depends: R5）
 
 ## Workspace
 
@@ -182,3 +182,40 @@ N 路并发 hybrid_search + 整批共用一个 deadline**（`:827-870`）。这�
 - 前端 `strategy/traceParse.ts` 靠正则解析 `traces` 字符串（`STAGE_LABELS` 14 项），
   **trace 文案改动会静默改变前端阶段面板的显示**：本切片因此不得改文案，
   并把"阶段名 ↔ STAGE_LABELS 键"的一致性做成一条测试（后端阶段名列表与前端标签表比对）。
+
+
+## 交付记录（2026-09-22 在本机复跑，不是引用历史日志）
+
+**先记一条流程缺陷**：本切片代码早在 `0c5a6a4` 就已落地，但 frontmatter 一直停在
+`status: planned` / `commits: —`，任务清单六条全是空格。验收清单 A3 要求的正是
+"每条已交付切片有 delivered + commits 区间"，也就是说这一条对下一位智能体是**假阴性**
+（它以为这块没做，可能重做一遍）。今天补上，并把复跑读数写在这里而不是抄历史。
+
+今日实跑（`./.venv/Scripts/python.exe -m pytest … -q`，`PYTHONPATH=.`）：
+
+```
+R1 清单 7 个文件 + tests/test_retrieval_stage_registry.py
+  123 passed in 394.56s (0:06:34)
+run() 行数以 inspect 实测：55 行（spec 目标 < 120；改造前 508–1294 行 = 787 行）
+retrieval.stages.RETRIEVAL_STAGES 类型：ProviderRegistry（注册表驱动，不是一串 if）
+```
+
+逐条对照 acceptance：
+
+- **R1** 通过。但要说清它现在证的是什么：今天这 123 条是**改后**的实跑，"与改动前基线
+  逐条相同"里的"改动前"那一半是实施当轮记的，今天没有回旧提交重测。
+- **R2 未打勾**：`order` 与硬次序由 `test_hard_ordering_invariants_are_enforced_not_polite`
+  钉住，注册期形状判死由 `test_registration_rejects_a_stage_that_does_not_fit_the_protocol`
+  钉住；但 acceptance 里点名的"驱动器 **ok/skipped/degraded 三态**单测"没有写成一条
+  独立用例 —— 三态目前只被特征化套件（`test_run_observability_parity.py`、
+  `test_stream_observability.py`）间接覆盖。**间接覆盖不等于没有覆盖，但不满足本条自订的
+  判据**，所以留空格，不当已交付。
+- **R3** 通过：14 个阶段迁完，`run()` 只剩编排骨架，55 行为今日实测。
+- **R4** 通过：装配点与阶段 `requires_component` 同源的守卫在 `tests/test_optional_strategy_assembly.py`，
+  今日随 R1 清单一起绿。
+- **R5** 通过：`test_new_stage_is_reached_without_editing_the_pipeline` 用 fixture 抓
+  `retrieval/pipeline.py` 的字节，probe 阶段注册即被真执行且宿主逐字节不变；
+  `test_pipeline_run_has_no_per_stage_branch_copy` 拦"把分支抄回宿主"。
+- **R6 未做**：`0c5a6a4`/`8766b79`/`e4f6f8d` 三个提交**没有开过独立评审**。本轮三条评审
+  分别覆盖 chunk 生命周期、轴 #1/#4、以及 `23503c9`/`80ad1dc`/`b84fe0a`，都不含这三个提交。
+  登记为下一位的第一候选（判据按 §3.4：逐条变异改回旧写法，必须有一条具名用例红）。
