@@ -31,7 +31,7 @@ from indexing.state_machine import (
     assert_document_write_permit,
     read_document_write_permit,
 )
-from models.orm import ChunkRevision
+from models.orm import ChunkRevision, Dataset, Tenant
 from models.schemas import Chunk
 
 _MANUAL_ACTOR = "system:document-workbench"
@@ -219,7 +219,34 @@ def _mutate_authority_with_outbox(
     target_revision = int(doc.get("desired_index_revision") or doc.get("content_revision") or 0)
     with Session(chunk_catalog.engine, expire_on_commit=False) as session:
         with session.begin():
-            assert_document_write_permit(permit, session=session, for_update=True)
+            document, _dataset = assert_document_write_permit(
+                permit, session=session, for_update=True
+            )
+
+            def reconcile_chunk_count(actual: int) -> None:
+                # documents.chunk_count 是派生计数，ChunkHead 才是权威。两者不一致时在本
+                # 事务里按差量对齐（含租户 / 知识库聚合），而不是拒绝写入：fence 跑在写入
+                # 之前，一旦拒绝，漂移过的文档就永远走不到"写入后再对账"那条路，会被永久
+                # 锁死——连与计数无关的编辑也会被拒。真正的 incompleteness 信号是文档
+                # revision / 角色不匹配，上面已经拦下了。
+                # 这里不能改调 catalog.set_document_status：它另开 session，会和当前事务
+                # 已持有的 Document 行 FOR UPDATE 争同一把锁。
+                declared = int(document.chunk_count or 0)
+                if declared == actual:
+                    return
+                delta = actual - declared
+                document.chunk_count = actual
+                dataset_row = session.get(Dataset, document.dataset_id)
+                if dataset_row is not None:
+                    dataset_row.chunk_count = max(
+                        0, int(dataset_row.chunk_count or 0) + delta
+                    )
+                tenant_row = session.get(Tenant, document.tenant_id)
+                if tenant_row is not None:
+                    tenant_row.chunk_count = max(
+                        0, int(tenant_row.chunk_count or 0) + delta
+                    )
+
             try:
                 current = chunk_catalog.get_head(chunk_id, session=session, for_update=True)
             except ChunkRevisionConflict as exc:
@@ -240,19 +267,29 @@ def _mutate_authority_with_outbox(
             if verdict == "noop":
                 return _AuthorityMutation(current, (), False)
             if verify_completeness:
-                actual_count = chunk_catalog.count_document_heads(
-                    str(doc["id"]),
-                    document_revision=target_revision,
-                    enabled_only=True,
-                    session=session,
-                )
-                if actual_count != int(doc.get("chunk_count") or 0):
-                    raise ChunkAuthorityIncomplete(
-                        "document chunk authority is not complete for active mutation"
+                reconcile_chunk_count(
+                    chunk_catalog.count_document_heads(
+                        str(doc["id"]),
+                        document_revision=target_revision,
+                        enabled_only=True,
+                        session=session,
                     )
+                )
             if verdict == "reject":
                 raise ChunkRevisionConflict("chunk is tombstoned")
             head = verb.write(session, current, m, chunk_catalog)
+            if verify_completeness:
+                # 写入本身会改变启用头数（墓碑 / 恢复 / 回滚），同事务内落到权威值。
+                # 留到提交后再补写会开一个窗口：并发请求在窗口里读到旧计数并重新锁死，
+                # 而那次补写已经不再持有 Document 行的 FOR UPDATE。
+                reconcile_chunk_count(
+                    chunk_catalog.count_document_heads(
+                        str(head.document_id),
+                        document_revision=int(head.document_revision),
+                        enabled_only=True,
+                        session=session,
+                    )
+                )
             attempt = operation_queue.start_chunk_mutation_attempt(
                 tenant_id=str(head.tenant_id),
                 dataset_id=str(head.dataset_id),
@@ -931,22 +968,9 @@ def _apply_operator_mutation(
     )
     doc = outcome.doc or _document(m.doc_id, catalog_api=catalog_api)
     tenant_id = str(doc.get("tenant_id") or "")
-    if (
-        outcome.remaining_chunks is not None
-        and outcome.authority_changed
-        and int(outcome.remaining_chunks) != int(doc.get("chunk_count") or 0)
-    ):
-        # Reconcile the document's chunk_count with the authority after a verb that
-        # changes how many heads are enabled (restore, revert-to-disabled).  Left
-        # behind, a stale chunk_count makes active mode's completeness fence reject
-        # *every* later write on the document -- including edits to untouched chunks.
-        catalog_api.set_document_status(
-            m.doc_id,
-            str(doc.get("status") or "completed"),
-            detail="切片启停后按权威计数重算",
-            chunk_count=int(outcome.remaining_chunks),
-            parser_meta=dict(doc.get("parser_meta") or {}),
-        )
+    # chunk_count 与权威头数的对账已移进 _mutate_authority_with_outbox 的那个
+    # FOR UPDATE 事务里：提交后再补写既会开一个让并发请求读到旧计数的窗口，
+    # 又会从写入前的快照回灌 parser_meta。
     if tenant_id:
         cache_epoch.bump(tenant_id, reason=f"{epoch_reason} {m.chunk_id}")
     return ChunkUpdateResult(
@@ -1135,12 +1159,17 @@ def delete_document_chunk_artifacts(
         operation_queue=operation_queue,
     )
     if outcome.remaining_chunks is not None:
-        next_count = _update_document_after_delete(
-            doc_id=doc_id,
-            doc=doc,
-            catalog_api=catalog_api,
-            next_count=int(outcome.remaining_chunks),
-        )
+        # 权威计数照实回报，无论这次是否真的改了状态。
+        next_count = int(outcome.remaining_chunks)
+        if outcome.authority_changed:
+            _update_document_after_delete(
+                doc_id=doc_id,
+                doc=doc,
+                catalog_api=catalog_api,
+                next_count=next_count,
+            )
+        # 幂等重放的墓碑（目标状态已达成）不改权威，也就不该写删除审计计数——
+        # 否则重复一次 DELETE 就把 manual_chunk_deletes 加一、重戳时间。
     else:
         next_count = int(doc.get("chunk_count") or 0)
         if outcome.authority_changed:

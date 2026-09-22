@@ -1,15 +1,17 @@
-"""Active-mode chunk_count reconciliation.
+"""Active-mode chunk_count reconciliation against the ChunkHead authority.
 
 One active-mode tombstone used to leave ``documents.chunk_count`` behind while the
-enabled-head count dropped, and because active mode's completeness fence compares
-exactly those two numbers, *every* later chunk write on that document was rejected --
-including edits to chunks nobody had touched, and including the restore/revert verbs
-shipped in the same slice as this test.
+enabled-head count dropped.  The completeness fence compared exactly those two
+numbers *before* the write, so the drift locked the whole document out: every later
+chunk write on it was rejected -- including edits to chunks nobody had touched, and
+including the restore/revert verbs shipped in the same slice as this test.
 
-The wedge predates ``chunk-lifecycle-writers`` (active delete never updated the count),
-but those endpoints route through the same fence, so shipping them without this
-reconciliation would have made "this document ever had a chunk deleted" a permanent
-409 for its operator.
+The alignment now happens inside the writer's own ``FOR UPDATE`` transaction, both
+before the write (so a document that already drifted heals on its next write instead
+of staying 409 forever) and after it (so the count a concurrent request reads is
+never the pre-write one).  Tenant / dataset aggregates move by the same delta, which
+is what ``catalog.set_document_status`` does on its own path -- it cannot be called
+from inside this transaction without deadlocking on the row lock held here.
 """
 
 from __future__ import annotations
@@ -191,3 +193,45 @@ def test_consistent_counts_do_not_write_the_document_row(active_document) -> Non
     )
 
     assert catalog_api.status_calls == []
+
+
+def test_pre_existing_drift_heals_itself_instead_of_locking_the_document(
+    active_document,
+) -> None:
+    """漂移必须能自愈，不是只能预防。
+
+    计数对账若跑在完整性检查之后，已经漂移的文档就永远进不到那次写入：fence 先拒绝，
+    对账就永远不会发生。旧代码留下的正是这种文档——它们在这次修复上线之前就被锁死了。
+    """
+    engine, chunks, _catalog_api, kwargs = active_document
+    with Session(engine) as session:
+        session.get(Document, "doc-1").chunk_count = 5
+        session.commit()
+
+    edited = update_document_chunk_artifacts(
+        "doc-1", "chunk-B", "edited body", expected_revision=0, **kwargs
+    )
+
+    assert edited.chunk.content_revision == 1
+    assert _counts(engine, chunks) == (2, 2)
+
+
+def test_repeat_tombstone_does_not_inflate_the_manual_delete_audit(
+    active_document,
+) -> None:
+    """幂等重放不改权威，也就不该再写删除审计计数（不变量 5：审计只记真实改动）。"""
+    engine, _chunks, _catalog_api, kwargs = active_document
+    delete_document_chunk_artifacts("doc-1", "chunk-A", expected_revision=0, **kwargs)
+    with Session(engine) as session:
+        first = dict(session.get(Document, "doc-1").parser_meta or {})
+    assert first["manual_chunk_deletes"] == 1
+
+    repeated = delete_document_chunk_artifacts(
+        "doc-1", "chunk-A", expected_revision=1, **kwargs
+    )
+    with Session(engine) as session:
+        second = dict(session.get(Document, "doc-1").parser_meta or {})
+
+    assert repeated["remaining_chunks"] == 1
+    assert second["manual_chunk_deletes"] == 1
+    assert second["last_chunk_delete_at"] == first["last_chunk_delete_at"]
