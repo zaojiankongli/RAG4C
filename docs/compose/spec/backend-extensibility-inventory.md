@@ -1096,8 +1096,11 @@ clock 启发式之前 —— 否则"认证已过期且闸口受阻"的观察会�
 
 **行为等价的证据**（本仓 `_KNOWLEDGE_SERVING_ORIGINAL_*` 的老规矩：把旧实现冻结进测试当裁判）：
 `tests/test_quality_alert_type_derivation.py` 里 `_reference` 是重构前那条链的原样副本，与规则表在
-**5120 点网格**（4 severity × 5 gate_state × 10 reason，含大小写/空白/未知值 × 认证与豁免各有无 ×
-分钟数 {None,-5,0,5}）上逐点比对，且反向自查网格确实覆盖了全部 7 个类型。合跑 12 passed。
+**12800 点网格**（4 severity × 5 gate_state × 10 reason，含大小写/空白/未知值 × 认证与豁免各有无 ×
+分钟数 {None,-5,0,5}；第十二轮指出我先前写的 5120 是**算错了**——那个乘式怎么乘都不是 5120）上
+逐点比对，且反向自查网格确实覆盖了全部 7 个类型。合跑 12 passed。
+第十二轮另外独立核过 `_reference` 与 `git show f7c34d1:…::_derive_alert_type` **AST 与 token
+逐字相同**（157 tokens），所以"裁判没被抄错"这条不是我的自述。
 
 反向验证 5/5（预检 `8 passed`，跑完 `RESTORE-CHECK 8 passed`）：AM1 `gate_blocked` 挪到两条 clock
 之后 → 网格 + 次序 + 锚点三条红；AM2 声明表少一条 reason → 网格红；AM3 clock 的 `<=0` 改成 `<0`
@@ -1174,4 +1177,44 @@ reload 用例红；TM2 字面量类型退回手抄（少一员）→ 词表对�
 诚实边界：CHECK `orm.py:4980` 没动，**新增来源仍要一次 CHECK 迁移**；本轴剩下的行为站点
 （`enterprise_task_operations{,_service}.py` 里那 8 处成员判断与路由 dict）也还没合成
 `TaskSourceKindSpec`，派生只解决了"词表与上限不必抄第二遍"。
+
+## AE. 扩展轴 #12 的触发器那一半：适配器注册表成为唯一声明（本轮，无迁移）
+
+`core/enterprise_automation_workflows_service.py`。原先 `TRIGGER_ADAPTER_ORDER`（文件开头一个手写
+tuple）与 `TRIGGER_ADAPTER_REGISTRY`（文件末尾一个 dict）**平行维护**，加一个触发器要把两处改成
+一样；而唯一在核对它们一致的，是另一份测试里手抄的**第三份副本**
+（`tests/test_enterprise_automation_workflows_service.py:35` 的 `TRIGGERS`）—— 副本对副本，谁都不是
+权威。现在顺序由注册表派生，`_validate_trigger_codes` 两处也直接读注册表：留着读快照会出现"运行时
+注册的适配器只生效一半"（校验看得到、顺序看不到）。栅栏在
+`tests/test_automation_trigger_adapter_registry.py`（11 passed），对账对象是权威词表
+`AUTOMATION_TRIGGER_CODES` 而不是测试副本。
+
+零改分支判据用的是**运行时挂进注册表**（不需要 reload —— 这一处是活读 dict，与 §AD 那种导入期
+`Literal[tuple(...)]` 派生不同，判据写法也不同）。同时钉住一条事实：词表与注册表今天**等集**，
+所以"合法但没有适配器的 code 会被 `_validate_trigger_codes` 静默滤掉"这条路当前走不到；哪天不
+等集了，那条用例会给出处置方向（补适配器或在注册期拒），而不是让规则静默不触发。
+
+**两条我自己的用例一写出来就红，红的是我的写法而不是代码**：① 想扫"注册表之前不许再抄一份
+code 字面量"，但适配器自己的函数体本来就要写自己那个 code（`"task_failed"` 在文件里出现 3 次），
+按字面量扫整段文件头必然误报 —— 改成只查**声明形状**与"顺序声明只能有一处赋值"；② 想断言
+`_validate_trigger_codes` 不再读 `TRIGGER_ADAPTER_ORDER`，结果被我**自己为这件事写的注释**打中
+（注释里提到了那个名字）。断言得只看代码行，注释先剥掉。
+
+## AF. 第十二轮独立评审处置（VERDICT: PASS-WITH-FIXES）
+
+已独立确认为真（评审自己跑的，不是我自述）：`_reference` 与旧链 AST/token 逐字相同；网格取自
+`gate_states_storage()` 而非手抄；§D-7 的纠正是对的且 `info` 连前端订阅面板
+（`NotificationSubscriptionPanel.tsx:45,208`）都提供，动它确实会砍功能；`?? key` 可证死代码；
+`materializer.py:264` 不加运行时守卫的裁定被判**站得住**（该处 severity 恒为 alert.severity ∈
+{warning,critical}，:636 与 CHECK 双重拦）。
+
+已修的实质一条：`CORS_SIMPLE_RESPONSE_HEADERS` **漏了 `content-length`**（它确实在 Fetch 白名单里）。
+今天没有读它的人所以不报红，但那是将来某人读 `Content-Length` 时的一次假红 —— 白名单抄漏比抄多
+更危险，因为它失败的方向是"拦一个合法用法"。
+
+三条记为诚实边界，不当已解决：① 我在 §AB 与提交信息里写的"5120 点网格"是**算错**，实际 12800
+（乘式怎么算都不是 5120；等价用例不断言条数，所以结论覆盖的是超集）；② `ALERT_TYPE_RULES` 是公有
+可变 list，`register_alert_type_rule` 的次序纪律**只约束主动走它的调用方**，直接改列表不受管；
+③ `_derive_alert_type` 的回潮栅栏只扫那个函数的字面窗口，把字面量分支**上提到同级的另一个 helper**
+就扫不到（评审复现了）—— 它仍挡得住本来要防的"整段粘回来"，但别再说它封死了字面量分派。
 

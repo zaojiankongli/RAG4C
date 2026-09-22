@@ -17,8 +17,18 @@ APP = REPO / "server/app.py"
 FRONTEND = REPO / "frontend/src"
 
 # fetch 规范里"简单响应头"：不带 expose 也永远可读。
+# `content-length` 也在其中（第十二轮指出我漏了它）—— 少一条就是将来某个前端读
+# Content-Length 时被这条栅栏假红一次。
 CORS_SIMPLE_RESPONSE_HEADERS = frozenset(
-    {"cache-control", "content-language", "content-type", "expires", "last-modified", "pragma"}
+    {
+        "cache-control",
+        "content-length",
+        "content-language",
+        "content-type",
+        "expires",
+        "last-modified",
+        "pragma",
+    }
 )
 
 _READ_RE = re.compile(r"""headers\.get\(\s*["']([A-Za-z0-9-]+)["']""")
