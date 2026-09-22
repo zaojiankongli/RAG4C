@@ -55,7 +55,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 | 12 | 自动化 trigger/condition/action 码 | `enterprise_automation_workflows_api.py:225,233,241,556-563,568-598`；`service.py:68,2107-2291,2322,2307` | 3–4 | **是**（`orm.py:5588`） | openapi `:6371,6415` | `TRIGGER_ADAPTER_ORDER` 改为从注册表推导 |
 | 13 | 文档排序 `sort` / 游标耦合 | `core/catalog.py:1304-1312,1486,1628-1639` | 3 | 否 | openapi 枚举 `:8327,8330` + 前端字面量 | `SortSpec(sql_columns, keyset_capable)`，消掉 `:1639` 特例 |
 | 14 | PDF 分类 → 引擎路由 `pdf_type` | `parsers/router.py:84-124,138` | 2–3 | 否 | `parser_meta` 自由串 | 声明式表（值选外部形状 = Adapter） |
-| 15 | 就绪探测的方言证明 | `enterprise_readiness_api.py:499-505,514,518,540-556,580`、`knowledge_consistency_api.py:1180` | 4 | 否 | 否 | 每方言一份 spec（connect_args/mechanism/proof_sql） |
+| 15 | ~~就绪探测的方言证明~~ **本轮已完成**，见 §I | — | 0（注册即全认） | 否 | 否 | 已落 `core/read_only_dialects.py`；`knowledge_consistency_api.py:1180` 经核是**写事务栅栏**不是只读证明，刻意没并进来 |
 | 16 | 审计导出格式 | `enterprise_compliance_api.py:78`；`compliance.py:1087,1166,1225,1376-1379` | 4 | 否 | 否 | Strategy+Registry（可能性低，排最后） |
 
 **本轮之后仍为"待做"的原因**：5、6、8、9、10、12 六条要改数据库 CHECK → 按红线必须单独成切片；
@@ -242,3 +242,41 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 
 **评审还点名了两条刻意不动**：M6（关掉 local_dir 的本地重复检查仍全绿，但内核照样拒，
 判为良性）；`resolve_run_event_type` 对未知类型继续 fail-soft（改前改后都不抛，§A 已记）。
+
+## I. 轴 #15（只读证明的方言表）落地记录
+
+`server/enterprise_readiness_api.py` 原先把"怎么把连接开成只读"和"怎么证明它是只读"
+写成两份手写清单：`prove_read_only_engine` 里一张 `backend -> mechanism` 字典 + 一条
+`if backend == "postgresql"` / mysql 两条语句的 ladder，`_non_sqlite_read_only_engine_options`
+里又一串 `if backend == ...`。加一种方言要改的正是**决定"能不能对现网声称只读"的那个函数**，
+而那里最危险的错法是静默的：字典里没有这条方言时 `expected_mechanism` 是 `None`，
+旧代码用 `!=` 比较所以是 fail-closed，可一次不留神的改写就会把它变成"证明不了 = 证明得了"。
+
+现在是一张声明表 `core/read_only_dialects.py`：`ReadOnlyDialectSpec(dialect, mechanism,
+connect_args, live_probe_required, proof_statements, accepted_values)`。三条刻意的形状选择：
+
+- **一份存储、精确拼写查表**。没有再挂 `ProviderRegistry` 内核（轴 #2 那次"两个存储不同步"
+  的真缺陷在这里根本不存在）；`resolve_read_only_dialect` 只认 SQLAlchemy 自己那个小写的
+  `dialect.name`，未注册一律 `None`，两个调用点都必须把 `None` 当作"证明不了"。
+- **`connect_args` 空的声明不构成"开得出只读连接"**。靠 URI 证明自己的 sqlite 走的是
+  另一条（重写 URL）路径，所以它在证明侧有声明、在开连接侧仍返回 `unsupported`。
+  这条限制写在代码注释里，**没有**假装表能表达一切：要支持"改 URL 才算只读"的方言，
+  还得给 spec 加一种 URL 重写形状，那是独立一次设计。
+- **MySQL 两条探测语句的顺序是契约**（现代名在前、`tx_read_only` 兜底在后），所以按字面钉住。
+
+判据与门禁读数（本机 `.venv`，`PYTHONPATH=.`）：
+
+- 新守卫 `tests/test_read_only_dialect_registry.py`：**16 条**，走真行为 —— 注册一种
+  `probekind` 方言后，宿主的 `prove_read_only_engine` 与 `_non_sqlite_read_only_engine_options`
+  立刻认它（机制对得上+服务端答 yes → True；机制错 → False；答 no → False），
+  而 `server/enterprise_readiness_api.py` **逐字节不变**。
+- 行为等价（判据 §3.3，未改任何断言）：`tests/test_enterprise_readiness_api.py` 93 条 +
+  `tests/test_enterprise_automation_workflows_readiness.py` 29 条 + 新守卫 16 条 =
+  **138 passed in 156.50s**；`ruff check .` 全仓通过。
+- 反向验证（§3.4，脚本与输出都放在仓外 `%TEMP%ag4c-verify`）：8 个变异各自 turn 红 ——
+  未注册方言改成"证明不了就算证明"（2 红）、宿主退回手写清单（2 红，其中一条是宿主守卫）、
+  只删 `isinstance` 检查（1 红）、整个形状校验提前 return（7 红）、撤回不归一键名（1 红）、
+  MySQL 两语句颠倒（2 红）、开引擎丢掉声明的 connect_args（1 红）。
+  **第一轮有一个变异逃逸**：我只删了 `_validate_spec` 的 `isinstance` 分支却全绿 ——
+  因为当时没有任何用例去注册一个非 spec 对象。补了 `test_only_a_real_declaration_can_be_registered`
+  之后同一变异转红。这正是判据 §3.4 说的"破坏了要能说清哪条用例红"，而不是"我写了守卫"。

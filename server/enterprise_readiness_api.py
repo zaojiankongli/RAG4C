@@ -16,6 +16,7 @@ from fastapi import APIRouter, FastAPI, Response, status
 from pydantic import BaseModel, ConfigDict
 
 from config.settings import get_settings
+from core.read_only_dialects import resolve_read_only_dialect
 from core.catalog_schema import (
     CatalogSchemaState,
     DATASET_ACL_CONTROL_ISSUE_FRAGMENTS,
@@ -477,8 +478,6 @@ _ALL_CAPABILITY_GROUPS = tuple(capability.key for capability in _CAPABILITIES)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _READ_ONLY_PROOF_ATTRIBUTE = "_rag4c_read_only_proof"
-_POSTGRES_READ_ONLY_OPTIONS = "-c default_transaction_read_only=on"
-_MYSQL_READ_ONLY_INIT_COMMAND = "SET SESSION TRANSACTION READ ONLY"
 
 
 def _attach_read_only_proof(engine: Any, proof: ReadOnlyEngineProof) -> Any:
@@ -498,35 +497,25 @@ def prove_read_only_engine(engine: Any) -> bool:
 
     proof = getattr(engine, _READ_ONLY_PROOF_ATTRIBUTE, None)
     backend = str(getattr(getattr(engine, "dialect", None), "name", "")).lower()
-    expected_mechanism = {
-        "sqlite": "sqlite-uri-mode-ro",
-        "postgresql": "postgresql-default-transaction-read-only",
-        "mysql": "mysql-session-transaction-read-only",
-        "mariadb": "mysql-session-transaction-read-only",
-    }.get(backend)
+    spec = resolve_read_only_dialect(backend)
     if (
-        not isinstance(proof, ReadOnlyEngineProof)
+        spec is None
+        or not isinstance(proof, ReadOnlyEngineProof)
         or proof.guaranteed is not True
         or proof.dialect != backend
-        or proof.mechanism != expected_mechanism
+        or proof.mechanism != spec.mechanism
     ):
         return False
-    if backend == "sqlite":
+    if not spec.live_probe_required:
         return True
     try:
         with engine.connect() as connection:
-            if backend == "postgresql":
-                value = connection.scalar(text("SHOW transaction_read_only"))
-                return str(value or "").strip().casefold() in {"on", "true", "1"}
-            for statement in (
-                "SELECT @@session.transaction_read_only",
-                "SELECT @@session.tx_read_only",
-            ):
+            for statement in spec.proof_statements:
                 try:
                     value = connection.scalar(text(statement))
-                    return str(value or "").strip().casefold() in {"on", "true", "1"}
                 except Exception:
                     continue
+                return str(value or "").strip().casefold() in spec.accepted_values
     except Exception:
         return False
     return False
@@ -537,32 +526,18 @@ def _non_sqlite_read_only_engine_options(
 ) -> tuple[dict[str, Any], ReadOnlyEngineProof]:
     backend = str(parsed_url.get_backend_name()).lower()
     common = {"pool_pre_ping": True, "pool_recycle": 3600}
-    if backend == "postgresql":
-        return (
-            {
-                **common,
-                "connect_args": {"options": _POSTGRES_READ_ONLY_OPTIONS},
-            },
-            ReadOnlyEngineProof(
-                dialect="postgresql",
-                mechanism="postgresql-default-transaction-read-only",
-            ),
+    spec = resolve_read_only_dialect(backend)
+    # "能开出只读连接"和"能证明它只读"是同一件事：一张没有 connect_args 的声明（比如靠
+    # URI 证明自己的 sqlite）在这里不构成机制，宁可报 unsupported。
+    if spec is None or not spec.connect_args:
+        return common, ReadOnlyEngineProof(
+            dialect=backend,
+            mechanism="unsupported",
+            guaranteed=False,
         )
-    if backend in {"mysql", "mariadb"}:
-        return (
-            {
-                **common,
-                "connect_args": {"init_command": _MYSQL_READ_ONLY_INIT_COMMAND},
-            },
-            ReadOnlyEngineProof(
-                dialect=backend,
-                mechanism="mysql-session-transaction-read-only",
-            ),
-        )
-    return common, ReadOnlyEngineProof(
-        dialect=backend,
-        mechanism="unsupported",
-        guaranteed=False,
+    return (
+        {**common, "connect_args": dict(spec.connect_args)},
+        ReadOnlyEngineProof(dialect=backend, mechanism=spec.mechanism),
     )
 
 
