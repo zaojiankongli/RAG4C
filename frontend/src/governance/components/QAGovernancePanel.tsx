@@ -66,6 +66,10 @@ export interface QAGovernancePanelProps {
   exportQA?: (format: QAExportFormat) => Promise<string | null>;
   truncated?: boolean;
   readOnly?: boolean;
+  /** 一致性/QA 权威深链命中的行 id：由 hook 翻到其所在页后标记，非视觉信号供定位确认。 */
+  focusedQaId?: string | null;
+  /** 深链目标不在当前结果中时的可见提示（不把别的行冒充成命中）。 */
+  deepLinkNotice?: string | null;
 }
 
 const reviewOptions = [
@@ -246,8 +250,13 @@ export default function QAGovernancePanel(props: QAGovernancePanelProps) {
       title: "问题与答案",
       width: 320,
       cell: ({ row }) => (
-        <div className="governance-qa-copy">
+        <div className="governance-qa-copy" data-deep-link={row.id === props.focusedQaId ? "true" : undefined} aria-current={row.id === props.focusedQaId ? "true" : undefined}>
           <strong>{row.question}</strong>
+          {row.id === props.focusedQaId ? (
+            <Tag color="primary" variant="light" className="governance-deep-link-tag">
+              深链定位
+            </Tag>
+          ) : null}
           <p>{row.answer}</p>
           <small>
             Revision {row.revision}
@@ -306,7 +315,7 @@ export default function QAGovernancePanel(props: QAGovernancePanelProps) {
       },
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [globalBusy, props.readOnly, props.review, props.restore, props.expire, selectedIds]);
+  ], [globalBusy, props.readOnly, props.review, props.restore, props.expire, selectedIds, props.focusedQaId]);
 
   const closeEditor = () => {
     setEditingId(null);
@@ -318,6 +327,7 @@ export default function QAGovernancePanel(props: QAGovernancePanelProps) {
   return (
     <section aria-labelledby="qa-governance-heading" className="governance-section">
       {props.truncated ? <Alert theme="warning" title="结果可能被截断" message="后端最多返回 500 条 QA，请使用筛选缩小范围。" /> : null}
+      {props.deepLinkNotice ? <Alert theme="warning" title="深链定位失败" message={props.deepLinkNotice} operation={<Button size="small" variant="outline" aria-label="清除 QA 筛选以尝试定位" onClick={clearFilters}>清除筛选</Button>} /> : null}
       {props.error ? <Alert theme={props.error.kind === "conflict" ? "warning" : "error"} title={props.error.title} message={props.error.description} operation={props.error.canRetry ? <Button size="small" variant="outline" onClick={() => void props.refresh()}><RefreshIcon /> 刷新 QA</Button> : undefined} /> : null}
       {batchAlert ? (
         <Alert

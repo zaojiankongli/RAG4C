@@ -1,7 +1,7 @@
 import "../governance/governance.css";
 import { Button, Tag } from "tdesign-react";
 import { ControlPlatformIcon, RefreshIcon } from "tdesign-icons-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import PageState from "../components/PageState";
 import AuthRecoveryHint from "../components/AuthRecoveryHint";
 import PageTopbar from "../components/PageTopbar";
@@ -12,6 +12,7 @@ import QAGovernancePanel from "../governance/components/QAGovernancePanel";
 import { useDatasetGovernance } from "../governance/hooks/useDatasetGovernance";
 import { useDocumentVersions } from "../governance/hooks/useDocumentVersions";
 import { useQAGovernance } from "../governance/hooks/useQAGovernance";
+import { parseGovernanceQaDeepLink } from "../run/appRoute";
 import {
   GovernanceScopeError,
   projectGovernanceError,
@@ -44,13 +45,27 @@ export default function KnowledgeGovernancePage({ embedded = false }: { embedded
   const tenantId = workspace.scope.tenantId;
   const datasetId = workspace.scope.datasetId;
   const actorToken = readKnowledgeActorToken();
+  // 证据/一致性面板点入治理面时带 `#/governance?qa=<id>`；这里读取并随 hash 变化更新，
+  // 交给 QA hook 做定位（翻到目标所在页），不再展示裸列表。
+  const [qaDeepLink, setQaDeepLink] = useState<string>(() =>
+    typeof window === "undefined" ? "" : parseGovernanceQaDeepLink(window.location).qaId,
+  );
+  useEffect(() => {
+    const onLocation = () => setQaDeepLink(parseGovernanceQaDeepLink(window.location).qaId);
+    window.addEventListener("popstate", onLocation);
+    window.addEventListener("hashchange", onLocation);
+    return () => {
+      window.removeEventListener("popstate", onLocation);
+      window.removeEventListener("hashchange", onLocation);
+    };
+  }, []);
   const resolved = useMemo(
     () => authenticatedScope({ tenantId, datasetId }, actorToken),
     [tenantId, datasetId, actorToken],
   );
   const dataset = useDatasetGovernance(resolved.scope, online);
   const datasetStatus = dataset.profile?.status ?? null;
-  const qa = useQAGovernance(resolved.scope, online, datasetStatus);
+  const qa = useQAGovernance(resolved.scope, online, datasetStatus, qaDeepLink || null);
   const versions = useDocumentVersions(resolved.scope, online, datasetStatus);
 
   const topbar = embedded ? null : (

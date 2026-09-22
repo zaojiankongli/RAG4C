@@ -327,6 +327,34 @@ describe("QAGovernancePanel", () => {
     expect(within(row).queryAllByRole("button")).toHaveLength(0);
   });
 
+  it("marks the deep-linked row as located without touching other rows", () => {
+    render(<QAGovernancePanel {...props()} focusedQaId="qa-pending" />);
+    const focused = screen.getByRole("row", { name: /How is access approved/ });
+    expect(within(focused).getByText("深链定位")).toBeTruthy();
+    const copy = focused.querySelector('[data-deep-link="true"]');
+    expect(copy).not.toBeNull();
+    expect(copy?.getAttribute("aria-current")).toBe("true");
+    const other = screen.getByRole("row", { name: /Old policy/ });
+    expect(within(other).queryByText("深链定位")).toBeNull();
+    expect(other.querySelector('[data-deep-link="true"]')).toBeNull();
+  });
+
+  it("surfaces a visible notice when the deep-linked QA cannot be located", async () => {
+    const setFilters = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <QAGovernancePanel
+        {...props({ focusedQaId: null, deepLinkNotice: "深链指向的 QA qa-gone 不在当前结果中。" })}
+        setFilters={setFilters}
+      />,
+    );
+    const alert = await screen.findByText("深链定位失败");
+    expect(alert).toBeTruthy();
+    expect(screen.getByText(/qa-gone 不在当前结果中/)).toBeTruthy();
+    await user.click(screen.getByLabelText("清除 QA 筛选以尝试定位"));
+    expect(setFilters).toHaveBeenCalledWith({});
+  });
+
 
   it("associates invalid QA dates with the active dialog fields", async () => {
     const user=userEvent.setup(); render(<QAGovernancePanel {...props()} />); await user.click(screen.getByRole("button",{name:"新建 QA"}));

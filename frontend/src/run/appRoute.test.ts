@@ -1,5 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { mainNavigationKey, navigationIntent, parsePageLocation } from "./appRoute";
+import {
+  mainNavigationKey,
+  navigationIntent,
+  parseGovernanceQaDeepLink,
+  parsePageLocation,
+} from "./appRoute";
+
+describe("governance QA deep link", () => {
+  it("reads the qa id from both hash and history forms of the governance route", () => {
+    expect(
+      parseGovernanceQaDeepLink({ pathname: "/", search: "", hash: "#/governance?qa=qa-faq-1&dataset=ds-1" }),
+    ).toEqual({ qaId: "qa-faq-1" });
+    expect(
+      parseGovernanceQaDeepLink({ pathname: "/governance", search: "?qa=qa-faq-2", hash: "" }),
+    ).toEqual({ qaId: "qa-faq-2" });
+  });
+  it("yields no qa id for a bare governance link or an unrelated page", () => {
+    expect(parseGovernanceQaDeepLink({ pathname: "/", search: "", hash: "#/governance" })).toEqual({ qaId: "" });
+    expect(
+      parseGovernanceQaDeepLink({ pathname: "/", search: "", hash: "#/documents?qa=qa-1" }),
+    ).toEqual({ qaId: "" });
+  });
+});
 
 describe("app route parser", () => {
   it("opens direct and hash visualize deep links without treating query as page key", () => {

@@ -25,6 +25,7 @@ beforeEach(() => vi.resetAllMocks());
 
 describe("useQAGovernance", () => {
   it("loads at most 500 filtered facts and exposes ten rows per client page", async () => {
+
     const items = Array.from({ length: 21 }, (_, index) => qa(index));
     vi.mocked(api.fetchQAList).mockResolvedValue({ items, count: 21 });
     const { result } = renderHook(() => useQAGovernance(scope, true));
@@ -178,5 +179,49 @@ describe("useQAGovernance", () => {
     });
     expect(api.exportQA).toHaveBeenCalledWith(scope, { limit: 500 }, "json");
     expect(exported).toBe('{"items":[],"count":0}');
+  });
+});
+
+describe("useQAGovernance 一致性/QA 权威深链定位", () => {
+  it("把落在首页之外的深链 QA 翻到它所在的那一页并标记为定位行", async () => {
+    const items = Array.from({ length: 21 }, (_, index) => qa(index));
+    vi.mocked(api.fetchQAList).mockResolvedValue({ items, count: 21 });
+    const { result } = renderHook(() => useQAGovernance(scope, true, "active", "qa-15"));
+
+    await waitFor(() => expect(result.current.focusedQaId).toBe("qa-15"));
+    expect(result.current.page).toBe(2);
+    expect(result.current.pageItems.map((item) => item.id)).toContain("qa-15");
+    expect(result.current.deepLinkNotice).toBeNull();
+  });
+
+  it("深链目标不在已载入结果中时给出可见提示，不把别的行冒充成它", async () => {
+    const items = Array.from({ length: 21 }, (_, index) => qa(index));
+    vi.mocked(api.fetchQAList).mockResolvedValue({ items, count: 21 });
+    const { result } = renderHook(() => useQAGovernance(scope, true, "active", "qa-does-not-exist"));
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.focusedQaId).toBeNull();
+    expect(result.current.deepLinkNotice).toContain("qa-does-not-exist");
+    expect(result.current.page).toBe(1);
+  });
+
+  it("命中第一页时不额外翻页，但仍标记定位行", async () => {
+    const items = Array.from({ length: 21 }, (_, index) => qa(index));
+    vi.mocked(api.fetchQAList).mockResolvedValue({ items, count: 21 });
+    const { result } = renderHook(() => useQAGovernance(scope, true, "active", "qa-3"));
+
+    await waitFor(() => expect(result.current.focusedQaId).toBe("qa-3"));
+    expect(result.current.page).toBe(1);
+  });
+
+  it("无深链参数时不定位、不提示，列表行为与既有一致", async () => {
+    const items = Array.from({ length: 21 }, (_, index) => qa(index));
+    vi.mocked(api.fetchQAList).mockResolvedValue({ items, count: 21 });
+    const { result } = renderHook(() => useQAGovernance(scope, true, "active", null));
+
+    await waitFor(() => expect(result.current.items).toHaveLength(21));
+    expect(result.current.focusedQaId).toBeNull();
+    expect(result.current.deepLinkNotice).toBeNull();
+    expect(result.current.page).toBe(1);
   });
 });

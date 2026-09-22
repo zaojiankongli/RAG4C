@@ -61,6 +61,26 @@ const ENTERPRISE_KNOWLEDGE_BASE_WORKSPACE_PATH = "/enterprise/knowledge-base";
  */
 export const PARSE_INTERVENTION_PATH = "/parse-intervention";
 export const LEGACY_PARSE_INTERVENTION_PATH = "/documents/parse";
+/** 治理面 shell 路由（`PAGE_KEYS.governance`）；QA 权威深链 `#/governance?qa=…` 挂在这条路径上。 */
+export const GOVERNANCE_PATH = "/governance";
+
+/** 治理面 QA 深链解析结果：`qaId` 已 trim，缺省为空串（调用方据此判定"无深链"）。 */
+export interface ParsedGovernanceQaDeepLink {
+  qaId: string;
+}
+
+/**
+ * 解析一致性/证据面板点入治理面时携带的 QA 权威深链 `#/governance?qa=<id>`
+ * （history 与 #hash 两种形态都解析，与切片工作区深链同一惯例）。只取 `qa`：
+ * `dataset` 半段由 `workspaceScope.readKnowledgeDatasetIdFromLocation` 负责预筛选，
+ * 这里不重复认领，避免同一参数两处口径。落在非治理路径或无 `qa` 时返回空串。
+ */
+export function parseGovernanceQaDeepLink(
+  location: AppLocationLike,
+): ParsedGovernanceQaDeepLink {
+  const params = workbenchParamsAt(location, GOVERNANCE_PATH);
+  return { qaId: params?.get("qa")?.trim() ?? "" };
+}
 
 export interface ChunkWorkbenchParams {
   docId: string;

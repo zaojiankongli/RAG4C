@@ -381,6 +381,17 @@
   font-family: var(--font-mono);
 }
 
+.governance-deep-link-tag {
+  justify-self: start;
+}
+
+.governance-qa-copy[data-deep-link="true"] {
+  box-shadow: inset 3px 0 0 var(--color-primary);
+  background: var(--color-primary-bg);
+  padding-left: 8px;
+  border-radius: 4px;
+}
+
 .governance-row-actions {
   flex-wrap: nowrap;
   white-space: nowrap;

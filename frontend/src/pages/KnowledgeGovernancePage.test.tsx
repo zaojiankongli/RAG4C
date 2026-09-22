@@ -47,7 +47,8 @@ const versionHook = {
 };
 
 vi.mock("../governance/hooks/useDatasetGovernance", () => ({ useDatasetGovernance: () => datasetHook }));
-vi.mock("../governance/hooks/useQAGovernance", () => ({ useQAGovernance: () => qaHook }));
+const qaHookSpy = vi.fn((..._args: unknown[]) => qaHook);
+vi.mock("../governance/hooks/useQAGovernance", () => ({ useQAGovernance: (...args: unknown[]) => qaHookSpy(...args) }));
 vi.mock("../governance/hooks/useDocumentVersions", () => ({ useDocumentVersions: () => versionHook }));
 
 import KnowledgeGovernancePage from "./KnowledgeGovernancePage";
@@ -97,6 +98,23 @@ describe("KnowledgeGovernancePage", () => {
   it("suppresses its standalone PageTopbar in embedded content-only mode", () => {
     render(<KnowledgeGovernancePage embedded />);
     expect(screen.queryByRole("heading", { name: "知识治理" })).toBeNull();
+  });
+
+  it("threads the #/governance?qa= deep link into the QA hook so the target is located, not a bare list", () => {
+    const previousHash = window.location.hash;
+    window.location.hash = "#/governance?qa=qa-faq-9&dataset=dataset-a";
+    qaHookSpy.mockClear();
+    try {
+      render(<KnowledgeGovernancePage />);
+    } finally {
+      window.location.hash = previousHash;
+    }
+    expect(qaHookSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ datasetId: "dataset-a" }),
+      true,
+      "active",
+      "qa-faq-9",
+    );
   });
 
 });
