@@ -25,8 +25,8 @@ retrieval 12/4606、models 3/9344、config 2/1473；字面量等值分派点 247
 | 对象存储 provider | 声明式规格表 `StorageProviderSpec` | `tests/test_storage_provider_registry.py`（7 条） |
 | 检索阶段 + 可选策略 | Strategy+Registry+Template Method+Adapter | `tests/test_retrieval_stage_registry.py`（6 条，含宿主文件逐字节不变） |
 | **SQL 方言（本轮新增）** | 声明式规格表 `DialectSpec` + 失败即抛 | `tests/test_dialect_registry.py`（8 条） |
-| **文档类型 ↔ 能力（本轮新增）** | 声明式规格表 `DocTypeSpec`，四处消费点实时查表 | `tests/test_doc_type_registry.py`（14 条，含宿主快照守卫 + 4 路反向验证） |
-| **provider 三家族（本轮新增守卫）** | 已是 `ProviderRegistry`，本轮补判据 | `tests/test_provider_registry_extensibility.py`（33 条，14 宿主逐字节不变） |
+| **文档类型 ↔ 能力（本轮新增）** | 声明式规格表 `DocTypeSpec`，五个消费点实时查表 | `tests/test_doc_type_registry.py`（18 条，含 5 路反向验证 + 宿主逐字节不变） |
+| **provider 三家族（本轮新增守卫）** | 已是 `ProviderRegistry`，本轮补判据 | `tests/test_provider_registry_extensibility.py`（33 条，15 个宿主文件逐字节不变） |
 | **来源连接器 kind（本轮新增）** | 注册表持有 `config_model` + `preflight`，HTTP 层按 kind 派发 | `tests/test_source_kind_registry.py`（10 条，含 4 路反向验证） |
 
 `core/embedding.py` / `core/llm.py` / `core/reranker.py` 经核实**本就已经到位**：
@@ -87,15 +87,22 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 1. **授权路径 fail-open**：`capability_state` 无声明集合、三处手写谓词不一致，
    `enterprise_access_control.py:254` 只判 `== "unavailable"` 才 raise，
    任何第四种状态会**直接落进** `evaluate_workspace_authorization`。修法是共享分类器 + `raise` 兜底。
-2. **`.html` 解析成功却被贴错标签** —— **已修**：`indexing/doc_types.py` 登记了
-   `html (.html/.htm)`，`resolved_doc_type` 不再落回文本启发式；它仍不能免 parser 直读、
-   仍落 ParagraphStrategy，除标签外行为逐字不变（`test_html_is_labelled_honestly...` 钉住）。
+2. **`.html` 解析成功却被贴错标签** —— **核实不成立，已按原行为留住**。本表的
+   `resolved_doc_type` 只喂 `_segment` 与切分路由，**落库那份 doc_type 走别的路**
+   （`server/documents.py` 用请求里的 `doc_type`，`sources/runner.py` 用裸后缀），
+   所以"标成 txt"没有 observable 面。反过来，把 `.html` 登记进表**会真的改切分**：
+   过去查不到 doc_type → 落回文本启发式（解析产物是带 `#` 的 Markdown）→
+   MarkdownStrategy；登记后变 ParagraphStrategy。实测同一份 HTML 从 2 段变 1 段。
+   那不是修缺陷而是换契约，所以 `.html` 明确不登记，理由写在
+   `test_html_is_deliberately_absent_because_registering_it_would_recut`。
+   顺带浮出的真缺陷另立新一条，见 §D-13。
 3. **真 CSV 根本入不了库，qa 切分模式因此是死的** —— **已修**。普查只看到"路由到 qa 但没人
    产 `doc_type="csv"`"，实际更糟：`.csv` 既不在 `SUPPORTED_EXTENSIONS`（MinerU 与 docling 都
    不认领），也不在 `_PLAINTEXT_EXTENSIONS`，而 `sources/runner.py:759` 调 `add_file` 时**不传
-   doc_type** → 一条 CSV 直接 `IngestError`。修法是让 `.csv` 同时进「扩展名→doc_type」与
-   「免 parser 直读」两侧，`chunking_router` 那条早就写好的 qa 路由活了。
-   这是本轮唯一的**入库结果变化**：CSV 过去会失败，现在按逐行 QA 对切。
+   doc_type** → 一条 CSV 直接 `IngestError`；`server/documents.py:78` 那份文件夹导入清单同样
+   没有 `.csv`，所以 UI 上传路径把它算成 unsupported。修法是让 `.csv` 同时进
+   「扩展名→doc_type」与「免 parser 直读」两侧，并把那份清单改成这张表的投影。
+   这是本轮唯一的**入库结果变化**：CSV 过去两条路都失败，现在按逐行 QA 对切。
    另两处 parser 边界顺带修好：`_validate_file` 改问 `self.supports()`（不再拿 MinerU
    的清单当全管线闸门），`.text` 的不对称（可读但不产 doc_type）如实保留而不是顺手统一。
 4. **approver_kind 未知值两套策略**：`materializer.py:356` raise，`receipts.py:466-490` 没有 `else`
@@ -119,12 +126,21 @@ reranker 要处理 HTTP 状态，共性只有名字）。
     硬编码 `state_mode="database"` 绕过设置。
 11. **`risk_tier {low,medium,high}` 写三遍**且抛不同异常类型。
 12. **通知 `source_kind` 不在 OpenAPI 也不在前端类型里**：契约层对它是瞎的，加 kind 抓不到。
+13. **落库的 doc_type 词汇与管线词汇不一致**（做 §D-2 时浮出，**未修**）：
+    `sources/runner.py:798` 用 `suffix.lstrip(".").lower()` 直接当 doc_type（于是写下
+    `md` / `docx` / `xlsx`），而入库管线内部用的是这张表的名字（`markdown` / `word` /
+    `excel`）。`server/documents.py:1315` 的重索引又把这个落库值当 `doc_type` 传回管线 ——
+    等于绕过这张表，且 `md` 与 `markdown` 会选到不同策略（实测：`strategy_for("md")` 是
+    ParagraphStrategy，`strategy_for("markdown")` 才是 MarkdownStrategy，所以一份由
+    源同步进来的 markdown 文档，重一次索引切法就变了）。
+    修法应是 `doc_type_for_extension(suffix)` 一处换，但它会改掉**已入库文档**重索引后的
+    切分方式，属于迁移语义，需要单独切片与决定，不要顺手改。
 
 ## E. 判据覆盖缺口 —— 本轮已补
 
 `tests/` 里曾没有任何测试引用 `EMBEDDING_PROVIDERS` / `LLM_PROVIDERS` / `RERANKER_PROVIDERS`
 （grep 零命中）。现在 `tests/test_provider_registry_extensibility.py`（33 条）覆盖三家族：
-注册探针即经 `create_*` 本身可选 + 14 个宿主文件逐字节不变、重复登记拒绝、注册期形状检查、
+注册探针即经 `create_*` 本身可选 + 15 个宿主文件逐字节不变、重复登记拒绝、注册期形状检查、
 `available:` 清单由注册表派生、AST 扫描"模块内不得按 provider 名分支"、
 `config/settings.py` 注释里的声明集合等于注册表。`scripts/smoke_providers.py` 早就在测这些事实，
 但它在 `testpaths=["tests"]` 之外 —— 那正是 §E 当时无人 enforcing 的机械原因。
@@ -133,3 +149,36 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 出现在 `rag.py`，但图谱装配早已迁到 `retrieval/stages.py:2015`。我单独跑它时就是红的，而
 `rag.py` 与 `core/graph_store_registry.py` 当时都不在工作树的改动里 → 红在 main 上，不是本轮引入。
 宿主清单跟着改，判据不动。
+
+## F. 独立评审推翻了我自己的哪些说法（这一节是给下一位的校准，不是检讨）
+
+判据是"新增实现零改分支"，但**守住判据的测试本身也会作假**。轴 #1 提交后由独立评审
+子 agent 查出四条，全部经我复核确认并已改：
+
+1. **"实时查表"有一条断言是同义反复**。`assert ingest_module.doc_type_for_extension(x)`
+   测的还是同一个函数对象，不是 ingest 真的在实时用它。把 ingest 的两处查询改回
+   import 期快照，14 条守卫**全绿**。现已改成走真实路径：`parse_and_chunk` 之后断言
+   `_last_chunk_decision == "qa"`，`discover_folder_documents` 之后断言文件被放行；
+   重跑两处快照变异，各自立刻变红。
+   **教训**：宿主"逐字节不变"只证明没改代码，**不证明改了也不生效**；判据必须由
+   行为断言承担，字节检查只是配菜。
+2. **`.html` 那条"缺陷"是我记错的**（见 §D-2 的更正）：登记它不会修好任何可见行为，
+   反而会换掉 HTML 的切分策略。已撤回那一行，并把不登记的理由写成测试。
+3. **`is_table_like_doc_type` 顺手做了大小写与空白归一 = 多出一个归一化点**。旧代码是
+   精确成员判断，而 router 入口本来就自己 `.lower()`（`explain_decision` 的
+   `normalized_type`）。表再归一一次会把"谁在归一化"变成两处。评审把它记成"放宽契约"，
+   我复核后**修正这个说法**：因为 router 上游已经归一，`"Excel"` 改造前后都走 qa，
+   这次改动没有可观察差异 —— 但 `" excel"`（带前导空格）这类值在表层仍不该被表兜住。
+   已改回精确匹配并钉住两点：表层精确、router 层归一化照旧。
+4. **"五份清单"我一开始只收了四份**：`server/documents.py` 的文件夹导入清单是第五份，
+   于是"CSV 现在能入库"当时只对了一半（源同步路径通了，UI 上传仍算 unsupported）。
+   现在它是这张表的投影，两条路一起通。
+
+评审另外给出两条我接受的新守卫：**声明为"可直读"的格式必须自己证明是文本**
+（`read_text(errors="replace")` 会把二进制糊成一整段 U+FFFD 且不报错，一行
+`readable_without_parser=True` 就能把二进制静默灌进语料库 → 现在含 NUL 直接
+`IngestError`）；**少一个尾逗号的 `(".typo")` 会在注册期点名**，而不是逐字符迭代后
+报出指不到真因的"扩展名要带点"。
+
+同轮还订正两处文字：provider 守卫的宿主数是 **15** 不是 14（提交信息里的数字是错的，
+代码与测试都对）；`FOLDER_IMPORT_EXTENSIONS` 里 `.html` 缺席是**正确**的，不是漏洞。

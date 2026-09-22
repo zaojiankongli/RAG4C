@@ -34,6 +34,7 @@ from core.document_deletion import (
 from core.knowledge_content import ContentConflict, ContentNotFound
 from core.knowledge_permissions import KNOWLEDGE_DELETE, KNOWLEDGE_READ, KNOWLEDGE_WRITE
 from core.observability import get_logger
+from indexing.doc_types import importable_extensions, is_importable_extension
 from server.knowledge_auth import (
     KnowledgeActor,
     require_knowledge_permission,
@@ -74,29 +75,10 @@ _index_operation_worker_stop = threading.Event()
 _index_operation_worker_thread: threading.Thread | None = None
 
 # 文件夹导入既覆盖无需解析器的文本格式，也覆盖解析器支持的版面文档。
-# 这里显式列出是为了让目录扫描在装配重型解析引擎之前就能完成过滤。
-FOLDER_IMPORT_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".adoc",
-        ".asciidoc",
-        ".doc",
-        ".docx",
-        ".jpeg",
-        ".jpg",
-        ".markdown",
-        ".md",
-        ".mdx",
-        ".pdf",
-        ".png",
-        ".ppt",
-        ".pptx",
-        ".rst",
-        ".text",
-        ".txt",
-        ".xls",
-        ".xlsx",
-    }
-)
+# 这两个条件在 indexing.doc_types 那张表里本来就是两个字段，所以这里取它的投影
+# ``readable_without_parser ∪ needs_parser``，而不是再手抄第 5 份清单。留着这个
+# 名字是为了给 introspection 一个全景快照；真正的扫描走实时查询。
+FOLDER_IMPORT_EXTENSIONS: frozenset[str] = importable_extensions()
 
 
 @dataclass(frozen=True)
@@ -125,7 +107,7 @@ def discover_folder_documents(folder_path: Path) -> FolderScanResult:
             if path.is_symlink() or not path.is_file():
                 continue
             discovered_count += 1
-            if path.suffix.lower() not in FOLDER_IMPORT_EXTENSIONS:
+            if not is_importable_extension(path.suffix):
                 unsupported_count += 1
                 continue
             files.append(path)

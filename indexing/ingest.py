@@ -679,7 +679,17 @@ class IngestPipeline:
                     f"请为 .pdf / .doc / .xlsx 等类型提供 DocumentParser。"
                     f"免 parser 直读的扩展名: {', '.join(sorted(plain_text_extensions()))}"
                 )
-            return Path(file_path).read_text(encoding="utf-8", errors="replace")
+            text = Path(file_path).read_text(encoding="utf-8", errors="replace")
+            # ``errors="replace"`` 会把二进制读成一大段 U+FFFD 而不报任何错。
+            # 「免 parser 直读」是一张声明表（indexing.doc_types），谁都能加一行，
+            # 所以这里必须有个兜底的可见失败：含 NUL 的正文一定不是谁的文档。
+            if "\x00" in text:
+                raise IngestError(
+                    f"{file_path!r}（doc_id={doc_id!r}）按文本直读后含 NUL 字节，"
+                    "判定为二进制文件，已拒绝入库；请为它提供 DocumentParser，"
+                    "或从 indexing.doc_types 的 readable_without_parser 中移除该扩展名。"
+                )
+            return text
         finally:
             self._last_parse_ms = (time.perf_counter() - t0) * 1000.0
             self._last_stage_ms["parse"] = self._last_parse_ms

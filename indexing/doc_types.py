@@ -1,25 +1,27 @@
-#: 文档类型能力规格表：扩展名 -> doc_type -> (要不要 parser / 是不是表格类)。
+#: 文档类型能力规格表：扩展名 -> doc_type -> 四条各自独立的能力判断。
 #:
-#: 这一张表回答三个本来就被分开问的问题，并把它们保持分开：
-#:   * ``doc_type`` 是什么 —— 入库管线据此记录元数据，并被
-#:     :mod:`indexing.chunking_router` 用来选切分模式；
+#: 这一张表回答四个本来就被分开问的问题，并把它们保持分开：
+#:   * ``doc_type`` 是什么 —— 入库管线据此选预切分策略与切分模式；
 #:   * ``readable_without_parser`` —— 能不能不经过 parser 直接按 UTF-8 读；
-#:   * ``table_like`` —— 是否按「逐行 QA 对」切。
+#:   * ``table_like`` —— 是否按「逐行 QA 对」切；
+#:   * ``needs_parser`` —— 目录扫描在装配解析引擎之前就该放行的版面/二进制格式。
 #:
 #: 「用哪种预切分策略」不在本表里：那是 :mod:`indexing.strategies` 的
 #: ``_STRATEGY_REGISTRY``（doc_type -> 策略类），它本来就是一张注册表而不是
 #: if 链，再抄一份到这里是制造第二个真相源。
 #:
-#: **解析器能不能啃某个文件**同样不在本表里，那是 parser 自己的 ``supports()``。
-#: 两者过去是混的：``base.SUPPORTED_EXTENSIONS`` 其实是 MinerU 的能力清单，却被
-#: ``DocumentParser._validate_file`` 当成全管线闸门，于是配别的 parser 时报错写着
-#: "解析器不支持该文件类型"——把"这个 parser 管不了"说成了"系统读不了"。
+#: **某个具体解析器能不能啃某个文件**同样不在本表里，那是 parser 自己的
+#: ``supports()``。两者过去是混的：``base.SUPPORTED_EXTENSIONS`` 其实是 MinerU 的
+#: 能力清单，却被 ``DocumentParser._validate_file`` 当成全管线闸门，于是配别的
+#: parser 时报错写着 "解析器不支持该文件类型"——把"这个 parser 管不了"说成了
+#: "系统读不了"。
 #:
-#: 改造前上面这些判断分散在四五个互不派生的字面量集合里
+#: 改造前上面这些判断散在五份互不派生的字面量集合里
 #: （``parsers/base.SUPPORTED_EXTENSIONS``、``ingest._EXTENSION_DOC_TYPES``、
-#: ``ingest._PLAINTEXT_EXTENSIONS``、``chunking_router._TABLE_DOC_TYPES``）。
-#: 现在加一种格式 = 在这里加一行 ``DocTypeSpec``（或调
-#: :func:`register_doc_type_spec`），那几个消费点都是实时查表，不必再改。
+#: ``ingest._PLAINTEXT_EXTENSIONS``、``chunking_router._TABLE_DOC_TYPES``、
+#: ``documents.FOLDER_IMPORT_EXTENSIONS``）。加一种格式要看四五个文件；现在加一种
+#: 格式 = 在这里加一行 ``DocTypeSpec``（或调 :func:`register_doc_type_spec`），
+#: 那些消费点都是**实时**查表，不必再改。
 
 from __future__ import annotations
 
@@ -31,6 +33,8 @@ __all__ = [
     "all_specs",
     "doc_type_for_extension",
     "extension_to_doc_type",
+    "importable_extensions",
+    "is_importable_extension",
     "is_table_like_doc_type",
     "plain_text_extensions",
     "readable_without_parser",
@@ -57,6 +61,10 @@ class DocTypeSpec:
     #: 入库管线是否按扩展名记录该 doc_type。False = 这一行只为完整性而声明，
     #: 不改动 ``ingest`` 今天的映射（``.ppt`` / 图片在改造前也不在那张表里）。
     ingest_resolves: bool = True
+    #: 需要 parser 才啃得动的版面/二进制格式。``server/documents.py`` 的文件夹导入
+    #: 扫描要在**装配重型解析引擎之前**就过滤掉无关文件，所以这一位必须写在表里，
+    #: 而不能去问某个 parser 的 ``supports()``（那要先有实例）。
+    needs_parser: bool = False
 
 
 DOC_TYPE_SPECS: tuple[DocTypeSpec, ...] = (
@@ -82,18 +90,22 @@ DOC_TYPE_SPECS: tuple[DocTypeSpec, ...] = (
     # 早就写好的 qa 路由真的能被走到 —— 改造前没有任何扩展名会产出 doc_type="csv"，
     # 于是 qa 模式对真实 CSV 上传是不可达的死代码。
     DocTypeSpec("csv", "CSV", (".csv",), readable_without_parser=True, table_like=True),
-    DocTypeSpec("pdf", "PDF", (".pdf",)),
-    DocTypeSpec("word", "Word", (".doc", ".docx")),
-    # docling 认领 .html，但过去没有任何一张表知道它存在：resolved_doc_type 落回
-    # 文本启发式，一份 HTML 会被记成 doc_type="txt"。登记它是为了让元数据如实
-    # 记录格式；策略仍走默认回退（ParagraphStrategy），切分结果不变。
-    DocTypeSpec("html", "HTML", (".html", ".htm")),
+    DocTypeSpec("pdf", "PDF", (".pdf",), needs_parser=True),
+    DocTypeSpec("word", "Word", (".doc", ".docx"), needs_parser=True),
+    # ``.html`` 刻意**不**登记。普查 §D 说它"解析成功却被贴成 doc_type=txt"，核实后
+    # 不成立：这里的 doc_type 只喂 ``_segment`` 与切分路由，落库的 doc_type 另走
+    # ``server/documents.py`` / ``sources/runner.py`` 那两条路，跟本表无关。而登记它
+    # 会真的改掉切分结果 —— 过去 .html 落回文本启发式（解析产物是 Markdown，带 ``#``
+    # 标题）→ MarkdownStrategy；有了本表就变 ParagraphStrategy。实测同一份 HTML：
+    # 分段从 [1065, 450] 变 [1517]。那不是本轮要修的缺陷，所以留原样。
     # ppt/图片在改造前不在 ingest 的扩展名映射里（doc_type 落到文本启发式回退），
     # 这里声明它们是为了格式清单完整，不改动今天的解析结果。
-    DocTypeSpec("powerpoint", "PowerPoint", (".ppt", ".pptx"), ingest_resolves=False),
-    DocTypeSpec("image", "图片", (".png", ".jpg", ".jpeg"), ingest_resolves=False),
+    DocTypeSpec("powerpoint", "PowerPoint", (".ppt", ".pptx"),
+                ingest_resolves=False, needs_parser=True),
+    DocTypeSpec("image", "图片", (".png", ".jpg", ".jpeg"),
+                ingest_resolves=False, needs_parser=True),
     DocTypeSpec("excel", "Excel", (".xls", ".xlsx"), table_like=True,
-                table_like_aliases=("xlsx", "xls")),
+                table_like_aliases=("xlsx", "xls"), needs_parser=True),
 )
 
 _BY_EXTENSION: dict[str, DocTypeSpec] = {}
@@ -113,6 +125,15 @@ def _index(spec: DocTypeSpec) -> None:
     canonical = spec.doc_type.strip().lower()
     if not canonical:
         raise ValueError("doc_type 不能为空")
+    if isinstance(spec.extensions, str) or not isinstance(
+        spec.extensions, (tuple, list)
+    ):
+        # 少了尾逗号的 ("a.html") 会静默变成一个字符串，逐字符迭代报出来的
+        # 错完全指不到真因，所以在这里点名。
+        raise ValueError(
+            f"{canonical!r} 的 extensions 要是字符串元组，"
+            f"不是 {type(spec.extensions).__name__}；单项记得写尾逗号"
+        )
     clash = _BY_DOC_TYPE.get(canonical)
     if clash is not None:
         raise ValueError(f"doc_type {canonical!r} 重复登记")
@@ -181,9 +202,13 @@ def readable_without_parser(extension: str) -> bool:
 
 
 def is_table_like_doc_type(doc_type: str) -> bool:
-    """切分路由用：该 doc_type（含历史别名）是否按表格/逐行处理。"""
-    needle = str(doc_type or "").strip().lower()
-    return needle in _table_like_names()
+    """切分路由用：该 doc_type（含历史别名）是否按表格/逐行处理。
+
+    逐字保留旧的 ``doc_type in _TABLE_DOC_TYPES`` 语义：**不做大小写与空白归一**。
+    ``doc_type`` 在这里是自由文本（可以来自请求，也可以来自库里一列），顺手 lower()
+    会把 "Excel" 从"不是表格类"变成"走 qa 切分"——那是改契约，不是重构。
+    """
+    return doc_type in _table_like_names()
 
 
 def _table_like_names() -> frozenset[str]:
@@ -197,7 +222,7 @@ def table_like_doc_types() -> tuple[str, ...]:
         if spec.table_like:
             declared.append(spec.doc_type)
             declared.extend(spec.table_like_aliases)
-    return tuple(dict.fromkeys(x.lower() for x in declared))
+    return tuple(dict.fromkeys(declared))
 
 
 def plain_text_extensions() -> frozenset[str]:
@@ -205,6 +230,24 @@ def plain_text_extensions() -> frozenset[str]:
     return frozenset(
         ext for ext, spec in _BY_EXTENSION.items() if spec.readable_without_parser
     )
+
+
+def importable_extensions() -> frozenset[str]:
+    """文件夹导入 / 仓库抓取该放行的扩展名全集：可直读 ∪ 需要 parser。
+
+    ``server/documents.py`` 要在装配重型解析引擎**之前**过滤目录项，所以它问的是
+    这张表而不是某个 parser 的 ``supports()``。
+    """
+    return frozenset(
+        ext
+        for ext, spec in _BY_EXTENSION.items()
+        if spec.readable_without_parser or spec.needs_parser
+    )
+
+
+def is_importable_extension(extension: str) -> bool:
+    spec = resolve_spec_by_extension(extension)
+    return bool(spec and (spec.readable_without_parser or spec.needs_parser))
 
 
 def extension_to_doc_type() -> dict[str, str]:

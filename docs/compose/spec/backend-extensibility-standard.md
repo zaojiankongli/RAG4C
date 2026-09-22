@@ -47,6 +47,11 @@ commits: —
      （参照 `tests/test_chunk_writers.py`、`tests/test_storage_provider_registry.py`）；
    - 宿主文件逐字节不变：注册一个假实现，断言宿主文件字节不变
      （参照 `tests/test_retrieval_stage_registry.py`）。
+   **但这两样都只证明"没改代码"，不证明"改了也不生效"**：宿主若在 import 期把注册表
+   抄成快照，注册就永远传不下去，而两种守卫照样全绿（轴 #1 实测：把 `ingest` 的两处
+   查表换回快照，14 条守卫一字未红）。所以凡是声称"实时查表"的轴，判据测试必须再走
+   **一条真实路径**（跑到那次查询所在的函数，断言它选了什么），并把"退回快照"当成一次
+   反向验证做掉 —— 参照 `tests/test_doc_type_registry.py::test_a_new_format_costs_zero_edits_and_is_honoured_live`。
 2. **注册期判死**：重名必须报错；实现形状不全必须**在注册时**报错，而不是等到跑到它时
    才 `AttributeError`（这条是 `retrieval/stages.py` 补过的教训）。
 3. **行为等价**：既有测试零修改通过。**只有当契约本身被有意改变时**才允许改测试，
