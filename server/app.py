@@ -123,6 +123,7 @@ from server import enterprise_workspace_authorization_api  # noqa: E402
 from server import knowledge_audit_api  # noqa: E402
 from server import knowledge_content_api  # noqa: E402
 from server import knowledge_chunks_api  # noqa: E402
+from server import knowledge_source_preview_api  # noqa: E402
 from server import knowledge_consistency_api  # noqa: E402
 from server import knowledge_dataset_api  # noqa: E402
 from server import knowledge_governance_api  # noqa: E402
@@ -897,6 +898,7 @@ app.include_router(
 )
 app.include_router(knowledge_content_api.router)
 app.include_router(knowledge_chunks_api.router)
+app.include_router(knowledge_source_preview_api.router)
 app.include_router(knowledge_consistency_api.router)
 app.include_router(knowledge_dataset_api.router)
 app.include_router(knowledge_governance_api.router)

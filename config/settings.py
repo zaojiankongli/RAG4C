@@ -1000,6 +1000,9 @@ class CatalogSettings(BaseModel):
     ingest_ledger_mode: Literal["off", "shadow", "active"] = "off"
     # off：不写 chunk_heads；shadow：双写但 Milvus 仍可为读路径；active：chunk_heads 为权威。
     chunk_authority_mode: Literal["off", "shadow", "active"] = "shadow"
+    # 原文查看（source-preview）允许读的目录白名单。空 = 功能关闭：documents.file_path 是入库
+    # 时操作员给的绝对路径，没有白名单就等于把任意本地路径变成一个可下载的端点。
+    source_preview_roots: list[str] = []
     # 自动元数据过滤（检索时 LLM 生成表达式）与自动打标签（入库时 LLM 分类）
     auto_filter_on: bool = False
     auto_tag_on: bool = False
