@@ -20,6 +20,12 @@ from sqlalchemy import MetaData, Table, delete, inspect, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from core.audit_export_formats import (
+    AuditExportFormatSpec,
+    audit_export_format_names,
+    register_audit_export_format,
+    resolve_audit_export_format,
+)
 from core.enterprise_tenant_idempotency import (
     complete_tenant_mutation,
     engine_serialization_lock,
@@ -1083,17 +1089,19 @@ def _csv_safe(value: Any) -> str:
     return result
 
 
-def _serialize_export(rows: Sequence[Mapping[str, Any]], format_name: str) -> bytes:
-    if format_name == "ndjson":
-        lines = []
-        for row in rows:
-            payload = {key: row.get(key) for key in _EXPORT_FIELDS}
-            payload["before_snapshot"] = row.get("before_snapshot")
-            payload["after_snapshot"] = row.get("after_snapshot")
-            lines.append(
-                json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            )
-        return (("\n".join(lines) + "\n") if lines else "").encode("utf-8")
+def _serialize_ndjson(rows: Sequence[Mapping[str, Any]]) -> bytes:
+    lines = []
+    for row in rows:
+        payload = {key: row.get(key) for key in _EXPORT_FIELDS}
+        payload["before_snapshot"] = row.get("before_snapshot")
+        payload["after_snapshot"] = row.get("after_snapshot")
+        lines.append(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        )
+    return (("\n".join(lines) + "\n") if lines else "").encode("utf-8")
+
+
+def _serialize_csv(rows: Sequence[Mapping[str, Any]]) -> bytes:
     output = io.StringIO(newline="")
     writer = csv.writer(output, lineterminator="\r\n")
     writer.writerow(_EXPORT_FIELDS)
@@ -1106,6 +1114,53 @@ def _serialize_export(rows: Sequence[Mapping[str, Any]], format_name: str) -> by
             values.append(_csv_safe(value))
         writer.writerow(values)
     return output.getvalue().encode("utf-8-sig")
+
+
+def _serialize_export(rows: Sequence[Mapping[str, Any]], format_name: str) -> bytes:
+    # 原先这里是一条 else 出 CSV：一个没被识别的格式名会拿到 CSV 字节，而任务行上写着别的
+    # 格式。现在只认声明过的格式，认不出就拒。
+    spec = resolve_audit_export_format(format_name)
+    if spec is None:
+        raise ComplianceValidation(
+            "compliance_request_invalid", f"不支持的导出格式：{format_name!r}", 422
+        )
+    return spec.serialize(list(rows))
+
+
+# 序列化器留在这个模块：只有这里知道一条审计行怎么变成字节（字段清单、快照脱敏、CSV 注入
+# 前缀防护），注册表只负责"这个格式叫什么、叫什么扩展名、什么媒体类型"。
+register_audit_export_format(
+    AuditExportFormatSpec(
+        format="ndjson",
+        extension="ndjson",
+        media_type="application/x-ndjson",
+        serialize=_serialize_ndjson,
+    )
+)
+register_audit_export_format(
+    AuditExportFormatSpec(
+        format="csv",
+        extension="csv",
+        media_type="text/csv; charset=utf-8",
+        serialize=_serialize_csv,
+    )
+)
+
+
+def _download_format(format_name: str) -> AuditExportFormatSpec:
+    """How a stored export job's bytes are labelled when handed to a client.
+
+    媒体类型与后缀都取自声明，且认不出来就拒绝：存储行里写着一个已经不认识的格式时，
+    宁可报完整性失败，也不要按 CSV 的名字与 CSV 的类型把一个别的什么字节流发出去。
+    """
+    spec = resolve_audit_export_format(format_name)
+    if spec is None:
+        raise ComplianceConflict(
+            "compliance_export_integrity_failed",
+            "审计导出完整性校验失败",
+            409,
+        )
+    return spec
 
 
 def _contained_path(root: Path, object_key: str) -> Path:
@@ -1163,8 +1218,12 @@ def create_audit_export(
     now: datetime,
 ) -> ServiceResult:
     clean_format = _clean(format_name, "format", 16).casefold()
-    if clean_format not in {"ndjson", "csv"}:
-        raise ComplianceValidation("compliance_request_invalid", "format 仅支持 ndjson/csv", 422)
+    if resolve_audit_export_format(clean_format) is None:
+        raise ComplianceValidation(
+            "compliance_request_invalid",
+            "format 仅支持 " + "/".join(audit_export_format_names()),
+            422,
+        )
     clean_filters = _filters(filters)
     seq_from = _optional_int(sequence_from, "sequence_from")
     seq_to = _optional_int(sequence_to, "sequence_to")
@@ -1222,7 +1281,7 @@ def create_audit_export(
                 content = _serialize_export(rows, clean_format)
                 digest = hashlib.sha256(content).hexdigest()
                 job_id = f"audit-export-{uuid.uuid4().hex}"
-                extension = "ndjson" if clean_format == "ndjson" else "csv"
+                extension = str(resolve_audit_export_format(clean_format).extension)
                 object_key = f"jobs/{job_id}.{extension}"
                 final_path = _write_atomic(Path(export_root), object_key, content)
                 table = _table(session, "tenant_audit_export_jobs")
@@ -1370,13 +1429,11 @@ def download_audit_export(
                 "审计导出完整性校验失败",
                 409,
             )
-        format_name = str(row["format"])
+        download_spec = _download_format(str(row["format"]))
         return DownloadResult(
             content=content,
-            media_type="application/x-ndjson"
-            if format_name == "ndjson"
-            else "text/csv; charset=utf-8",
-            filename=f"audit-export-{clean_id}.{'ndjson' if format_name == 'ndjson' else 'csv'}",
+            media_type=download_spec.media_type,
+            filename=f"audit-export-{clean_id}.{download_spec.extension}",
         )
 
 

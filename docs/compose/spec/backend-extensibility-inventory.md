@@ -56,7 +56,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 | 13 | ~~文档排序 `sort` / 游标耦合~~ **本轮已完成**，见 §L | — | 0（新增一个排序一行声明；**第二个 keyset 排序被注册期拒绝**） | 否 | openapi 枚举未动（加排序仍需同步枚举，见 §L 的诚实边界） | 已落 `core/document_sorts.py` |
 | 14 | ~~PDF 分类 → 引擎路由 `pdf_type`~~ **本轮已完成**，见 §K | — | 0（加一类分类结果一行声明） | 否 | `parser_meta` 自由串（新增 `route_reason`） | 已落 `indexing/pdf_type_routing.py` |
 | 15 | ~~就绪探测的方言证明~~ **本轮已完成**，见 §I | — | 0（注册即全认） | 否 | 否 | 已落 `core/read_only_dialects.py`；`knowledge_consistency_api.py:1180` 经核是**写事务栅栏**不是只读证明，刻意没并进来 |
-| 16 | 审计导出格式 | `enterprise_compliance_api.py:78`；`compliance.py:1087,1166,1225,1376-1379` | 4 | 否 | 否 | Strategy+Registry（可能性低，排最后） |
+| 16 | ~~审计导出格式~~ **本轮已完成**，见 §N | — | 0（注册即全认；认不出的存储行改判完整性失败） | 否 | 否 | 已落 `core/audit_export_formats.py` |
 
 **本轮之后仍为"待做"的原因**：5、6、8、9、10、12 六条要改数据库 CHECK → 按红线必须单独成切片；
 3 号虽无迁移但直接压在投影栅栏上，风险最高，需要独立设计与评审。
@@ -411,7 +411,40 @@ ag4c-verify`。
   改动后重跑一遍仍 16 过）；`ruff check .` 全仓通过。
 - 反向验证 5 个变异，**全部由新守卫自己抓住**（不需要拿既有套件当证据）：仪式只改状态不写
   声明列（2 红）、终态必须释放槽位不拦（1 红）、非终态不许释放不拦（1 红）、列不存在也照收
-  （1 红）、未声明操作被默认接住（1 红）。脚本与输出在仓外 `%TEMP%ag4c-verify`。
+  （1 红）、未声明操作被默认接住（1 红）。脚本与输出在仓外 `%TEMP%
+ag4c-verify`。
 
 顺带消掉的重复：`_ACTIVE_ALERT_STATUSES` 之前在宿主里自己抄了一份状态分区，现在指向表的
 `ACTIVE_ALERT_STATUSES`，状态只有一处定义。
+
+## N. 轴 #16（审计导出格式）落地记录，含两个逃逸变异逼出的两处真补强
+
+四处判断原先必须彼此一致：接受名字的校验（连同那句给用户看的文案）、序列化器的 `if/else`、
+文件名扩展名、下载响应的媒体类型。其中两处**会产出一个错的工件而不报错**：
+
+- `_serialize_export` 的 `else` 出 CSV —— 一个没被识别的格式名会拿到 CSV 字节，而任务行上写着
+  别的格式；
+- 下载路径再用两个 `if format_name == "ndjson"` 从**存储行**推媒体类型与后缀 —— 存着不认识格式的
+  任务会被当作 `.csv` / `text/csv` 发出去。
+两处现在都是拒绝（后者报 `compliance_export_integrity_failed`）。
+
+**两个变异第一轮逃逸，都指向真缺陷**（这正是 §3.4 的用途，不是走流程）：
+
+1. `C 下载侧认不出就当成 csv` 全绿 —— 因为我只有"没有 `if format_name ==` 了"这种源码级断言，
+   行为上那条拒绝**没有任何用例能触及**（要跑通下载得先造一个真导出任务 + 存储文件）。
+   修法是把贴标签这一步抽成 `_download_format(format_name)` 纯函数，宿主调用它，于是
+   `test_a_stored_row_with_an_unknown_format_is_refused_not_served_as_csv` 能直接把它判红；
+   顺带这条测试也变成"注册新格式后下载侧实时认它"的宿主零改动证据。
+2. `D 注册期形状判死关掉` 全绿 —— 是我变异写坏了（只把 `isinstance` 那一句改成永假，其余校验
+   照常跑）。换成整个 `_validate` 首行 `return` 之后 6 条红。**记下来：判红之前先确认变异真的
+   把机制拿掉了**，否则我会误判"这条守卫是好的"。
+
+门禁读数（本机 `.venv`，`PYTHONPATH=.`）：新守卫
+`tests/test_audit_export_format_registry.py` **15 条 / 1.16s**；行为等价未改任何既有断言
+`test_enterprise_audit_compliance_api.py` + `..._migration.py` = **14 passed**；
+`ruff check .` 全仓通过。反向验证 7 个变异（A 未知格式当 csv 2 红、B 扩展名退回硬编码 1 红、
+C 1 红、D 6 红、E 丢 BOM 1 红，加两轮复跑）全部由新守卫抓住。
+
+**没做的部分**：`AuditExportFormatSpec` 只声明"叫什么/怎么标/怎么产字节"，导出任务的
+DB `CHECK (format IN ('ndjson','csv'))` 仍是写死的（属 §B 里"要迁移"那一族），所以真加一种格式
+仍然需要一次 catalog 迁移把那一列放宽 —— 这条轴免掉的是四处代码判断，不是全部跨层成本。
