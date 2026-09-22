@@ -5,9 +5,9 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, TypeAlias
 
-from core.run_events import JsonValue
+from core.run_events import RAG_EXECUTORS, JsonValue
 
 
 TopologyGroup = Literal[
@@ -20,7 +20,10 @@ TopologyGroup = Literal[
     "extension",
 ]
 TopologyEdgeKind = Literal["dependency", "conditional", "retry", "failure"]
-RagExecutor = Literal["sequential_stream", "sequential", "langgraph"]
+#: Derived from the single declared executor set in ``core/run_events.py``. It used to be
+#: a hand-written three-value ``Literal`` that left out ``cache_replay``, which
+#: ``build_cache_replay_topology`` emits a few hundred lines below.
+RagExecutor: TypeAlias = Literal[tuple(RAG_EXECUTORS)]
 
 
 class _FrozenDict(dict[str, JsonValue]):

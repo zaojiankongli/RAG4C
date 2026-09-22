@@ -23,7 +23,12 @@ from typing import Any, Callable, Literal, Mapping, Sequence
 
 from config.settings import RunHistorySettings
 from core.metrics import get_metrics
-from core.run_events import RunEvent, run_event_dict
+from core.run_event_taxonomy import (
+    RunEventTypeSpec,
+    resolve_run_event_type,
+    run_terminal_status,
+)
+from core.run_events import RAG_EXECUTORS, RunEvent, run_event_dict
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -179,7 +184,7 @@ _TOPOLOGY_GROUPS = frozenset(
     {"input", "understand", "retrieve", "generate", "verify", "output", "extension"}
 )
 _TOPOLOGY_EDGE_KINDS = frozenset({"dependency", "conditional", "retry", "failure"})
-_TOPOLOGY_EXECUTORS = frozenset({"sequential_stream", "sequential", "langgraph", "cache_replay"})
+_TOPOLOGY_EXECUTORS = frozenset(RAG_EXECUTORS)
 _FORBIDDEN_NESTED_KEYS = (
     "query",
     "question",
@@ -878,6 +883,16 @@ def _thaw_public(value: Any) -> Any:
     return value
 
 
+def _active_slots(record: _MutableRun) -> dict[str, OrderedDict[str, int]]:
+    """The per-family active-slot maps the event taxonomy names.
+
+    A run event spec's ``family`` is what selects the map, so a newly declared
+    ``node.*`` / ``retry.*`` event type lands in the right one without this file
+    learning its name.
+    """
+    return {"node": record.active_nodes, "retry": record.active_retries}
+
+
 def _event_datetime(value: Any) -> datetime:
     if isinstance(value, datetime):
         result = value
@@ -1117,7 +1132,7 @@ class RunRegistry:
             record.elapsed_ms = max(record.elapsed_ms, float(payload["elapsed_ms"]))
             self._fill_missing_seq_locked(record, seq)
             if (
-                payload["type"] in {"run.completed", "run.failed", "run.cancelled"}
+                run_terminal_status(payload["type"]) is not None
                 and record.status == "running"
             ):
                 self._reduce_event_locked(record, payload)
@@ -1161,6 +1176,7 @@ class RunRegistry:
         project_only: bool = False,
     ) -> None:
         event_type = payload["type"]
+        spec = resolve_run_event_type(event_type)
         node_id = payload.get("node_id")
         attempt = int(payload.get("attempt") or 1)
         elapsed = float(payload["elapsed_ms"])
@@ -1169,96 +1185,41 @@ class RunRegistry:
         reason = attributes.get("reason")
         reason_code = reason if isinstance(reason, str) else None
 
-        if event_type == "node.started" and node_id is not None:
-            record.active_nodes[node_id] = attempt
-            record.rollups[("node", node_id, attempt)] = _MutableRollup(
-                node_id=node_id,
-                attempt=attempt,
-                status="running",
-                started_elapsed_ms=elapsed,
-            )
-        elif (
-            event_type
-            in {
-                "node.completed",
-                "node.failed",
-                "node.cancelled",
-                "node.skipped",
-            }
-            and node_id is not None
-        ):
-            record.active_nodes.pop(node_id, None)
-            key = ("node", node_id, attempt)
-            rollup = record.rollups.get(key)
-            if rollup is None:
-                rollup = _MutableRollup(node_id=node_id, attempt=attempt, status="unknown")
-                record.rollups[key] = rollup
-            rollup.status = event_type.removeprefix("node.")
-            rollup.finished_elapsed_ms = elapsed
-            rollup.duration_ms = payload.get("duration_ms")
-            rollup.error_type = error.get("type")
-            rollup.error_code = error.get("code")
-            if event_type == "node.failed":
-                record.failed_nodes.setdefault(node_id, None)
-        elif event_type == "retry.started" and node_id is not None:
-            record.retry_count += 1
-            record.active_retries[node_id] = attempt
-            record.rollups[("retry", node_id, attempt)] = _MutableRollup(
-                node_id=node_id,
-                attempt=attempt,
-                status="retry_running",
-                started_elapsed_ms=elapsed,
-                retry_reason=reason_code,
-            )
-        elif (
-            event_type
-            in {
-                "retry.completed",
-                "retry.failed",
-                "retry.skipped",
-            }
-            and node_id is not None
-        ):
-            record.active_retries.pop(node_id, None)
-            key = ("retry", node_id, attempt)
-            rollup = record.rollups.get(key)
-            if rollup is None:
-                rollup = _MutableRollup(
-                    node_id=node_id,
-                    attempt=attempt,
-                    status="retry_unknown",
+        if spec is not None:
+            if spec.tracks_active_slot and node_id is not None:
+                if spec.opens_active_slot:
+                    self._open_slot_locked(record, spec, node_id, attempt, elapsed, reason_code)
+                elif spec.closes_active_slot:
+                    self._close_slot_locked(
+                        record,
+                        spec,
+                        event_type,
+                        node_id,
+                        attempt,
+                        elapsed,
+                        reason_code,
+                        payload,
+                        error,
+                    )
+            elif spec.records_route:
+                route = (
+                    attributes.get("effective_route")
+                    or attributes.get("effective")
+                    or attributes.get("route")
+                    or attributes.get("configured_route")
                 )
-                record.rollups[key] = rollup
-            rollup.status = f"retry_{event_type.removeprefix('retry.')}"
-            rollup.finished_elapsed_ms = elapsed
-            rollup.duration_ms = payload.get("duration_ms")
-            rollup.retry_reason = rollup.retry_reason or reason_code
-            rollup.error_type = error.get("type")
-            rollup.error_code = error.get("code")
-        elif event_type == "route.selected":
-            route = (
-                attributes.get("effective_route")
-                or attributes.get("effective")
-                or attributes.get("route")
-                or attributes.get("configured_route")
-            )
-            if isinstance(route, str):
-                record.route = route
-        elif event_type == "degraded":
-            record.degraded_count += 1
-            if node_id is not None:
-                for key in reversed(record.rollups):
-                    rollup = record.rollups[key]
-                    if rollup.node_id == node_id:
-                        rollup.degraded_reason = reason_code
-                        break
+                if isinstance(route, str):
+                    record.route = route
+            elif spec.counts_degraded:
+                record.degraded_count += 1
+                if node_id is not None:
+                    for key in reversed(record.rollups):
+                        rollup = record.rollups[key]
+                        if rollup.node_id == node_id:
+                            rollup.degraded_reason = reason_code
+                            break
 
-        terminal_status: dict[str, RunStatus] = {
-            "run.completed": "completed",
-            "run.failed": "failed",
-            "run.cancelled": "cancelled",
-        }
-        status = terminal_status.get(event_type)
+        status = None if spec is None else spec.run_status
         if status is not None and not project_only:
             record.status = status
             record.outcome = self._outcome(attributes.get("outcome"))
@@ -1269,6 +1230,59 @@ class RunRegistry:
             self._recent[record.run_id] = record
             self._recent.move_to_end(record.run_id)
             self._enforce_recent_cap_locked()
+
+    @staticmethod
+    def _open_slot_locked(
+        record: _MutableRun,
+        spec: RunEventTypeSpec,
+        node_id: str,
+        attempt: int,
+        elapsed: float,
+        reason_code: str | None,
+    ) -> None:
+        if spec.counts_retry:
+            record.retry_count += 1
+        _active_slots(record)[spec.family][node_id] = attempt
+        key = (spec.family, node_id, attempt)
+        record.rollups[key] = _MutableRollup(
+            node_id=node_id,
+            attempt=attempt,
+            status=spec.running_rollup_status,
+            started_elapsed_ms=elapsed,
+            retry_reason=reason_code if spec.carries_retry_reason else None,
+        )
+
+    @staticmethod
+    def _close_slot_locked(
+        record: _MutableRun,
+        spec: RunEventTypeSpec,
+        event_type: str,
+        node_id: str,
+        attempt: int,
+        elapsed: float,
+        reason_code: str | None,
+        payload: dict[str, Any],
+        error: Any,
+    ) -> None:
+        _active_slots(record)[spec.family].pop(node_id, None)
+        key = (spec.family, node_id, attempt)
+        rollup = record.rollups.get(key)
+        if rollup is None:
+            rollup = _MutableRollup(
+                node_id=node_id,
+                attempt=attempt,
+                status=spec.unknown_rollup_status,
+            )
+            record.rollups[key] = rollup
+        rollup.status = spec.rollup_status(event_type)
+        rollup.finished_elapsed_ms = elapsed
+        rollup.duration_ms = payload.get("duration_ms")
+        if spec.carries_retry_reason:
+            rollup.retry_reason = rollup.retry_reason or reason_code
+        rollup.error_type = error.get("type")
+        rollup.error_code = error.get("code")
+        if spec.records_failed_node:
+            record.failed_nodes.setdefault(node_id, None)
 
     def _mutation_locked(
         self,

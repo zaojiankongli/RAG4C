@@ -40,7 +40,8 @@ from pydantic import (
 from starlette.requests import Request
 
 from config.settings import resolve_tenant
-from core.run_events import EventType
+from core.run_event_taxonomy import resolve_run_event_type
+from core.run_events import EventType, RagExecutor
 from core.run_history_store import RunHistoryReadError, RunHistoryStore, StoredRun
 from core.run_registry import (
     EventIntegrity,
@@ -557,7 +558,7 @@ class RunTopologyEdgeResponse(_PublicModel):
 class RunTopologyResponse(_PublicModel):
     id: str
     revision: str
-    executor: Literal["sequential_stream", "sequential", "langgraph", "cache_replay"]
+    executor: RagExecutor
     nodes: tuple[RunTopologyNodeResponse, ...]
     edges: tuple[RunTopologyEdgeResponse, ...]
 
@@ -1157,11 +1158,47 @@ def _configured_fingerprint_secret(settings: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _rollup_item(
+    node_id: str,
+    attempt: int,
+    status: str,
+    *,
+    started_elapsed_ms: Any = None,
+    retry_reason: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "node_id": node_id,
+        "attempt": attempt,
+        "status": status,
+        "started_elapsed_ms": started_elapsed_ms,
+        "finished_elapsed_ms": None,
+        "duration_ms": None,
+        "degraded_reason": None,
+        "retry_reason": retry_reason,
+        "error_type": None,
+        "error_code": None,
+    }
+
+
 def _rollups_from_events(events: tuple[Mapping[str, Any], ...]) -> tuple[NodeRollup, ...]:
+    """Rebuild node rollups from stored events.
+
+    Membership in the node / retry partition comes from
+    ``core.run_event_taxonomy``; this reducer deliberately applies only the slot and
+    rollup effects. ``records_route`` (``route.selected``) and ``records_failed_node``
+    (``node.failed`` -> ``failed_node_ids``) belong to the live registry projection and
+    are not rebuilt here, so a detail served from durable history reports an empty
+    ``failed_node_ids`` / ``route`` even when the ledger carried those events. That
+    asymmetry predates this function and is preserved rather than unified.
+    """
     values: dict[tuple[str, str, int], dict[str, Any]] = {}
     for event in events:
         node_id = event.get("node_id")
         event_type = event.get("type")
+        spec = resolve_run_event_type(event_type)
+        if spec is None:
+            continue
+        has_node_id = isinstance(node_id, str) and bool(node_id)
         attempt_value = event.get("attempt")
         attempt = attempt_value if type(attempt_value) is int and attempt_value >= 1 else 1
         elapsed = event.get("elapsed_ms")
@@ -1170,87 +1207,29 @@ def _rollups_from_events(events: tuple[Mapping[str, Any], ...]) -> tuple[NodeRol
         reason_code = reason if isinstance(reason, str) else None
         error = event.get("error")
         error_value = error if isinstance(error, Mapping) else {}
-        if event_type == "node.started" and isinstance(node_id, str) and node_id:
-            values[("node", node_id, attempt)] = {
-                "node_id": node_id,
-                "attempt": attempt,
-                "status": "running",
-                "started_elapsed_ms": elapsed,
-                "finished_elapsed_ms": None,
-                "duration_ms": None,
-                "degraded_reason": None,
-                "retry_reason": None,
-                "error_type": None,
-                "error_code": None,
-            }
-        elif event_type in {
-            "node.completed",
-            "node.failed",
-            "node.cancelled",
-            "node.skipped",
-        } and isinstance(node_id, str) and node_id:
-            key = ("node", node_id, attempt)
-            item = values.setdefault(
-                key,
-                {
-                    "node_id": node_id,
-                    "attempt": attempt,
-                    "status": "unknown",
-                    "started_elapsed_ms": None,
-                    "finished_elapsed_ms": None,
-                    "duration_ms": None,
-                    "degraded_reason": None,
-                    "retry_reason": None,
-                    "error_type": None,
-                    "error_code": None,
-                },
-            )
-            item["status"] = str(event_type).removeprefix("node.")
-            item["finished_elapsed_ms"] = elapsed
-            item["duration_ms"] = event.get("duration_ms")
-            item["error_type"] = error_value.get("type")
-            item["error_code"] = error_value.get("code")
-        elif event_type == "retry.started" and isinstance(node_id, str) and node_id:
-            values[("retry", node_id, attempt)] = {
-                "node_id": node_id,
-                "attempt": attempt,
-                "status": "retry_running",
-                "started_elapsed_ms": elapsed,
-                "finished_elapsed_ms": None,
-                "duration_ms": None,
-                "degraded_reason": None,
-                "retry_reason": reason_code,
-                "error_type": None,
-                "error_code": None,
-            }
-        elif event_type in {
-            "retry.completed",
-            "retry.failed",
-            "retry.skipped",
-        } and isinstance(node_id, str) and node_id:
-            key = ("retry", node_id, attempt)
-            item = values.setdefault(
-                key,
-                {
-                    "node_id": node_id,
-                    "attempt": attempt,
-                    "status": "retry_unknown",
-                    "started_elapsed_ms": None,
-                    "finished_elapsed_ms": None,
-                    "duration_ms": None,
-                    "degraded_reason": None,
-                    "retry_reason": None,
-                    "error_type": None,
-                    "error_code": None,
-                },
-            )
-            item["status"] = f"retry_{str(event_type).removeprefix('retry.')}"
-            item["finished_elapsed_ms"] = elapsed
-            item["duration_ms"] = event.get("duration_ms")
-            item["retry_reason"] = item["retry_reason"] or reason_code
-            item["error_type"] = error_value.get("type")
-            item["error_code"] = error_value.get("code")
-        elif event_type == "degraded" and isinstance(node_id, str) and node_id:
+        if spec.tracks_active_slot and has_node_id:
+            key: tuple[str, str, int] = (spec.family, node_id, attempt)
+            if spec.opens_active_slot:
+                values[key] = _rollup_item(
+                    node_id,
+                    attempt,
+                    spec.running_rollup_status,
+                    started_elapsed_ms=elapsed,
+                    retry_reason=reason_code if spec.carries_retry_reason else None,
+                )
+            elif spec.closes_active_slot:
+                item = values.setdefault(
+                    key,
+                    _rollup_item(node_id, attempt, spec.unknown_rollup_status),
+                )
+                item["status"] = spec.rollup_status(event_type)
+                item["finished_elapsed_ms"] = elapsed
+                item["duration_ms"] = event.get("duration_ms")
+                if spec.carries_retry_reason:
+                    item["retry_reason"] = item["retry_reason"] or reason_code
+                item["error_type"] = error_value.get("type")
+                item["error_code"] = error_value.get("code")
+        elif spec.counts_degraded and has_node_id:
             for key in reversed(values):
                 item = values[key]
                 if item["node_id"] == node_id:

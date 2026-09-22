@@ -13,7 +13,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Literal, Protocol, TypeAlias
+from typing import Any, Callable, Literal, Protocol, TypeAlias, get_args
 
 from pydantic import (
     BaseModel,
@@ -22,6 +22,11 @@ from pydantic import (
     JsonValue as PydanticJsonValue,
     field_validator,
     model_validator,
+)
+
+from core.run_event_taxonomy import (
+    RUN_EVENT_TYPE_SPECS,
+    resolve_run_event_type,
 )
 
 
@@ -46,19 +51,36 @@ EventType: TypeAlias = Literal[
     "run.cancelled",
 ]
 
+#: The closed set of topology executors, in wire order. Declared here because this is
+#: the module the run-observability wire vocabularies live in and the only one all three
+#: of its consumers (``rag_topology``, ``core.run_registry``, ``server.run_ops``) already
+#: import — so deriving the copies from it adds no new import edge anywhere.
+#: ``rag_topology.RagExecutor`` and ``server.run_ops.RunTopologyResponse.executor`` are
+#: this tuple as a ``Literal``; ``core.run_registry._TOPOLOGY_EXECUTORS`` is the same
+#: tuple as a membership set. Until now they were three hand-written lists, one of which
+#: (``RagExecutor``) omitted ``cache_replay`` while ``build_cache_replay_topology``
+#: emitted it and ``server/app.py`` branched on it in five places.
+RAG_EXECUTORS: tuple[str, ...] = (
+    "sequential_stream",
+    "sequential",
+    "langgraph",
+    "cache_replay",
+)
+RagExecutor: TypeAlias = Literal[tuple(RAG_EXECUTORS)]
+
 _LOGGER = logging.getLogger(__name__)
-_NODE_TYPES = frozenset(
-    {
-        "node.started",
-        "node.completed",
-        "node.failed",
-        "node.skipped",
-        "node.cancelled",
-    }
-)
-_RETRY_TYPES = frozenset(
-    {"retry.started", "retry.completed", "retry.failed", "retry.skipped"}
-)
+
+# The wire vocabulary lives in ``EventType`` above because pydantic and the frontend
+# contract need a closed ``Literal``. What each of those names *means* lives in
+# ``core/run_event_taxonomy.py``. This import-time fence is what keeps the two from
+# drifting apart, which is exactly what the three hand-mirrored membership sets did.
+_UNDECLARED_EVENT_TYPES = set(get_args(EventType)) ^ set(RUN_EVENT_TYPE_SPECS.names())
+if _UNDECLARED_EVENT_TYPES:
+    raise RuntimeError(
+        "run event taxonomy and EventType disagree on the event vocabulary: "
+        f"{sorted(_UNDECLARED_EVENT_TYPES)}"
+    )
+del _UNDECLARED_EVENT_TYPES
 
 
 def _json_value(value: Any, *, path: str = "attributes") -> JsonValue:
@@ -179,7 +201,8 @@ class RunEvent(BaseModel):
 
     @model_validator(mode="after")
     def _lifecycle_fields_match_type(self) -> "RunEvent":
-        if self.type in _NODE_TYPES | _RETRY_TYPES:
+        spec = resolve_run_event_type(self.type)
+        if spec is not None and spec.lifecycle_fields_required:
             if not self.node_id:
                 raise ValueError(f"{self.type} requires node_id")
             if self.attempt is None:

@@ -50,8 +50,12 @@ class ProviderRegistry(Generic[ConfigT, ServiceT]):
         key = name.strip().lower()
         with self._lock:
             factory = self._factories.get(key)
-            choices = tuple(sorted(self._factories))
         if factory is None:
+            # Only a refusal needs the menu. Building it on every hit costs a sort per
+            # lookup, which is invisible for "create a client once" and expensive for a
+            # registry someone reads on a per-event path.
+            with self._lock:
+                choices = tuple(sorted(self._factories))
             available = " / ".join(choices) or "(none)"
             raise ValueError(
                 f"unknown {self.kind} provider: {name!r} (available: {available})"
