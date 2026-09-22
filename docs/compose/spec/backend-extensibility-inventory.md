@@ -274,7 +274,7 @@ connect_args, live_probe_required, proof_statements, accepted_values)`。三条�
   `tests/test_enterprise_automation_workflows_readiness.py` 29 条 + 新守卫 16 条 =
   **138 passed in 156.50s**；`ruff check .` 全仓通过。
 - 反向验证（§3.4，脚本与输出都放在仓外 `%TEMP%
-ag4c-verify`）：8 个变异各自 turn 红 ——
+ag4c-verify`）：7 个变异各自 turn 红（下列七条；上一版写成"8 个"，比列举多一个）——
   未注册方言改成"证明不了就算证明"（2 红）、宿主退回手写清单（2 红，其中一条是宿主守卫）、
   只删 `isinstance` 检查（1 红）、整个形状校验提前 return（7 红）、撤回不归一键名（1 红）、
   MySQL 两语句颠倒（2 红）、开引擎丢掉声明的 connect_args（1 红）。
@@ -287,9 +287,11 @@ ag4c-verify`）：8 个变异各自 turn 红 ——
 `_simple_state_mutation` 里八处 `kind == "domain_revoke"` 三元回答"撤销这种资源有什么不
 一样"（预留哪个 operation、锁哪张表、审计动作、响应键名、让出哪一列），其余仪式（幂等预留、
 `SELECT … FOR UPDATE`、revision CAS、审计信封）全共享。收成 `core/identity_revocations.py`
-的 `RevocationKindSpec` 之后顺手关掉一个**真实的静默 fail-open**：三元链的 `else` 会把任何
-没预期的 kind 当成 SCIM token 撤销 —— 换了表、换了审计动作，还是一次真写入。现在未声明
-一律 `ValueError`。
+的 `RevocationKindSpec` 之后把三元链的 `else`（会把任何没预期的 kind 当成 SCIM token 撤销 ——
+换表、换审计动作、还是一次真写入）换成未声明一律 `ValueError`。
+**修正上一版的说法**：那是纵深防御，不是"真实的静默 fail-open"。`_simple_state_mutation`
+只有两个调用方，`kind` 是 `Literal[...]` 且两处都是字面量，HTTP 层从不把请求里的值当 kind 传
+进来 —— 那个 `else` 在生产里够不到。第四轮评审点名之后核过：三个事实全部成立。
 
 **栅栏做成注册期的，不是约定式的**：`status` / `revision` / `revoked_at` / `revoked_by` /
 `updated_at` 这五列"就是撤销本身"，`release_values` 若返回其中任何一列，注册直接被拒。
@@ -320,8 +322,10 @@ ag4c-verify`）：8 个变异各自 turn 红 ——
 
 - **没预期的分类结果**落进 `else`，今天恰好是较重的引擎，但那是分支顺序的巧合，没有任何东西
   阻止下一次编辑把便宜引擎放进 `else`。现在保守落点是表里的一个值
-  `UNKNOWN_PDF_TYPE_ROUTE`，并且理由随决策一起进 `parser_meta`（新键 `route_reason`，
-  操作员能在诊断面看见"这本为什么走 vision"）。
+  `UNKNOWN_PDF_TYPE_ROUTE`，并且理由随决策一起进 `parser_meta`（新键 `route_reason`）。
+  **修正上一版的说法**：落地那一条提交里 `route_reason` 一个消费者都没有（`git grep` 只命中
+  声明与测试），"操作员能在诊断面看见"当时是假的。`23cfbe6` 才补上消费方：前端解析上下文
+  多一行"引擎判由"，并在降级时把整块提示换成告警色。
 - **不认识的引擎标签**在 `parse` 里静默按 vision 跑。现在直接抛 `MineruParserError`：
   标签必须是真跑得起来的那两个之一，注册期也照样拒（`engine not in ENGINE_NAMES`）。
 
@@ -348,14 +352,15 @@ ag4c-verify`。
 ## L. 轴 #13（文档目录排序）落地记录，含一次"探针选错方向"的自纠
 
 原先关于排序的事实散在**四处**，必须彼此一致：一个接受名字的 frozenset、一张建 ORDER BY
-表达式的梯、一张挑方向的梯（两个 `asc` 加一个"其余按 desc"的 `else`）、以及游标路径里两处
+表达式的梯、一张挑方向的梯（两个 `asc` 加一个"其余按 desc"的 `else`）、以及游标路径里五处
 写死的 `"updated_at_desc"`。真正会**静默出错**的是挑方向那张梯：新加一个*升序*排序若忘了改它，
 它会掉进 `else` 反着翻页 —— 返回的还是一页看着完全正常的文档，只是 next_cursor 与翻页语义
 已经坏了，没有任何地方报错。
 
 `core/document_sorts.py` 的 `DocumentSortSpec(sort, direction, expression, keyset_cursor)`
-把这四处收成一行声明。**keyset 游标刻意保持单一实现者**：谓词写的是 `<`（降序），编码值取自
-`updated_at or created_at` 的 coalesce，所以第二个 `keyset_cursor=True` 不是"暂时没做"而是
+把这四处收成一行声明。**keyset 游标刻意保持单一实现者**：谓词写的是 `<`（降序），而游标里编码的
+那个值现在由声明自己交出（`cursor_value`，内建那行取 `updated_at or created_at` 的 coalesce），
+所以第二个 `keyset_cursor=True` 不是"暂时没做"而是
 **会翻错页**，于是注册期直接拒绝，并说明要加第二个得同时改谓词与取值两处。这跟轴 #11 的
 栅栏同源：**能把"做不到的事"变成报错，就不要让它变成看起来成功的错答案。**
 
@@ -368,7 +373,8 @@ ag4c-verify`。
 - 行为等价（未改任何既有断言）：`list_documents_page` 的全部六个消费方套件
   `test_document_catalog_api`(19) + `test_document_delete_api_v2` + `test_document_management_settings`
   + `test_document_source_identity` + `test_documents_folder_ingest` + `test_phase7_usage_accounting`
-  = **44 passed / 30.98s** 与 **34 passed / 125.91s**；`ruff check .` 全仓通过。
+  = 该条数字当时是错的（44+34=78，而六个套件只有 66 条），已由 §O 的实测读数取代：
+  六个消费方套件连同四张表的全部守卫在 `ruff check .` 通过后一并重跑，见 §O 第一条。
 - 反向验证 5 个变异全部转红：方向退回按名字硬编码（2 红）、允许第二个 keyset 排序（2 红）、
   游标解码退回比字面量（1 红，宿主守卫）、表达式梯退回硬编码（2 红）、去掉游标能力闸门（1 红）。
 - **第一版探针选错了方向**：我原本注册的是 `created_at_desc`（降序），而旧写法"其余按 desc"
@@ -448,3 +454,44 @@ C 1 红、D 6 红、E 丢 BOM 1 红，加两轮复跑）全部由新守卫抓住
 **没做的部分**：`AuditExportFormatSpec` 只声明"叫什么/怎么标/怎么产字节"，导出任务的
 DB `CHECK (format IN ('ndjson','csv'))` 仍是写死的（属 §B 里"要迁移"那一族），所以真加一种格式
 仍然需要一次 catalog 迁移把那一列放宽 —— 这条轴免掉的是四处代码判断，不是全部跨层成本。
+
+---
+
+## O. 第四轮独立评审（审 `bbb1029` 前后四张表）查出的十三条，逐条处置
+
+评审 verdict 是 **FAIL**：13 个缺陷 + 4 处说法过头。下面每条都写"改了什么 / 哪条用例钉住 /
+破坏它时谁红"。反向验证用仓外脚本 `%TEMP%\rag4c-review4\mutate3.py`、`mutate4.py`
+（快照字节 → 单点替换 → 跑对应守卫 → 按 sha256 还原）：**24 个变异全部转红，0 个逃逸**。
+
+| 发现 | 处置 | 钉住的用例 |
+|---|---|---|
+| **B(i)** 注册期只用合成 actor 试调一次 `release_values`，仪式写 UPDATE 前那次不再核 → 按参数/按调用次数分支的声明能推翻撤销 | 仪式自己把住合并（`core/enterprise_identity_control.py:1611`） | `test_the_fence_is_held_at_write_time_not_only_at_registration[by-actor\|by-call-count × status\|revoked_by]` |
+| **A-1 / S6** 表达式分发退回"按名字点菜"的梯子，12 条守卫全绿（宿主守卫只禁了 `name_asc`） | 宿主守卫禁掉三个内建名的字面量比较 | `test_the_catalog_holds_no_copy_of_the_sort_ladders` |
+| **B(ii)** 排序可以声明一份游标能力，而编码/谓词实现不了它（只在运行时炸，且理由文案说的是别人的名字） | `cursor_value` 成为 keyset 声明的必填项：ORDER BY 与游标取值同出一门；`replace=True` 不再被自己计数挡住 | `test_a_keyset_declaration_must_carry_the_value_it_pages_on`、`test_replacing_the_sort_that_holds_the_cursor_is_allowed` |
+| **S2** `core/catalog.py` 编码处一句写死的名字比对没被转换（本次改动漏网的第五处） | 编码改为查表，且两处拒绝共用一句由表派生的文案 | `test_the_encoder_refuses_a_sort_that_never_declared_a_cursor` |
+| **S3 / S4** 续游标与拒游标两处退回比字面量时全绿 | 摘掉内建、注册探针排序，走完整张表 | `test_a_newly_registered_cursor_sort_pages_with_its_own_cursor` |
+| **E** `route_reason` 当时零消费者；`reason` 本身没被校验（长度/类型一律放行，直落 JSON 列） | 消费方在 `23cfbe6` 已补；注册期新增非空 + `REASON_MAX_CHARS` 上限 | `test_the_reason_is_a_bounded_operator_facing_string` |
+| **P1 / P3 / P5** 分类器给的事实没跟进 metadata、fast 分支不再记录、记到别的键下 —— 全绿 | 断言 `parse` 之后 `metadata["router"]` 的完整内容 | `test_the_whole_decision_reaches_the_parse_metadata_not_just_the_engine[fast\|vision]` |
+| **P2** 重名栅栏在 `pdf_type_routing` / `document_sorts` 两张表上没钉（判据 §3.2 只做到 4 张表里的 2 张） | 各补一条 | `test_a_duplicate_route_declaration_is_refused_without_an_explicit_replace`、`test_a_duplicate_sort_name_is_refused_without_an_explicit_replace` |
+| **I1 / I2 / I3 / I3b / I6** 身份守卫从没看过落库的审计行与预留行，把 action / resource_type / before / after 换成字面量全绿 | 实时用例改为读 `tenant_audit_events` 与 `tenant_control_mutation_requests` 并按声明字段逐字比对 | `test_a_new_kind_is_honoured_live_by_the_shared_ceremony` |
+| **R1 / R4** 只读证明里"机制不符"那条断言用的是没备答案的假连接，KeyError 先让它 False —— 判的是约束层不是栅栏 | 每一项单独破坏、其余全部答对 | `test_each_condition_of_the_proof_is_alone_enough_to_refuse_it` |
+| **G** 内建注册写在宿主模块末尾、往导入进来的表里写，宿主被第二次实例化时炸在启动路径上（catalog / identity 两张表如此，另两张自注册没事） | 内建声明收进 `register_builtin_document_sorts()` / `register_builtin_revocation_kinds()`，以 `replace=True` 重放 | 两处同名 `test_the_builtin_declarations_survive_a_second_instantiation` |
+| **C** `parse()` 里"不认识的引擎标签"这条 raise 够不到（无子类、`route()` 只会给校验过的标签） | **保留但不复写说法**：它是纵深防御，真正的栅栏是注册期 `engine in ENGINE_NAMES`；用例文案已改成这个口径 | `test_an_unknown_engine_label_fails_loudly_instead_of_running_vision` |
+| **#15 形状缺口** `live_probe_required=False` + 无 `connect_args` 的声明等于凭空断言只读 | 新增 `proved_by_url` 显式声明"靠 URL 成立"，两者并存或三者皆空都拒绝 | `test_a_bad_declaration_dies_at_registration` 新增两行 |
+
+**说法更正（评审 H 段，全部成立）**：§L 的六个套件读数写错、"两处写死"实为五处、§K 的
+"操作员能看见"当时为假、§J 把够不到的分支说成"真实的静默 fail-open"、§I 数了 8 个变异却只
+列了 7 条。正文已就地订正，不重述为"本来就对"。
+
+**判据层面学到的一条，比任何单点修复都值钱**：一条断言必须处在**只有被测机制能让它通过**的
+位置上。`_proved(PROBE, "guess")` 那条看起来在测"机制不符"，实际测的是假连接抛 KeyError；
+所以删掉栅栏它照样绿。同类错误我这轮又抓到两处（审计行从没被读过、metadata 键名没被读过），
+都属同一形状：**断言声明对象的字段，而不是声明落到现实里的那一处**。
+
+### 本轮实测（不引用历史日志）
+
+- 反向验证：`24 个变异全部转红`，无锚点歧义残留（三条歧义锚点在 `mutate4.py` 里加上下文后各红一条）。
+- 回归：`? collected` → **365 passed / 0 skipped in 632.77s**（`-q --tb=short`，
+  单进程无 xdist），覆盖文档目录六个消费方套件 + 身份/SSO + 就绪面两套 + 解析 metadata 三套 +
+  `test_run_registry_integration` + 四张表的全部守卫。
+- `ruff check .` 全仓通过；`git diff --numstat` 与 `--ignore-cr-at-eol` 一致（无行尾翻转）。

@@ -1688,29 +1688,38 @@ __all__ = [
 # 两种可撤销的身份资源各自声明"哪里不一样"；仪式（幂等预留、FOR UPDATE、revision CAS、
 # 审计信封）全在 _simple_state_mutation 里共享。release_values 的差别本身就是一道栅栏：
 # 域名撤销要落 updated_by，SCIM token 撤销必须让出 active_name_key 那个"同名只允许一个
-# 生效"的唯一槽位，否则轮换出来的新 token 建不出来。写 status/revision/revoked_* 会被
-# 注册期直接拒绝 —— 那一列就是撤销本身。
-register_revocation_kind(
-    RevocationKindSpec(
-        kind="domain_revoke",
-        operation="identity.domain.revoke",
-        resource_type="tenant_verified_domain",
-        table_name="tenant_verified_domains",
-        payload_key="domain",
-        audit_action="tenant_domain.revoked",
-        project=_domain_payload,
-        release_values=lambda actor_id: {"updated_by": actor_id},
+# 生效"的唯一槽位，否则轮换出来的新 token 建不出来。写 status/revision/revoked_* 在注册期
+# 就被拒绝，写 UPDATE 之前仪式还会再核一次（那一列就是撤销本身）。
+def register_builtin_revocation_kinds() -> None:
+    """Declare the built-in kinds. Replace rather than refuse, so a second instantiation of
+    this module (``importlib.reload`` or a copy-load under another name) re-declares its own
+    builtins instead of failing at import."""
+    register_revocation_kind(
+        RevocationKindSpec(
+            kind="domain_revoke",
+            operation="identity.domain.revoke",
+            resource_type="tenant_verified_domain",
+            table_name="tenant_verified_domains",
+            payload_key="domain",
+            audit_action="tenant_domain.revoked",
+            project=_domain_payload,
+            release_values=lambda actor_id: {"updated_by": actor_id},
+        ),
+        replace=True,
     )
-)
-register_revocation_kind(
-    RevocationKindSpec(
-        kind="scim_revoke",
-        operation="identity.scim.revoke",
-        resource_type="tenant_scim_token",
-        table_name="tenant_scim_tokens",
-        payload_key="token",
-        audit_action="tenant_scim_token.revoked",
-        project=_scim_payload,
-        release_values=lambda _actor_id: {"active_name_key": None},
+    register_revocation_kind(
+        RevocationKindSpec(
+            kind="scim_revoke",
+            operation="identity.scim.revoke",
+            resource_type="tenant_scim_token",
+            table_name="tenant_scim_tokens",
+            payload_key="token",
+            audit_action="tenant_scim_token.revoked",
+            project=_scim_payload,
+            release_values=lambda _actor_id: {"active_name_key": None},
+        ),
+        replace=True,
     )
-)
+
+
+register_builtin_revocation_kinds()

@@ -47,6 +47,7 @@ from typing import Any, Optional
 
 from core.document_sorts import (
     DocumentSortSpec,
+    cursor_capable_sorts,
     register_document_sort,
     resolve_document_sort,
 )
@@ -1325,21 +1326,8 @@ def _document_catalog_sort_expression(
     return spec.expression(table, available)
 
 
-# 三个内建排序各一行声明：名字、方向、表达式，以及"谁能用 keyset 游标"。
-register_document_sort(
-    DocumentSortSpec(
-        sort="updated_at_desc",
-        direction="desc",
-        expression=_sort_updated_at,
-        keyset_cursor=True,
-    )
-)
-register_document_sort(
-    DocumentSortSpec(sort="created_at_asc", direction="asc", expression=_sort_created_at)
-)
-register_document_sort(
-    DocumentSortSpec(sort="name_asc", direction="asc", expression=_sort_name)
-)
+# 三个内建排序的声明在 _document_cursor_timestamp 之后（那一列就是它的游标取值），
+# 见 register_builtin_document_sorts。
 
 
 def _document_catalog_filter_criteria(
@@ -1468,15 +1456,25 @@ def _document_cursor_query_hash(
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _cursor_capable_refusal(sort: str) -> ValueError:
+    """两处"这个排序不能用游标"的同一句话：能用的那一个由表说了算，不写死名字。"""
+    capable = cursor_capable_sorts()
+    named = capable[0] if len(capable) == 1 else "the declared sort"
+    return ValueError(f"cursor is supported only for {named}, not for {sort}")
+
+
 def _encode_document_cursor(sort: str, timestamp: Any, document_id: Any, query_hash: str) -> str:
     import base64
     import json
 
-    if sort != "updated_at_desc":
-        raise ValueError("cursor is supported only for updated_at_desc")
+    spec = resolve_document_sort(sort)
+    if spec is None:
+        raise ValueError("unsupported document sort")
+    if not spec.keyset_cursor:
+        raise _cursor_capable_refusal(sort)
     if timestamp is None or document_id is None:
         raise DocumentCatalogCapabilityError(
-            "updated_at_desc cursor requires a timestamp and document id"
+            f"{sort} cursor requires a timestamp and document id"
         )
     normalised_timestamp = _normalise_document_cursor_datetime(timestamp)
     payload = {
@@ -1534,6 +1532,37 @@ def _document_cursor_timestamp(row: Any) -> Any:
     return row.get("updated_at") or row.get("created_at")
 
 
+# 三个内建排序各一行声明：名字、方向、表达式，以及"谁能用 keyset 游标 + 游标取哪一列"。
+# updated_at_desc 的 ORDER BY 表达式和游标值都从这里出，所以两者不会各自演化后互相错位。
+def register_builtin_document_sorts() -> None:
+    """Declare the built-in sorts. Replace rather than refuse, so a second instantiation of
+    this module (``importlib.reload`` or a copy-load under another name) re-declares its own
+    builtins instead of failing at import."""
+    register_document_sort(
+        DocumentSortSpec(
+            sort="updated_at_desc",
+            direction="desc",
+            expression=_sort_updated_at,
+            keyset_cursor=True,
+            cursor_value=_document_cursor_timestamp,
+        ),
+        replace=True,
+    )
+    register_document_sort(
+        DocumentSortSpec(
+            sort="created_at_asc", direction="asc", expression=_sort_created_at
+        ),
+        replace=True,
+    )
+    register_document_sort(
+        DocumentSortSpec(sort="name_asc", direction="asc", expression=_sort_name),
+        replace=True,
+    )
+
+
+register_builtin_document_sorts()
+
+
 def list_documents_page(
     tenant_id: str,
     dataset_id: str,
@@ -1589,7 +1618,7 @@ def list_documents_page(
     if sort_spec is None:
         raise ValueError("unsupported document sort")
     if cursor and not sort_spec.keyset_cursor:
-        raise ValueError("cursor is supported only for updated_at_desc")
+        raise _cursor_capable_refusal(normalized_sort)
 
     from sqlalchemy.orm import Session
 
@@ -1670,7 +1699,8 @@ def list_documents_page(
     if has_next and sort_spec.keyset_cursor and rows:
         next_cursor = _encode_document_cursor(
             normalized_sort,
-            _document_cursor_timestamp(rows[-1]),
+            # 游标里的值是声明给的取值方式，和 ORDER BY 用的表达式同出一门。
+            sort_spec.cursor_value(rows[-1]),  # type: ignore[misc]
             rows[-1].get("id"),
             cursor_query_hash,
         )

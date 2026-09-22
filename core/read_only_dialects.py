@@ -49,6 +49,11 @@ class ReadOnlyDialectSpec:
             Ordered because MySQL renamed this variable — the modern name is listed first
             and the legacy ``tx_read_only`` is the fallback.
         accepted_values: Case-folded readings that mean "yes, read-only".
+        proved_by_url: Set only when read-only-ness is established by the URL the engine is
+            opened with rather than by driver kwargs or a session variable — i.e. the caller
+            that rewrites the URL owns the guarantee. Without it, a declaration that carries
+            neither ``connect_args`` nor a live probe would be asserting read-only-ness with
+            no mechanism behind it at all, which is exactly what registration refuses.
     """
 
     dialect: str
@@ -57,6 +62,7 @@ class ReadOnlyDialectSpec:
     live_probe_required: bool = True
     proof_statements: tuple[str, ...] = ()
     accepted_values: frozenset[str] = frozenset({"on", "true", "1"})
+    proved_by_url: bool = False
 
 
 BUILTIN_READ_ONLY_DIALECT_SPECS: tuple[ReadOnlyDialectSpec, ...] = (
@@ -66,6 +72,7 @@ BUILTIN_READ_ONLY_DIALECT_SPECS: tuple[ReadOnlyDialectSpec, ...] = (
         dialect="sqlite",
         mechanism="sqlite-uri-mode-ro",
         live_probe_required=False,
+        proved_by_url=True,
     ),
     ReadOnlyDialectSpec(
         dialect="postgresql",
@@ -118,6 +125,16 @@ def _validate_spec(spec: ReadOnlyDialectSpec) -> None:
         )
     if not spec.accepted_values:
         raise ValueError(f"{name}: accepted_values must not be empty")
+    if spec.proved_by_url and (spec.connect_args or spec.live_probe_required):
+        raise ValueError(
+            f"{name}: proved_by_url says the URL owns the guarantee — declaring a driver "
+            "mechanism or a live probe alongside it is two stories about one dialect"
+        )
+    if not spec.connect_args and not spec.live_probe_required and not spec.proved_by_url:
+        raise ValueError(
+            f"{name}: nothing behind this declaration would prove read-only-ness — no "
+            "connect_args, no live probe, and no claim that the URL does it (proved_by_url)"
+        )
     for key in dict(spec.connect_args):
         if not isinstance(key, str) or not key.strip():
             raise ValueError(f"{name}: connect_args keys must be non-empty strings")

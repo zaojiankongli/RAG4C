@@ -39,6 +39,13 @@ from tests.test_enterprise_identity_federation_api import (
 PROBE_TABLE = "tenant_verified_domains"
 
 
+def _as_dict(value: Any) -> Any:
+    """快照列在 sqlite 上是 JSON 文本，取法随驱动而定 —— 这里只比较内容。"""
+    import json
+
+    return json.loads(value) if isinstance(value, (str, bytes)) else value
+
+
 def _probe_spec(**overrides: Any) -> RevocationKindSpec:
     fields: dict[str, Any] = {
         "kind": "probe_revoke",
@@ -96,6 +103,28 @@ def test_a_new_kind_is_honoured_live_by_the_shared_ceremony() -> None:
     # 只有声明能把它改成这个字符串的 —— 早先用 updated_by 时它建出来就是 owner-a，
     # 断言根本区分不出"仪式写了"和"本来就写着"，变异跑（去掉 values.update）全绿。
     assert row["txt_value"] == "released:owner-a"
+    # 审计与幂等预留这两份"仪式的产物"也必须逐字取自声明 —— 评审发现 I1/I2/I3/I3b/I6：
+    # 把 action / resource_type / before / after 换成字面量，原先 23 条守卫全绿，因为它们
+    # 只看声明对象的字段，从没看过落库的那一行。
+    events = [
+        r for r in _rows(engine, "tenant_audit_events") if r["resource_type"] == "tenant_probe"
+    ]
+    assert len(events) == 1, "审计行的 resource_type 没照声明写（这一列没有任何约束兜着）"
+    event = events[0]
+    assert event["action"] == "tenant_probe.revoked"
+    assert event["resource_id"] == domain_id
+    assert _as_dict(event["before_snapshot"]) == {"normalized_domain": "probe.test"}
+    assert _as_dict(event["after_snapshot"]) == {
+        "normalized_domain": "probe.test",
+        "reason": "探针撤销",
+    }
+    reserved = [
+        r
+        for r in _rows(engine, "tenant_control_mutation_requests")
+        if r["operation"] == "identity.probe.revoke"
+    ]
+    assert len(reserved) == 1, "幂等预留的 operation 没照声明写"
+    assert reserved[0]["resource_type"] == "tenant_probe"
     assert host.read_bytes() == before, "宿主又被按 kind 点了名"
     assert resolve_revocation_kind("probe_revoke") is None
 
@@ -307,3 +336,13 @@ def test_the_ceremony_holds_no_copy_of_the_kind_branches() -> None:
     source = inspect.getsource(control._simple_state_mutation)  # noqa: SLF001
     assert 'kind == "domain_revoke"' not in source
     assert "resolve_revocation_kind" in source
+
+
+def test_the_builtin_declarations_survive_a_second_instantiation() -> None:
+    """评审发现 G：内建注册发生在宿主模块末尾、往导入进来的表里写 —— 宿主被第二次实例化
+    （``importlib.reload`` 或按别的模块名副本装载）时，第二次注册会当场炸在启动路径上。
+    内建声明必须可重放。
+    """
+    control.register_builtin_revocation_kinds()
+    control.register_builtin_revocation_kinds()
+    assert {"domain_revoke", "scim_revoke"} <= set(revocation_kind_names())

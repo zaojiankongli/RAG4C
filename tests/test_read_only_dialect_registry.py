@@ -115,8 +115,12 @@ def test_a_new_dialect_is_honoured_live_without_editing_the_readiness_api() -> N
         assert api.prove_read_only_engine(engine) is True
         assert engine.connection.seen == [PROBE_STATEMENT]  # noqa: SLF001
 
-        # 机制写错一律不认，哪怕这条方言已经注册。
-        assert api.prove_read_only_engine(_proved(PROBE_DIALECT, "guess")) is False
+        # 机制写错一律不认，哪怕这条方言已经注册。（原来这条用的是没备答案的假连接，
+        # 删掉宿主里那句机制比对它照样 False —— 判的是 KeyError，不是栅栏。下面
+        # test_a_proof_is_refused_... 把每一项单独拆开、其余全部答对。）
+        guess = _proved(PROBE_DIALECT, "guess")
+        guess.connection._readings[PROBE_STATEMENT] = "YES"  # noqa: SLF001
+        assert api.prove_read_only_engine(guess) is False
 
         # 服务端答 no 就是不认 —— 声明只决定"怎么问"，不决定"答案是什么"。
         unanswered = _proved(PROBE_DIALECT, "probekind-session-readonly")
@@ -138,8 +142,50 @@ def test_a_new_dialect_is_honoured_live_without_editing_the_readiness_api() -> N
     assert api.prove_read_only_engine(_proved(PROBE_DIALECT, "probekind-session-readonly")) is False
 
 
-def test_an_unregistered_dialect_fails_closed_even_with_a_plausible_proof() -> None:
-    # 未注册的方言带着格式完全正确的凭证也必须判 False：这里一旦松手，readiness 就会把
+def _proved_with(
+    mechanism: str,
+    *,
+    guaranteed: bool = True,
+    proof_dialect: str = PROBE_DIALECT,
+    engine_dialect: str = PROBE_DIALECT,
+) -> Any:
+    """一台"其它一切都对"的引擎：实探测照答 yes，只把要判的那一项换掉。"""
+    engine = _FakeEngine(engine_dialect, {PROBE_STATEMENT: "YES"})
+    connection = engine.connect()
+    engine.connect = lambda: connection  # type: ignore[method-assign]
+    setattr(
+        engine,
+        api._READ_ONLY_PROOF_ATTRIBUTE,  # noqa: SLF001
+        api.ReadOnlyEngineProof(
+            dialect=proof_dialect, mechanism=mechanism, guaranteed=guaranteed
+        ),
+    )
+    return engine
+
+
+def test_each_condition_of_the_proof_is_alone_enough_to_refuse_it() -> None:
+    """评审发现 R1/R4：删掉宿主里 ``proof.mechanism != spec.mechanism`` 或
+    ``proof.guaranteed is not True`` 这两句，16 条守卫全绿 —— 因为原来那条"机制写错"的
+    断言用的是没备答案的假连接，KeyError 先让它 False，判的不是栅栏。这里一次只破坏一项，
+    服务端始终答 yes，所以只有那一项能让它翻。
+    """
+    register_read_only_dialect(_probe_spec())
+    try:
+        assert api.prove_read_only_engine(_proved_with("probekind-session-readonly")) is True
+        assert api.prove_read_only_engine(_proved_with("probekind-session-readonly", guaranteed=False)) is False, (
+            "guaranteed=False 却仍被认定只读"
+        )
+        assert api.prove_read_only_engine(_proved_with("some-other-mechanism")) is False, (
+            "机制标签不符却仍被认定只读"
+        )
+        assert api.prove_read_only_engine(
+            _proved_with("probekind-session-readonly", proof_dialect="mysql")
+        ) is False, "凭证上的方言与引擎实际方言不符"
+    finally:
+        unregister_read_only_dialect(PROBE_DIALECT)
+
+
+def test_an_unregistered_dialect_fails_closed_even_with_a_plausible_proof() -> None:    # 未注册的方言带着格式完全正确的凭证也必须判 False：这里一旦松手，readiness 就会把
     # "我们没法证明" 说成 "我们证明了"。
     assert api.prove_read_only_engine(_proved("oracle", "oracle-session-readonly")) is False
     assert api.prove_read_only_engine(_proved("probekind", "x")) is False
@@ -221,6 +267,9 @@ def test_the_live_probe_falls_back_to_the_legacy_mysql_statement_in_order() -> N
         ({"live_probe_required": False}, "不实探测却留着探测语句"),
         ({"accepted_values": frozenset()}, "没有可读作只读的值"),
         ({"connect_args": {"": "x"}}, "空 connect_args 键名"),
+        ({"connect_args": {}, "live_probe_required": False, "proof_statements": ()},
+         "既无驱动机制、又不实探测、也没声称靠 URL"),
+        ({"proved_by_url": True}, "声称靠 URL 却同时留着驱动机制/实探测"),
     ],
 )
 def test_a_bad_declaration_dies_at_registration(overrides: dict[str, Any], reason: str) -> None:

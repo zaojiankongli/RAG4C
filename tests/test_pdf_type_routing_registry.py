@@ -129,7 +129,11 @@ def test_mixed_keeps_the_page_level_note_that_justifies_the_heavier_engine() -> 
 
 
 def test_an_unknown_engine_label_fails_loudly_instead_of_running_vision() -> None:
-    """原先 ``parse`` 的 else 会把任何不认识的标签静默当 vision 解析。"""
+    """``parse`` 的这一支是**纵深防御**，不是唯一的栅栏：今天的 route() 只会给出
+    表里校验过的标签，所以要靠替换 route() 才够得到（真正的栅栏是注册期的
+    ``engine in ENGINE_NAMES``）。留着是因为宿主允许被继承，不是因为它曾经漏过 ——
+    原先那个 else 也同样是够不到的分支，改之前并没有东西真的 fail-open。
+    """
     fast = _FakeFast({"pdf_type": "text_based", "confidence": 1.0})
     vision = _FakeVision()
     router = DocumentRouter(vision_parser=vision, fast_parser=fast, page_limit=0)
@@ -138,6 +142,69 @@ def test_an_unknown_engine_label_fails_loudly_instead_of_running_vision() -> Non
     with pytest.raises(MineruParserError):
         router.parse("docs/a.pdf")
     assert vision.parsed == 0
+
+
+# --------------------------------------------------------------------------- #
+# 决策的**全部内容**要落到解析 metadata：判由、引擎、分类器自己的事实
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("engine", ["fast", "vision"])
+def test_the_whole_decision_reaches_the_parse_metadata_not_just_the_engine(
+    engine: str,
+) -> None:
+    """评审发现 P1/P3/P5：``route()`` 只回 ``{"engine", "route_reason"}`` 而丢掉分类器给的
+    其余事实、fast 分支不再记 ``metadata["router"]``、或把它记到别的键下 —— 15 条守卫全绿。
+    这三件事都只会体现在落库的 parser_meta 里，而前端就是读那一列，所以在这里钉实时产物。
+    """
+    pdf_type = "text_based" if engine == "fast" else "scanned"
+    router, _fast, _vision = _router(
+        {"pdf_type": pdf_type, "confidence": 0.83, "pages_needing_ocr": [3, 7]}
+    )
+    parsed = router.parse("docs/a.pdf")
+    recorded = parsed.metadata["router"]
+    assert recorded["engine"] == engine
+    assert recorded["pdf_type"] == pdf_type, "分类器给的事实没跟过来，前端就只能显示引擎名"
+    assert recorded["confidence"] == 0.83
+    assert recorded["route_reason"], "判由没记下来，操作员看不见为什么走这个引擎"
+    assert recorded["route_reason"] == resolve_pdf_type_route(pdf_type).reason  # type: ignore[union-attr]
+
+
+def test_the_reason_is_a_bounded_operator_facing_string() -> None:
+    """评审发现 E：判由会进 ``documents.parser_meta`` 并被前端直接渲染，但注册期只看
+    pdf_type 和 engine，reason 给多长、什么类型都不问。
+    """
+    from indexing.pdf_type_routing import REASON_MAX_CHARS
+
+    for bad in ("", "   ", "x" * (REASON_MAX_CHARS + 1), 42, None, {"why": "vision"}):
+        before = set(pdf_type_route_names())
+        with pytest.raises(ValueError):
+            register_pdf_type_route(PdfTypeRoute(pdf_type="probe_reason", engine="vision", reason=bad))  # type: ignore[arg-type]
+        assert set(pdf_type_route_names()) == before, f"{bad!r} 不该注册成功"
+    for route in BUILTIN_PDF_TYPE_ROUTES:
+        assert 0 < len(route.reason) <= REASON_MAX_CHARS, route.pdf_type
+
+
+def test_a_duplicate_route_declaration_is_refused_without_an_explicit_replace() -> None:
+    """评审发现 P2：重名栅栏删掉后全绿 —— 两条声明抢同一个分类结果时，后写的悄悄赢。"""
+    with pytest.raises(ValueError, match="already registered"):
+        register_pdf_type_route(PdfTypeRoute(pdf_type="text_based", engine="vision", reason="抢位"))
+    assert resolve_pdf_type_route("text_based").engine == "fast"  # type: ignore[union-attr]
+    register_pdf_type_route(
+        PdfTypeRoute(pdf_type="text_based", engine="vision", reason="显式替换"), replace=True
+    )
+    try:
+        assert resolve_pdf_type_route("text_based").engine == "vision"  # type: ignore[union-attr]
+    finally:
+        register_pdf_type_route(
+            PdfTypeRoute(
+                pdf_type="text_based",
+                engine="fast",
+                reason="整本有文本层，fast 引擎足够",
+            ),
+            replace=True,
+        )
+    assert resolve_pdf_type_route("text_based").engine == "fast"  # type: ignore[union-attr]
 
 
 def test_a_route_may_only_name_an_engine_that_can_actually_run() -> None:

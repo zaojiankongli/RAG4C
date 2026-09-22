@@ -14,10 +14,14 @@ The fence the table may not cross
     A revocation writes five columns that *are* the revoke: ``status``, ``revision``,
     ``revoked_at``, ``revoked_by``, plus ``updated_at``. A declaration that returned any of
     those from ``release_values`` would silently undo the revoke it is part of (or break the
-    CAS that makes it safe), so ``_validate_spec`` refuses the overlap at registration time
-    instead of trusting the author. Before this table the same hazard existed but was
-    invisible: the two kinds hard-coded ``updated_by`` / ``active_name_key`` in an
-    ``if/else`` that no new kind could extend wrongly without being noticed.
+    CAS that makes it safe), so the overlap is refused twice: ``_validate_spec`` at
+    registration, and the ceremony again right before the ``UPDATE``. The second check is not
+    redundant — registration only gets to call ``release_values`` once, with a synthetic
+    actor, so a declaration that branches on its argument or on how often it has been called
+    passes registration and then clobbers the revoke at runtime. Before this table the same
+    hazard existed but was invisible: the two kinds hard-coded ``updated_by`` /
+    ``active_name_key`` in an ``if/else`` that no new kind could extend wrongly without being
+    noticed.
 """
 
 from __future__ import annotations

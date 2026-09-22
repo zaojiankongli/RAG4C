@@ -35,6 +35,10 @@ __all__ = [
 #: Engine labels ``parse`` knows how to actually run.
 ENGINE_NAMES = frozenset({"fast", "vision"})
 
+#: The reason lands in ``documents.parser_meta`` and on the operator's diagnostics pane, so
+#: it is a display field with a bounded value, not a free-form scratch pad.
+REASON_MAX_CHARS = 200
+
 
 @dataclass(frozen=True)
 class PdfTypeRoute:
@@ -93,6 +97,16 @@ def _validate(route: PdfTypeRoute) -> None:
         raise ValueError(
             f"{route.pdf_type}: engine must be one of {sorted(ENGINE_NAMES)}; "
             "a new engine needs a parser object and a dispatch in parse, not just a label"
+        )
+    if not isinstance(route.reason, str) or not route.reason.strip():
+        raise ValueError(
+            f"{route.pdf_type}: reason must be a non-empty string — it is the operator-facing "
+            "answer to \u201cwhy this engine\u201d, and a missing one reads as an unexplained choice"
+        )
+    if len(route.reason) > REASON_MAX_CHARS:
+        raise ValueError(
+            f"{route.pdf_type}: reason must stay within {REASON_MAX_CHARS} characters "
+            f"(got {len(route.reason)}); it is stored in documents.parser_meta"
         )
 
 

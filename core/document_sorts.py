@@ -2,24 +2,28 @@
 
 Listing documents used to consult four separate places that had to agree: a frozenset of
 accepted names, a ladder that built the ORDER BY expression, a ladder that picked the
-direction (``asc`` twice, then an ``else`` that meant descending), and two hard-coded
-``"updated_at_desc"`` comparisons in the keyset-cursor path. The dangerous one was the
+direction (``asc`` twice, then an ``else`` that meant descending), and five hard-coded
+``"updated_at_desc"`` comparisons in the cursor path (the encoder's was missed in the first
+pass and is converted now). The dangerous one was the
 direction ladder: a new *ascending* sort added to the expression ladder would fall into
 ``else`` and page **backwards** — still a valid-looking page of documents, just with
 broken cursor/next-page semantics. Nothing complained.
 
 The keyset cursor stays deliberately single-implementer
-    The predicate is written with ``<`` (descending) and the value it encodes comes from
-    the ``updated_at or created_at`` coalesce. So a second ``keyset_cursor=True`` sort
-    would page wrongly rather than fail loudly, and ``_validate`` refuses a second
-    declaration outright. Making another sort cursor-capable is a real change to the
-    predicate and the extractor, and this table will not let someone pretend otherwise.
+    The predicate is written with ``<`` (descending) and the encoded value has to be a
+    datetime. So a second ``keyset_cursor=True`` sort would page wrongly rather than fail
+    loudly, and ``_validate`` refuses a second declaration outright. What a cursor sort must
+    *supply* is now part of the declaration rather than part of an error message: it names
+    the value it pages on through ``cursor_value``, because declaring "I can cursor" while
+    leaving the machinery to guess which column you sort by is exactly the drift this table
+    exists to prevent. Making another sort cursor-capable is still a real change to the
+    predicate and the encoder — but it can no longer be *claimed* without being carried.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 __all__ = [
     "DocumentSortSpec",
@@ -36,12 +40,14 @@ DIRECTIONS = frozenset({"asc", "desc"})
 
 @dataclass(frozen=True)
 class DocumentSortSpec:
-    """One sort: its name, its direction, and how to build its ORDER BY expression."""
+    """One sort: its name, its direction, how to build its ORDER BY expression, and — for
+    the one sort allowed to page — how to read that same key back out of a result row."""
 
     sort: str
     direction: str
     expression: Callable[[Any, set[str]], Any]
     keyset_cursor: bool = False
+    cursor_value: Callable[[Mapping[str, Any]], Any] | None = None
 
 
 _BY_SORT: dict[str, DocumentSortSpec] = {}
@@ -60,12 +66,18 @@ def _validate(spec: DocumentSortSpec) -> None:
     if not callable(spec.expression):
         raise ValueError(f"{name}: expression must be callable")
     if spec.keyset_cursor:
+        if not callable(spec.cursor_value):
+            raise ValueError(
+                f"{name}: keyset_cursor=True requires cursor_value — the sort expression and "
+                "the value written into the cursor must come from the same declaration, or a "
+                "later edit can make them disagree"
+            )
         if spec.direction != "desc":
             raise ValueError(
                 f"{name}: the keyset predicate is written for descending order (<), "
                 "an ascending cursor sort would page the wrong way"
             )
-        existing = cursor_capable_sorts()
+        existing = [held for held in cursor_capable_sorts() if held != name]
         if existing:
             raise ValueError(
                 f"{name}: only one sort may declare keyset_cursor; the cursor predicate and "
