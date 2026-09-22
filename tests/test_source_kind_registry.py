@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field
 
 from server.knowledge_sources_api import (
     SourceKind,
+    _connector_contract,
+    _default_preflight,
     _github_repo_preflight,
     _local_dir_preflight,
     _validate_connector_model,
@@ -103,18 +105,85 @@ def test_contract_cannot_be_attached_to_an_unregistered_kind() -> None:
         attach_source_contract("local_dir", config_model=None, preflight=lambda n, s: n)
 
 
-def test_a_new_kind_needs_no_edit_to_the_http_layer(tmp_path: Path, probe_plugin) -> None:
+def test_declaring_a_new_kind_is_two_declarations_and_zero_branch_edits(
+    tmp_path: Path, probe_plugin
+) -> None:
+    """判据的准确版本 —— 加一种源 = 注册工厂 + 挂一行契约，**两处声明、零处分支**。
+
+    原来这条的标题写着"不用改 HTTP 层"，那是假的：挂载语句就住在 HTTP 层这个文件里
+    （配置模型与白名单安检本来就在 API 侧）。真正不许动的，是三个派发函数；而
+    "注册即生效"要由行为证明，不是由一个恒真的字节比较证明。
+    """
     name, model = probe_plugin
-    host = Path(inspect.getsourcefile(_validate_connector_model) or "")
-    before = host.read_bytes()
+    hosts = {
+        fn: inspect.getsource(fn)
+        for fn in (_connector_contract, _validate_connector_model, _default_preflight)
+    }
 
     assert source_contract(name).config_model is model
     assert _validate_connector_model(name, {"share": "s"}) is not None  # type: ignore[arg-type]
     with pytest.raises(ValueError, match=f"{name} 配置字段无效"):
         _validate_connector_model(name, {"nope": 1})  # type: ignore[arg-type]
 
-    assert host.read_bytes() == before
-    assert name not in before.decode("utf-8")
+    for fn, source in hosts.items():
+        assert inspect.getsource(fn) == source, f"{fn.__name__} 为了新 kind 被改过"
+        assert name not in source
+    assert '"local_dir"' not in hosts[_validate_connector_model]
+
+
+def test_a_sibling_directory_sharing_the_roots_prefix_is_not_inside_it(
+    tmp_path: Path,
+) -> None:
+    """`_is_within` 的真实语义：`/srv/allowed_evil` 不在 `/srv/allowed` 里面。
+
+    写成 `str(path).startswith(root)` 的退化版本会放过它 —— 这是我这一轮评审里
+    唯一一条"改了安检实现却没有测试变红"的变异，所以这条用例是补的那道网。
+    """
+    root = tmp_path / "allowed"
+    root.mkdir()
+    sibling = tmp_path / "allowed_evil"
+    sibling.mkdir()
+    settings = SimpleNamespace(
+        local_allowed_roots=[str(root)], local_allowed_extensions=[".md"]
+    )
+
+    with pytest.raises(ValueError, match="不在允许目录内"):
+        _local_dir_preflight({"path": str(sibling), "extensions": [".md"]}, settings)
+
+
+def test_the_connector_is_not_built_before_the_allowlist_has_passed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """顺序本身就是安检：先造连接器再查白名单 = 未授权的路径已经被打开过。"""
+    import server.knowledge_sources_api as api
+
+    root = tmp_path / "allowed"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    settings = SimpleNamespace(
+        sources=SimpleNamespace(
+            local_allowed_roots=[str(root)],
+            local_allowed_extensions=[".md"],
+        )
+    )
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        knowledge_auth_settings=settings,
+        knowledge_source_connector_preflight=None,
+    )))
+    built: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        api,
+        "create_connector",
+        lambda kind, params, _settings: built.append((kind, dict(params))),
+    )
+
+    with pytest.raises(ValueError, match="不在允许目录内"):
+        api._default_preflight(request, "local_dir", {"path": str(outside)})
+    assert built == [], "白名单还没放行，连接器就已经被构造过了"
+
+    api._default_preflight(request, "local_dir", {"path": str(root)})
+    assert [kind for kind, _params in built] == ["local_dir"]
 
 
 def test_http_layer_names_no_kind_at_all() -> None:
@@ -177,3 +246,17 @@ def test_config_models_still_reject_stray_fields_and_bad_shapes() -> None:
         _validate_connector_model("local_dir", {"pathtwo": "x"})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="github_repo 配置字段无效"):
         _validate_connector_model("github_repo", {"repo": "no-separator-here"})  # type: ignore[arg-type]
+
+
+def test_re_registering_a_plugin_does_not_lose_its_attached_contract() -> None:
+    """`register_builtin_sources()` 自称幂等，而契约是 API 模块在 import 期挂上去的。
+
+    若同名覆盖把契约一起丢掉，症状是"所有源请求都 422"，而肇事者只是重跑了一次注册。
+    """
+    from sources.plugins import register_builtin_sources
+
+    before = source_contract("local_dir").config_model
+    assert before is not None
+    register_builtin_sources()
+    after = source_contract("local_dir").config_model
+    assert after is before, "重跑内置注册把 API 契约冲掉了"

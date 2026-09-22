@@ -57,8 +57,20 @@ _plugins: dict[str, SourcePlugin] = {}
 
 
 def register_source_plugin(plugin: SourcePlugin) -> None:
-    """注册文档源插件（同名覆盖，便于测试替换）。"""
+    """注册文档源插件（同名覆盖，便于测试替换）。
+
+    覆盖时**保留已挂载的 API 契约**：契约是别的模块（``server/knowledge_sources_api``）
+    在 import 期挂上去的，同名重建插件对象时若把它一起丢掉，那个源就会在
+    :func:`source_contract` 处 fail closed —— 表现是"所有源请求都 422"，而肇事者
+    只是重跑了一次 ``register_builtin_sources()``（它的 docstring 还写着幂等）。
+    """
     with _lock:
+        previous = _plugins.get(plugin.name)
+        if previous is not None:
+            if plugin.config_model is None:
+                plugin.config_model = previous.config_model
+            if plugin.preflight is None:
+                plugin.preflight = previous.preflight
         _plugins[plugin.name] = plugin
 
 
