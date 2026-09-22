@@ -11,7 +11,7 @@ Chunk authority rollout modes:
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Callable, Literal, Protocol
@@ -506,6 +506,9 @@ class ChunkWriteOutcome:
     authority_changed: bool = True
     operation_ids: tuple[str, ...] = ()
     projection_pending: bool = False
+    #: The document row the mutation resolved against, carried out so callers do not
+    #: re-read it (a PATCH used to read the same document three or four times).
+    doc: dict[str, Any] | None = None
     #: Enabled-head count in the modes that treat the authority as the chunk-count truth.
     remaining_chunks: int | None = None
     removed_chunks: int = 0
@@ -894,16 +897,19 @@ def apply_chunk_mutation(
         )
     writer = CHUNK_WRITERS.create(authority_mode, None)
     doc = _document(m.doc_id, catalog_api=catalog_api)
-    return writer.apply(
-        m,
-        WriterContext(
-            doc=doc,
-            pipeline=pipeline,
-            catalog_api=catalog_api,
-            chunk_catalog=chunk_catalog,
-            operation_queue=operation_queue,
-            include_graph=getattr(pipeline, "graph_builder", None) is not None,
+    return replace(
+        writer.apply(
+            m,
+            WriterContext(
+                doc=doc,
+                pipeline=pipeline,
+                catalog_api=catalog_api,
+                chunk_catalog=chunk_catalog,
+                operation_queue=operation_queue,
+                include_graph=getattr(pipeline, "graph_builder", None) is not None,
+            ),
         ),
+        doc=doc,
     )
 
 
@@ -932,7 +938,24 @@ def _apply_operator_mutation(
         chunk_catalog=chunk_catalog,
         operation_queue=operation_queue,
     )
-    tenant_id = str(_document(m.doc_id, catalog_api=catalog_api).get("tenant_id") or "")
+    doc = outcome.doc or _document(m.doc_id, catalog_api=catalog_api)
+    tenant_id = str(doc.get("tenant_id") or "")
+    if (
+        outcome.remaining_chunks is not None
+        and outcome.authority_changed
+        and int(outcome.remaining_chunks) != int(doc.get("chunk_count") or 0)
+    ):
+        # Reconcile the document's chunk_count with the authority after a verb that
+        # changes how many heads are enabled (restore, revert-to-disabled).  Left
+        # behind, a stale chunk_count makes active mode's completeness fence reject
+        # *every* later write on the document -- including edits to untouched chunks.
+        catalog_api.set_document_status(
+            m.doc_id,
+            str(doc.get("status") or "completed"),
+            detail="切片启停后按权威计数重算",
+            chunk_count=int(outcome.remaining_chunks),
+            parser_meta=dict(doc.get("parser_meta") or {}),
+        )
     if tenant_id:
         cache_epoch.bump(tenant_id, reason=f"{epoch_reason} {m.chunk_id}")
     return ChunkUpdateResult(
@@ -1022,8 +1045,16 @@ def revert_document_chunk_artifacts(
     )
 
 
-def _update_document_after_delete(*, doc_id: str, doc: dict[str, Any], catalog_api: Any) -> int:
-    next_count = max(0, int(doc.get("chunk_count") or 0) - 1)
+def _update_document_after_delete(
+    *, doc_id: str, doc: dict[str, Any], catalog_api: Any, next_count: int | None = None
+) -> int:
+    """Record a manual chunk delete against the document row.
+
+    ``next_count`` is supplied by the modes whose enabled-head count is the truth;
+    omitting it (legacy / shadow) keeps the historical ``chunk_count - 1`` decrement.
+    """
+    if next_count is None:
+        next_count = max(0, int(doc.get("chunk_count") or 0) - 1)
     parser_meta = dict(doc.get("parser_meta") or {})
     parser_meta["chunk_count"] = next_count
     parser_meta["manual_chunk_deletes"] = int(parser_meta.get("manual_chunk_deletes") or 0) + 1
@@ -1113,7 +1144,12 @@ def delete_document_chunk_artifacts(
         operation_queue=operation_queue,
     )
     if outcome.remaining_chunks is not None:
-        next_count = int(outcome.remaining_chunks)
+        next_count = _update_document_after_delete(
+            doc_id=doc_id,
+            doc=doc,
+            catalog_api=catalog_api,
+            next_count=int(outcome.remaining_chunks),
+        )
     else:
         next_count = int(doc.get("chunk_count") or 0)
         if outcome.authority_changed:
