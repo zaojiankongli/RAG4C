@@ -25,6 +25,8 @@ retrieval 12/4606、models 3/9344、config 2/1473；字面量等值分派点 247
 | 对象存储 provider | 声明式规格表 `StorageProviderSpec` | `tests/test_storage_provider_registry.py`（7 条） |
 | 检索阶段 + 可选策略 | Strategy+Registry+Template Method+Adapter | `tests/test_retrieval_stage_registry.py`（6 条，含宿主文件逐字节不变） |
 | **SQL 方言（本轮新增）** | 声明式规格表 `DialectSpec` + 失败即抛 | `tests/test_dialect_registry.py`（8 条） |
+| **文档类型 ↔ 能力（本轮新增）** | 声明式规格表 `DocTypeSpec`，四处消费点实时查表 | `tests/test_doc_type_registry.py`（14 条，含宿主快照守卫 + 4 路反向验证） |
+| **provider 三家族（本轮新增守卫）** | 已是 `ProviderRegistry`，本轮补判据 | `tests/test_provider_registry_extensibility.py`（33 条，14 宿主逐字节不变） |
 
 `core/embedding.py` / `core/llm.py` / `core/reranker.py` 经核实**本就已经到位**：
 全部经 `ProviderRegistry`，`server/` 与 `config/` 里没有任何残留 `if provider ==`；
@@ -36,7 +38,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 
 | # | 轴 | 站点（VERIFIED file:line 摘要） | 加一个实现要改几处 N | 迁移? | 契约? | 建议模式 |
 |---|-----|--------------------------------|--------------------|-------|-------|----------|
-| 1 | 文档类型 ↔ 能力（扩展名→doc_type→解析能力→策略→切分模式） | `indexing/parsers/base.py:28-41`、`docling_parser.py:49-52`、`ingest.py:59-72,79-81,431,698-709`、`strategies.py:286-292,310`、`chunking_router.py:38,144` | 3–5（五份平行字面量集合，互不派生） | 否 | `doc_type?: string`，非枚举 | 声明式能力规格表，四个集合成其投影 |
+| 1 | ~~文档类型 ↔ 能力~~ **本轮已完成**，见 A 表与 §D 2/3 | — | 0（注册即全认） | 否 | `doc_type?: string`，非枚举 | 已落 `indexing/doc_types.py` |
 | 2 | 运行事件 `event_type` 的行为分区 | `run_events.py:50-61`、`run_registry.py:1172,1184-1201,1203,1216-1236,1238,1247,1258-1262`、`run_ops.py:1163,1173,1185-1189,1213,1224-1228,1253` | 8（同一套 terminal 集合被手写 3 遍） | 否 | `frontend/src/types/rag.ts:47-62` 手工镜像 `Literal` | 声明式规格表（family/phase/effect） |
 | 3 | 投影目标 × 操作（`target_store` × `operation`） | `projection_handlers.py:36-40,125-132,208,460`、`index_worker.py:110-121,153,161,184,228-231,253,257`、`state_machine.py:531-542`、`document_deletion.py:43,1068,1392,1474,1491-1750,1728`、`knowledge_consistency_api.py:60-77` | 7–9（新目标）/ 4–5（新操作） | 否（无 CHECK） | 一致性响应里出现，前端仅当展示串 | Strategy+Registry，键 `store:operation`；**碰投影栅栏，风险最高** |
 | 4 | 来源连接器 `SourceKind` | `knowledge_sources_api.py:65,80,456-462,474-508,831-837`（`:80` 的 `_ALLOWED_KINDS` **定义了但从未被引用**） | 4（registry 本身已 0 改，是 HTTP 层把保证打穿） | 否 | `openapi.ts:7103,7142,7166` | 给现有 `SourcePlugin` 加 `config_model`/`preflight` 两个字段 |
@@ -84,12 +86,17 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 1. **授权路径 fail-open**：`capability_state` 无声明集合、三处手写谓词不一致，
    `enterprise_access_control.py:254` 只判 `== "unavailable"` 才 raise，
    任何第四种状态会**直接落进** `evaluate_workspace_authorization`。修法是共享分类器 + `raise` 兜底。
-2. **`.html` 解析成功却被贴错标签**：`docling_parser.py:51` 接受 `.html`，但它不在
-   `base.SUPPORTED_EXTENSIONS` / `_EXTENSION_DOC_TYPES` / `_PLAINTEXT_EXTENSIONS` 里
-   → `resolved_doc_type=None` → `ingest.py:719` 启发式 → 标成 `"txt"`。
-3. **CSV→qa 切分模式对真实上传不可达**：`chunking_router.py:38` 把 `csv` 路由到 `qa`，
-   但没有任何扩展名会产出 `doc_type="csv"`（`ingest.py:59-72` 无 `.csv`，也不在
-   `SUPPORTED_EXTENSIONS`）→ 该模式对真 CSV 是死的。
+2. **`.html` 解析成功却被贴错标签** —— **已修**：`indexing/doc_types.py` 登记了
+   `html (.html/.htm)`，`resolved_doc_type` 不再落回文本启发式；它仍不能免 parser 直读、
+   仍落 ParagraphStrategy，除标签外行为逐字不变（`test_html_is_labelled_honestly...` 钉住）。
+3. **真 CSV 根本入不了库，qa 切分模式因此是死的** —— **已修**。普查只看到"路由到 qa 但没人
+   产 `doc_type="csv"`"，实际更糟：`.csv` 既不在 `SUPPORTED_EXTENSIONS`（MinerU 与 docling 都
+   不认领），也不在 `_PLAINTEXT_EXTENSIONS`，而 `sources/runner.py:759` 调 `add_file` 时**不传
+   doc_type** → 一条 CSV 直接 `IngestError`。修法是让 `.csv` 同时进「扩展名→doc_type」与
+   「免 parser 直读」两侧，`chunking_router` 那条早就写好的 qa 路由活了。
+   这是本轮唯一的**入库结果变化**：CSV 过去会失败，现在按逐行 QA 对切。
+   另两处 parser 边界顺带修好：`_validate_file` 改问 `self.supports()`（不再拿 MinerU
+   的清单当全管线闸门），`.text` 的不对称（可读但不产 doc_type）如实保留而不是顺手统一。
 4. **approver_kind 未知值两套策略**：`materializer.py:356` raise，`receipts.py:466-490` 没有 `else`
    静默返回 `False` → 一行坏数据让人"没资格"且毫无信号。
 5. **`RagExecutor` 枚举漏一个值**：`rag_topology.py:24` 只列 3 个，而 `:574` 会发
@@ -105,8 +112,16 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 11. **`risk_tier {low,medium,high}` 写三遍**且抛不同异常类型。
 12. **通知 `source_kind` 不在 OpenAPI 也不在前端类型里**：契约层对它是瞎的，加 kind 抓不到。
 
-## E. 判据覆盖缺口
+## E. 判据覆盖缺口 —— 本轮已补
 
-`tests/` 里没有任何测试引用 `EMBEDDING_PROVIDERS` / `LLM_PROVIDERS` / `RERANKER_PROVIDERS`
-（grep 零命中）——这三条轴的"零改分支"目前没有常驻守卫，与 `storage_backends` 的
-`test_registering_a_provider_needs_no_edit_to_shared_paths` 不对等。属于便宜就该补的债。
+`tests/` 里曾没有任何测试引用 `EMBEDDING_PROVIDERS` / `LLM_PROVIDERS` / `RERANKER_PROVIDERS`
+（grep 零命中）。现在 `tests/test_provider_registry_extensibility.py`（33 条）覆盖三家族：
+注册探针即经 `create_*` 本身可选 + 14 个宿主文件逐字节不变、重复登记拒绝、注册期形状检查、
+`available:` 清单由注册表派生、AST 扫描"模块内不得按 provider 名分支"、
+`config/settings.py` 注释里的声明集合等于注册表。`scripts/smoke_providers.py` 早就在测这些事实，
+但它在 `testpaths=["tests"]` 之外 —— 那正是 §E 当时无人 enforcing 的机械原因。
+
+同一轮另修一条**预存红**：`tests/test_graph_store_registry.py:91` 断言 `create_graph_store`
+出现在 `rag.py`，但图谱装配早已迁到 `retrieval/stages.py:2015`。我单独跑它时就是红的，而
+`rag.py` 与 `core/graph_store_registry.py` 当时都不在工作树的改动里 → 红在 main 上，不是本轮引入。
+宿主清单跟着改，判据不动。

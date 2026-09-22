@@ -39,6 +39,11 @@ from core.tracing import current_trace
 from core.observability import get_logger
 from config.settings import get_settings, resolve_tenant
 from indexing.chunker import StructureAwareChunker
+from indexing.doc_types import (
+    doc_type_for_extension,
+    plain_text_extensions,
+    readable_without_parser,
+)
 
 if TYPE_CHECKING:
     from core.embedding import EmbeddingService
@@ -47,38 +52,6 @@ if TYPE_CHECKING:
     from indexing.parsers.base import DocumentParser, ParsedDocument
     from indexing.strategies import ChunkingStrategy
     from models.schemas import Chunk
-
-#: 扩展名 -> 文档类型（用于 strategy 选择与元数据记录）。
-#:
-#: ``.mdx`` 归到 markdown：它就是 markdown 加 JSX 组件，标题语法完全一致，
-#: MarkdownStrategy 的按标题预切分照样成立。``.adoc`` / ``.rst`` 单列类型而
-#: 不是硬塞进 markdown——它们的标题是 ``== 标题`` / 下划线式，用 markdown 的
-#: ``#`` 规则去切会一段都切不出来，还不如诚实地落到段落切分（
-#: :func:`indexing.strategies.strategy_for` 对未知类型回退 ParagraphStrategy），
-#: 同时让 ``doc_type`` 元数据如实记录格式，日后要加专用策略时有据可依。
-_EXTENSION_DOC_TYPES: dict[str, str] = {
-    ".md": "markdown",
-    ".markdown": "markdown",
-    ".mdx": "markdown",
-    ".adoc": "asciidoc",
-    ".asciidoc": "asciidoc",
-    ".rst": "restructuredtext",
-    ".pdf": "pdf",
-    ".doc": "word",
-    ".docx": "word",
-    ".txt": "txt",
-    ".xls": "excel",
-    ".xlsx": "excel",
-}
-
-#: 无需 parser、直接按 UTF-8 读取的纯文本扩展名。
-#:
-#: 与 ``_EXTENSION_DOC_TYPES`` 分开维护：那张表回答「用哪种切分策略」，
-#: 这张表回答「能不能不带 parser 就读」。二者不是同一个问题——``.pdf`` 在
-#: 前者里有条目，却绝不能进后者。
-_PLAINTEXT_EXTENSIONS: frozenset[str] = frozenset(
-    {".md", ".markdown", ".mdx", ".adoc", ".asciidoc", ".rst", ".txt", ".text"}
-)
 
 
 def _safe_file_size(path: Path) -> int:
@@ -161,9 +134,10 @@ class IngestPipeline:
             （生产环境传 :class:`~core.milvus_client.RagMilvusClient`）。
         chunker: 切分器；缺省使用默认参数的 :class:`StructureAwareChunker`。
         parser: 文档解析器（:class:`~indexing.parsers.base.DocumentParser`），
-            仅 :meth:`add_file` 使用；为 None 时 ``add_file`` 直接按 UTF-8
-            读取纯文本类文件（``_PLAINTEXT_EXTENSIONS``：md / mdx / adoc /
-            rst / txt 等），其余类型需显式提供 parser。
+            仅 :meth:`add_file` 使用。parser 为 None、或它不认领这个扩展名时，
+            免 parser 直读的格式（见 :mod:`indexing.doc_types` 的
+            ``readable_without_parser``：md / mdx / adoc / rst / txt / csv 等）
+            按 UTF-8 直读，其余类型报错要求提供 parser。
         cleaner: 文本清洗器（:class:`~indexing.cleaner.Cleaner`）；为 None
             时跳过清洗环节。
         strategy: 文档类型感知的预切分策略
@@ -428,9 +402,7 @@ class IngestPipeline:
                     trace.add_span("clean", clean_ms)
 
             # 3. 预切分：strategy（显式 -> 按 doc_type/扩展名 -> 文本启发式）
-            resolved_doc_type = doc_type or _EXTENSION_DOC_TYPES.get(
-                path.suffix.lower()
-            )
+            resolved_doc_type = doc_type or doc_type_for_extension(path.suffix)
             segments = self._segment(text, resolved_doc_type)
 
             # 4. 逐段切分（切分路由：doc 级一次决策，逐段复用同模式）
@@ -696,7 +668,7 @@ class IngestPipeline:
             # 翻车的：文档管理页上 test_kb.md 一条鲜红的失败。
             # parser 的职责是啃 PDF/Office，管不到的纯文本本就该直读。
             ext = Path(file_path).suffix.lower()
-            if ext not in _PLAINTEXT_EXTENSIONS:
+            if not readable_without_parser(ext):
                 hint = (
                     f"已配置的 parser（{type(self.parser).__name__}）不支持该类型"
                     if self.parser is not None
@@ -705,7 +677,7 @@ class IngestPipeline:
                 raise IngestError(
                     f"{hint}，无法解析 {file_path!r}（doc_id={doc_id!r}）："
                     f"请为 .pdf / .doc / .xlsx 等类型提供 DocumentParser。"
-                    f"免 parser 直读的扩展名: {', '.join(sorted(_PLAINTEXT_EXTENSIONS))}"
+                    f"免 parser 直读的扩展名: {', '.join(sorted(plain_text_extensions()))}"
                 )
             return Path(file_path).read_text(encoding="utf-8", errors="replace")
         finally:

@@ -22,7 +22,8 @@ from typing import Any
 
 from config.settings import MineruSettings
 
-# 支持的扩展名（与 MinerU 支持的文件类型保持一致，比较时统一转小写）。
+# MinerU 自己的能力清单（比较时统一转小写），只供 ``MineruCliParser`` /
+# ``MineruHttpParser`` 的 ``supports()`` 使用，不是全管线的闸门。
 # 注意：MinerU 实际还支持 jp2/webp/gif/bmp 等图片格式，此处按入库管线
 # 当前约定的范围收窄，避免误放行未经验证的类型。
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
@@ -132,17 +133,24 @@ class DocumentParser(ABC):
     # 子类共享的解析前置校验
     # ------------------------------------------------------------------ #
     def _validate_file(self, file_path: str) -> None:
-        """解析前的通用校验：文件存在且扩展名受支持。
+        """解析前的通用校验：文件存在，且**本解析器**认领这个扩展名。
+
+        闸门只走 :meth:`supports`，不读模块级清单：那个清单是 MinerU 自己的能力
+        范围，曾经被这里当成全管线闸门，于是换成别的 parser 时报错内容仍写着
+        MinerU 的那一份支持列表——把"这个 parser 管不了"说成了"系统读不了"。
+        （``tests/test_doc_type_registry.py`` 有一条宿主守卫钉住这点。）
 
         Raises:
-            MineruParserError: 文件不存在或扩展名不受支持。
+            MineruParserError: 文件不存在或本解析器不支持该扩展名。
         """
         if not Path(file_path).is_file():
             raise MineruParserError(f"文件不存在: {file_path!r}")
-        if file_extension(file_path) not in SUPPORTED_EXTENSIONS:
+        if not self.supports(file_path):
             raise MineruParserError(
-                f"不支持的文件类型: {file_path!r}"
-                f"（支持: {', '.join(sorted(SUPPORTED_EXTENSIONS))}）"
+                f"{type(self).__name__} 不支持该文件类型: {file_path!r}"
+                f"（{file_extension(file_path) or '无扩展名'}）。"
+                "纯文本 / Markdown 类文件无需 parser，入库管线会直读；"
+                "若这确是需要解析的格式，请改用支持它的 parser。"
             )
 
 

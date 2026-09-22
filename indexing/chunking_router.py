@@ -28,14 +28,12 @@ from typing import Any, Callable, Protocol
 from indexing.chunker import StructureAwareChunker
 from indexing.chunker_qa import CsvQaChunker
 from indexing.chunker_recursive import RecursiveChunker
+from indexing.doc_types import is_table_like_doc_type
 from core.providers import ProviderRegistry
 from models.schemas import Chunk
 
 # 简单文档判定：文本总长阈值（auto 模式）
 DEFAULT_SIMPLE_MAX_CHARS = 4000
-
-# 表格类文档类型（路由到 qa 模式）
-_TABLE_DOC_TYPES = ("csv", "excel", "xlsx", "xls")
 
 
 @dataclass(frozen=True)
@@ -141,7 +139,8 @@ class _RoutingRule:
 
 
 def _is_table_type(doc_type: str, _chars: int, _blocks: int, _limit: int) -> bool:
-    return doc_type in _TABLE_DOC_TYPES
+    """表格类判定：实时查 :mod:`indexing.doc_types`，加一种格式不动这里。"""
+    return is_table_like_doc_type(doc_type)
 
 
 def _is_simple(doc_type: str, chars: int, blocks: int, limit: int) -> bool:
