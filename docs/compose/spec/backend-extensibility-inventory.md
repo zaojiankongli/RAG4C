@@ -76,6 +76,11 @@ reranker 要处理 HTTP 状态，共性只有名字）。
   核实后是**模式漂移校验器**，不是类型系统；`519 return False` 让未知 kind 报 `invalid type` 从而 fail closed，
   第 5 个值只在真的新增 SQL 类型时出现，而那时迁移和规格行本来都要改。改成注册表只会新增一层
   "唯一失败方式是让模式校验静默通过"的间接。
+- **`sources/github_repo.py:47` 的 `_DEFAULT_EXTENSIONS`**（做轴 #1 时被 grep 到，看着像第 6 份
+  扩展名清单，其实不是）：那是抓仓库时的**内容筛选默认值**，故意比"系统能入格式"窄得多 ——
+  它只收文本类文档（`.md/.mdx/.markdown/.adoc/.rst/.txt`），把 `.pdf/.docx/.xlsx` 排除在外，
+  因为那些要走 parser 且体积成本完全不同。改成 `importable_extensions()` 的投影会让默认抓取
+  范围一夜之间扩大到整个二进制类别，那不是统一，是改产品行为。
 - **provider 内核不合并公共基类**；`sources/registry.py`、`indexing/parsers/registry.py`、
   `core/graph_store_registry.py` 已经正确。
 - **响应形状投影**（`enterprise_knowledge_serving_api.py:861-1013` 等按端点分叉的 `operation ==`）：
