@@ -243,6 +243,7 @@ def _apply_workspace_authorization(
 ) -> DatasetAccessDecision:
     try:
         from core.catalog_schema import inspect_workspace_authorization_capability
+        from core.catalog_capability import require_safe_capability_state
         from core.enterprise_workspace_authorization import (
             WorkspaceAuthorizationError,
             evaluate_workspace_authorization,
@@ -251,11 +252,12 @@ def _apply_workspace_authorization(
         capability_state, capability_issues = inspect_workspace_authorization_capability(
             session.connection()
         )
-        if capability_state == "unavailable":
-            detail = "; ".join(capability_issues) if capability_issues else "schema drift"
-            raise DatasetAccessControlUnavailable(
-                f"Workspace 授权 capability 不可安全使用: {detail}"
-            )
+        require_safe_capability_state(
+            capability_state,
+            capability_issues,
+            allow_not_available=True,
+            error=DatasetAccessControlUnavailable,
+        )
         workspace = evaluate_workspace_authorization(
             engine,
             tenant_id=tenant_id,
