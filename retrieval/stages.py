@@ -666,8 +666,35 @@ class StageRunner:
 RETRIEVAL_STAGES: ProviderRegistry[None, RetrievalStage] = ProviderRegistry("retrieval stage")
 
 
+#: 一个阶段必须给全的成员。``node_id`` / ``span_name`` 等允许取 None，但**必须有这个名字**——
+#: ``stage_node_ids()``、``StageRunner`` 与 ``engaged()`` 都是直接取属性，不是 getattr 兜底。
+_REQUIRED_STAGE_MEMBERS: tuple[str, ...] = (
+    "name",
+    "order",
+    "node_id",
+    "span_name",
+    "prefetches",
+    "requires_flag",
+    "requires_component",
+    "eligible",
+    "fatal_error",
+    "run",
+)
+
+
 def register_retrieval_stage(stage: RetrievalStage, *, replace: bool = False) -> None:
-    """Register one retrieval stage under its own ``name`` key."""
+    """Register one retrieval stage under its own ``name`` key.
+
+    形状在这里判死，而不是等到那次真跑到它的检索：缺成员的阶段若被静默收下，
+    ``retrieval_stage_order()`` 只按 ``order`` 排序所以照样通过，异常要等到
+    ``StageRunner`` 真去调 ``eligible`` / ``run`` 时才炸——装配错误被推迟到线上。
+    """
+    missing = [m for m in _REQUIRED_STAGE_MEMBERS if not hasattr(stage, m)]
+    _require(
+        not missing,
+        f"检索阶段 {getattr(stage, 'name', '?')!r} 不符合 RetrievalStage 协议，"
+        f"缺少成员：{missing}",
+    )
     RETRIEVAL_STAGES.register(
         stage.name, lambda _config, _s=stage: _s, replace=replace
     )
