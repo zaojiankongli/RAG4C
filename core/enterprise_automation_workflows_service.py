@@ -65,14 +65,9 @@ from models.orm import (
 )
 
 UTC = timezone.utc
-TRIGGER_ADAPTER_ORDER: tuple[str, ...] = (
-    "task_failed",
-    "task_source_stale",
-    "source_sync_failed",
-    "release_quality_alert_opened",
-    "release_recertification_blocked",
-    "approval_request_terminal",
-)
+# 触发器顺序以前是这里的一份手写 tuple，与文件末尾的 TRIGGER_ADAPTER_REGISTRY 平行维护
+# —— 两件事必须同时改且改得一样，而唯一在核对它的是一份测试里的第三份副本。现在注册表
+# 是唯一声明，`TRIGGER_ADAPTER_ORDER` 由它在定义处派生。
 
 TriggerAdapter = Callable[..., Iterable[Mapping[str, Any]]]
 
@@ -246,8 +241,11 @@ def _validate_limit(value: Any) -> int:
 
 
 def _validate_trigger_codes(value: Any) -> tuple[str, ...]:
+    # 两处都直接读注册表而不是 TRIGGER_ADAPTER_ORDER：后者是导入期的快照，留着它当权威
+    # 就会让"运行时注册一个适配器"只生效一半（校验看得到、顺序看不到）。
+    adapters = TRIGGER_ADAPTER_REGISTRY
     if value is None:
-        return TRIGGER_ADAPTER_ORDER
+        return tuple(adapters)
     if not isinstance(value, (list, tuple)) or not value:
         raise EnterpriseAutomationWorkflowsInvalid("trigger_codes must be a non-empty list")
     result: list[str] = []
@@ -256,7 +254,7 @@ def _validate_trigger_codes(value: Any) -> tuple[str, ...]:
         if code in result:
             raise EnterpriseAutomationWorkflowsInvalid("trigger_codes must not contain duplicates")
         result.append(code)
-    return tuple(code for code in TRIGGER_ADAPTER_ORDER if code in result)
+    return tuple(code for code in adapters if code in result)
 
 
 def _stable_id(prefix: str, *parts: str) -> str:
@@ -2312,6 +2310,9 @@ TRIGGER_ADAPTER_REGISTRY: dict[str, TriggerAdapter] = {
     "release_recertification_blocked": _recertification_blocked_adapter,
     "approval_request_terminal": _approval_terminal_adapter,
 }
+
+# 顺序 = 注册表的插入序（Python 保证）。放在这里是因为适配器函数得先存在。
+TRIGGER_ADAPTER_ORDER: tuple[str, ...] = tuple(TRIGGER_ADAPTER_REGISTRY)
 
 
 def _target_for_event(
