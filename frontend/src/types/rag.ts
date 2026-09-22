@@ -404,6 +404,12 @@ export interface DocumentParserMeta {
   };
   /** 解析引擎：fast（文本层直取）/ vision（OCR 等） */
   engine?: string;
+  /** 实际承担解析的插件（mineru / docling / plain-read 等）；引擎只说走哪条路，插件才是谁在跑 */
+  provider?: string;
+  /** 路由为什么选这个引擎（后端声明表里的 reason，随决策一起落库） */
+  route_reason?: string;
+  /** 分类失败退到备用引擎时的原因；出现即说明这次解析是退路，不是正常路径 */
+  fallback_reason?: string;
   /** PDF 分类：text_based / scanned / mixed / image_based 等 */
   pdf_type?: string;
   page_count?: number;

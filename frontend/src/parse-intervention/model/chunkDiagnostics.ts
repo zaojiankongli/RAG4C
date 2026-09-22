@@ -108,3 +108,78 @@ export function chunkingDecisionAria(view: ChunkingDecisionView): string {
   if (view.factsSummary) bits.push(view.factsSummary);
   return bits.join("；");
 }
+
+export const ENGINE_LABELS: Record<string, string> = {
+  fast: "快速通道（文字层直取）",
+  vision: "视觉解析（OCR）",
+  router: "自动分流",
+};
+
+export const PDF_TYPE_LABELS: Record<string, string> = {
+  text_based: "有文字层",
+  scanned: "扫描件",
+  mixed: "混合型",
+  image_based: "整页图像",
+  other: "非 PDF",
+  routing_disabled: "路由已关闭（按配置直接定引擎）",
+  classification_failed: "分类失败（走了退路）",
+};
+
+export interface EngineDecisionView {
+  engine: string | null;
+  engineLabel: string;
+  provider: string | null;
+  pdfType: string | null;
+  pdfTypeLabel: string | null;
+  routeReason: string | null;
+  confidence: number | null;
+  /** 分类失败后退到备用引擎的原因 —— 有它就是"这次解析是退路"。 */
+  fallbackReason: string | null;
+  degraded: boolean;
+}
+
+function asText(value: string | undefined): string | null {
+  return value && value.trim() ? value.trim() : null;
+}
+
+/**
+ * 解析引擎这一步的决定：走了哪条路、谁在跑、为什么、是不是退路。
+ *
+ * 与切分决策是两件事：一次入库先由路由决定用哪个解析引擎，再由切分路由决定怎么切片段。
+ * 两者都各有一句"为什么"，混成一行"决策理由"会让操作员以为看到的是同一件事。
+ */
+export function formatEngineDecision(
+  meta:
+    | {
+        engine?: string;
+        provider?: string;
+        pdf_type?: string;
+        route_reason?: string;
+        fallback_reason?: string;
+        confidence?: number;
+      }
+    | null
+    | undefined,
+): EngineDecisionView {
+  const record = meta ?? {};
+  const engine = asText(record.engine);
+  const provider = asText(record.provider);
+  const pdfType = asText(record.pdf_type);
+  const routeReason = asText(record.route_reason);
+  const fallbackReason = asText(record.fallback_reason);
+  const confidence =
+    typeof record.confidence === "number" && Number.isFinite(record.confidence)
+      ? record.confidence
+      : null;
+  return {
+    engine,
+    engineLabel: engine ? (ENGINE_LABELS[engine] ?? engine) : "未记录",
+    provider,
+    pdfType,
+    pdfTypeLabel: pdfType ? (PDF_TYPE_LABELS[pdfType] ?? pdfType) : null,
+    routeReason,
+    confidence,
+    fallbackReason,
+    degraded: fallbackReason !== null,
+  };
+}

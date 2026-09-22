@@ -164,7 +164,9 @@ describe("ParseInterventionWorkspace", () => {
     expect(screen.getByLabelText("Knowledge Lifeline")).toBeTruthy();
     expect(screen.getByText("切分策略")).toBeTruthy();
     expect(screen.getByText("按章节结构")).toBeTruthy();
-    expect(screen.getByText("决策理由")).toBeTruthy();
+    // 两个"为什么"各有各的标签：原先一行"决策理由"只讲切分，操作员会以为它也说清了引擎那一步。
+    expect(screen.getByText("切分理由")).toBeTruthy();
+    expect(screen.getByText("引擎判由")).toBeTruthy();
     expect(screen.getByText(/文本 480 字或存在 8 个版面块/)).toBeTruthy();
     expect(screen.getByText("决策依据")).toBeTruthy();
     expect(screen.getByText(/类型 pdf · 480 字 · 8 版面块 · 阈值 4000/)).toBeTruthy();
