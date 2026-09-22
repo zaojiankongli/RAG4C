@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core import cache_epoch, catalog
+from sources.state_modes import SourceStateModeSpec, source_state_mode
 from core.document_deletion import DocumentDeletionRepository
 from core.knowledge_governance import AuditContext
 from core.source_sync_ledger import SourceSyncLedgerConflict
@@ -175,9 +176,10 @@ class SourceSyncer:
         state_mode: str = "json",
         execution_guard: Any = None,
     ) -> None:
-        if state_mode not in {"json", "dual", "database"}:
-            raise ValueError("state_mode 必须是 json / dual / database")
-        if state_mode == "database" and ledger is None:
+        # 词表与"这一种模式要什么"都由 sources/state_modes.py 一处声明；这里不再手写
+        # 第二份 {json,dual,database}。
+        declared = source_state_mode(state_mode)
+        if declared.requires_ledger and ledger is None:
             raise ValueError("database state_mode requires a SourceSyncLedger")
         self.pipeline = pipeline
         self.cache_dir = Path(cache_dir)
@@ -234,28 +236,37 @@ class SourceSyncer:
         )
 
 
+    @property
+    def state_mode_spec(self) -> SourceStateModeSpec:
+        """当前模式的声明行。派生而不是另存一份，避免两个字段各说一句话。
+
+        查不到就抛：让一个没登记的模式按 {json,dual,database} 之外的默认值走，
+        表现是状态静默写到错的存储上，而不是装配期就报出来。
+        """
+        return source_state_mode(self.state_mode)
+
     def _ledger_call(self, action: str, callback: Callable[[], Any]) -> Any:
         try:
             return callback()
         except Exception as exc:  # noqa: BLE001 - dual mode preserves JSON path
-            if self.state_mode == "database":
+            if self.state_mode_spec.ledger_failures_are_fatal:
                 raise
             _logger.warning("源同步 ledger dual 写入失败（%s）: %s", action, str(exc)[:200])
             return None
 
     def _load_state(self, spec: SourceSpec) -> dict[str, dict[str, Any]]:
-        if self.state_mode in {"dual", "database"} and self.ledger is not None:
+        if self.state_mode_spec.uses_ledger and self.ledger is not None:
             source_id = self._active_source_id
             if source_id:
                 database_state = self._ledger_call(
                     "load_state", lambda: self.ledger.load_state(source_id)
                 )
-                if database_state or self.state_mode == "database":
+                if database_state or self.state_mode_spec.ledger_authoritative:
                     return dict(database_state or {})
         return self._load_json_state(spec)
 
     def _save_state(self, spec: SourceSpec, docs: dict[str, dict[str, Any]]) -> None:
-        if self.state_mode in {"json", "dual"}:
+        if self.state_mode_spec.writes_json:
             self._save_json_state(spec, docs)
 
     def _assert_run_current(self, sync_run: Any) -> None:
@@ -336,7 +347,7 @@ class SourceSyncer:
         source = create_source(spec.type, spec.params, self.settings)
         source_record = None
         sync_run = None
-        if self.state_mode in {"dual", "database"} and self.ledger is not None:
+        if self.state_mode_spec.uses_ledger and self.ledger is not None:
             source_record = self._ledger_call(
                 "ensure_source", lambda: self.ledger.ensure_source(spec)
             )

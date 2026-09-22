@@ -109,7 +109,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 > | 7 `info` 严重度是死的 | **仍在**：`core/enterprise_notification_center.py:24` 仍收 `{info,warning,critical}` |
 > | 8 mineru 两个分派器 | **本轮没定位到**：普查给的 `mineru/base.py` / `mineru/plugins.py` 在本仓不存在（`find` 无命中）。要么路径记错，要么模块已搬；**不要按这条排活**，先重新定位 |
 > | 9 `gate_state` 别名 | **仍在，且普查低估**：是 5 处不是 2 处（3 处转换含筛选入参那一处，2 处并列两种拼写），详见行内 |
-> | 10 `state_mode` | **仍在，面已数清**：词表 2 处 + 三处成员判断（`:247`/`:258`/`:339`）可安全收成声明表；`server/source_dispatcher.py:238` 那处硬编码是**行为变更**，留在片外等裁定 |
+> | 10 `state_mode` | **词表那一半已收口（§W）**：实际是 2 处词表 + **五**处成员判断，不止普查记的那几处；`server/source_dispatcher.py:238` 的硬编码仍是**行为变更**，留在片外等裁定 |
 > | 11 `risk_tier` 写三遍 | 词表确在 `catalog_migrations/versions/0029-0031` 与 CHECK 里 → **需要迁移**，维持原判（单独成切片） |
 > | 12 通知 `source_kind` 不在契约 | **未核实**：`server/` 里没 grep 到通知侧的 `source_kind` Literal，而 `openapi.json` 有 `source_kinds`（复数）三处 schema。普查那句需要先重定位再说 |
 > | 13 落库 doc_type 词汇不一致 | 需要产品裁定，维持原判 |
@@ -192,7 +192,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
    （`GATE_STATES_PUBLIC | {GATE_PASSED_STORAGE}`）。
    常驻守卫三件：别名字面值钉死、未知值必须 raise、源码扫描禁止再出现
    `"passing" if` / `"passed" if` 这种就地三元式（与 `tests/test_chunk_writers.py` 同型）。
-10. **`state_mode` 词表重declare + 派发处硬编码** —— **仍在，本轮把面数清；两半的风险不同，
+10. **`state_mode` 词表重declare + 派发处硬编码** —— **词表那一半已收口（见 §W）**；两半风险不同，
     必须分开做**。普查那两句都对但都只说了一半。
     词表这一侧（**安全**，纯形状改造）：
     * `config/settings.py:1027` 是设置侧真值：`Literal["json","dual","database"] = "json"`；
@@ -849,4 +849,54 @@ DocumentsFilterState, (value: string) => void>` 两张表，回灌 / 单键写 /
 **门禁实跑**：`tests/test_release_quality_gate_states.py` + `..._operations_reads.py` → 20 passed；
 `ruff check tests/ core/release_quality_gate_states.py` 干净；release-quality 六套（alerts /
 observation / operations_core / operations_migration / persistence / scan_execution）→ 50 passed。
+
+
+## W. §D-10 落地记录：`state_mode` 的"这种模式写哪两个存储"只声明一次
+
+**普查又低估了一处面**：§D-10 说"重declare 白名单 + 硬编码"两件事。读码数出来是
+**2 份词表 + 5 处各自问一遍行为**：
+
+| 站点 | 它在问什么 |
+|---|---|
+| `config/settings.py:1027` | 词表第一份（`Literal["json","dual","database"]`） |
+| `sources/runner.py:178` | 词表第二份（运行时白名单） |
+| `:241` | "ledger 报错该不该致命" |
+| `:247` / `:339` | "要不要用 ledger"（两处一模一样的 `in {"dual","database"}`） |
+| `:253` | "ledger 的答案是不是全部答案" |
+| `:258` | "要不要写 JSON" |
+
+改后是 `sources/state_modes.py` 一行一种模式、五个具名属性（`writes_json` /
+`uses_ledger` / `ledger_authoritative` / `ledger_failures_are_fatal` / `requires_ledger`），
+runner 五处全部改问声明。**行为逐字保持**：`json` 不碰 ledger、`dual` 两边都写而 ledger
+只在真有行时作数且报错可吞、`database` 只认 ledger 且报错致命。
+
+一处刻意的设计选择：runner 不另存 spec 字段，而是 `state_mode_spec` **property 派生**
+—— 存两个字段就会各说一句话，`state_mode` 仍是唯一真相。
+
+**两道对账 + 一道回潮栅栏**（`tests/test_source_state_mode_registry.py`，4 条）：
+① 三种模式的属性逐字段字面值钉死；② 设置侧的 `Literal` 必须恰好等于声明表
+（两边手抄的正是过去那个形状：少一个成员 = 配置拒掉已登记的模式，多一个 = 配置收下没人
+声明的模式、到 runner 才炸）；③ runner 源码里不许再出现
+`state_mode (==|in) ("|{)` 这个形状 —— 这条才是"加一种模式零改分支"的常驻版本；
+④ 未声明的模式必须拒而不是兜默认值（兜默认值 = 让一个没审过的模式按 json 的写法走）。
+
+**未做（明确留在片外，等一次裁定）**：`server/source_dispatcher.py:238` 仍无条件
+`state_mode="database"`。改成读设置会让"设置里写着 json/dual 的部署"在升级后换一条状态
+写入路径 —— 形状上看是修一致性，语义上是换契约，与 §D-2 里"登记 `.html` 会真的改切分"
+同类。§D-10 行内与 §B 表都已标注。
+
+**反向验证 6/6 转红**（`%TEMP%\mutate_state_modes.py` + `mut2.py`；被改文件还原后
+按字节断言与改前相同）：SM1 把 `:247` 退回内联成员判断 → 回潮栅栏红；SM2 让 `database`
+也写 JSON → 属性字面值用例红；SM3 设置侧词表少一个模式 → 对账用例红；SM4 查找改成不拒
+未知值 → "未声明必须拒"红；SM5 让 `dual` 不再吞 ledger 错误 → 属性字面值用例红；
+SM6 声明表里 `json` 整个改名 → 两条红（属性 + 对账）。
+**其中 SM2/SM5 第一次跑是 ANCHOR-FAIL 而不是绿**：锚点缩进与并列块歧义（`json` 与 `dual`
+有两行完全相同，`uses_ledger` 那一行才把它们分开）。补上下文重跑才真正转红 ——
+按 §G 的口径，ANCHOR-FAIL 不能算验证过。
+
+**门禁实跑**：新守卫 4 passed；真跑同步行为的三套（`test_source_sync_ledger.py` +
+`test_source_connector_paths.py` + `test_document_delete_source_suppression_v2.py`，
+覆盖 json/dual/database 三种模式与跨租户抑制）**38 passed / 182.29s**；`ruff check sources/` 干净。
+`sources/runner.py` 是**逐行混合行尾**（818 行里 585 CRLF / 233 LF），所以每条替换都按
+它自己那一行的 EOL 匹配，改完 `git diff --numstat` 与 `--ignore-cr-at-eol` 同为 19/8。
 
