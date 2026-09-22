@@ -1079,12 +1079,6 @@ def _normalized_catalog_value(value: str | None, *, default: str = "all") -> str
     return normalized if normalized else default
 
 
-def _document_engine(document: Any) -> str:
-    meta = document.parser_meta if isinstance(document.parser_meta, dict) else {}
-    engine = str(meta.get("engine") or "").strip()
-    return engine or "unknown"
-
-
 def _coerce_document_parser_meta(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value

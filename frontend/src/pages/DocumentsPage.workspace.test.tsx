@@ -465,6 +465,82 @@ describe("DocumentsPage shared knowledge workspace", () => {
     expect(params.get("document")).toBe("doc-1");
     expect(replaceState).toHaveBeenCalledTimes(2);
   });
+  it("re-syncs the chunking-reason filter on popstate/hashchange like the other six keys", async () => {
+    // 第八轮评审 B1：第 7 个筛选键进了 URL 解析器，却没进"前进/后退时把 URL 回灌进 state"
+    // 那条效果（比较、setter、依赖数组三处都是手写六项）。后果有两侧，都要钉住：
+    //   只有 chunking_reason_code 变 → 旧代码判定"筛选没变"，整条回灌不跑；
+    //   别的键一起变 → 六项被回灌，这一项仍被吞。
+    window.history.replaceState(null, "", "/documents");
+    api.fetchDocumentPage.mockResolvedValue({
+      items: [MODERN_DOCUMENT],
+      total: 1,
+      offset: 0,
+      limit: 10,
+      next_cursor: null,
+    });
+    api.fetchDocumentSummary.mockResolvedValue(makeModernSummary());
+    renderModernDocuments();
+    await screen.findByText(MODERN_DOCUMENT.name);
+
+    // 先只留"切分判定"这一个键生效：那个"清除筛选"入口原先按六项手写 `!== "all"` 判断，
+    // 第 7 个键漏在外面 —— 只按判定筛选时操作员没有退回全部的入口。
+    fireEvent.click(screen.getByRole("button", { name: /长文或含版面结构/ }));
+    await waitFor(() =>
+      expect(new URLSearchParams(window.location.search).get("chunking_reason_code")).toBe(
+        "complex_or_structured",
+      ),
+    );
+    expect(screen.getByRole("button", { name: /长文或含版面结构/ }).className).toContain("is-active");
+    const clearButton = screen.getByRole("button", { name: "清除全部文档筛选" });
+
+    api.fetchDocumentPage.mockClear();
+    fireEvent.click(clearButton);
+    await waitFor(() => expect(api.fetchDocumentPage).toHaveBeenCalled());
+    expect(api.fetchDocumentPage).toHaveBeenLastCalledWith(
+      "default",
+      expect.objectContaining({ chunking_reason_code: "all", status: "all", q: "" }),
+      expect.anything(),
+    );
+    await waitFor(() =>
+      expect(new URLSearchParams(window.location.search).has("chunking_reason_code")).toBe(false),
+    );
+    expect(screen.getByRole("button", { name: /全部判定/ }).className).toContain("is-active");
+    expect(screen.getByRole("button", { name: /长文或含版面结构/ }).className).not.toContain(
+      "is-active",
+    );
+
+    // 后退到一条不含该参数的 /documents，且**只有这一个键**变了：旧代码判定"筛选没变"，
+    // 整条 URL→state 的回灌根本不跑。
+    api.fetchDocumentPage.mockClear();
+    window.history.pushState(null, "", "/documents?chunking_reason_code=complex_or_structured");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await waitFor(() => expect(api.fetchDocumentPage).toHaveBeenCalled());
+    expect(api.fetchDocumentPage).toHaveBeenLastCalledWith(
+      "default",
+      expect.objectContaining({ chunking_reason_code: "complex_or_structured" }),
+      expect.anything(),
+    );
+    expect(screen.getByRole("button", { name: /长文或含版面结构/ }).className).toContain("is-active");
+
+    // 再前进到一条该参数与 status 同时变化的 URL：这一项要跟着其余六项一起回灌，而不是只回灌那六项。
+    api.fetchDocumentPage.mockClear();
+    window.history.pushState(
+      null,
+      "",
+      "/documents?status=completed&chunking_reason_code=table_doc_type",
+    );
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await waitFor(() => expect(api.fetchDocumentPage).toHaveBeenCalled());
+    expect(api.fetchDocumentPage).toHaveBeenLastCalledWith(
+      "default",
+      expect.objectContaining({
+        chunking_reason_code: "table_doc_type",
+        status: "completed",
+      }),
+      expect.anything(),
+    );
+  });
+
   it("uses the authenticated server catalog and sends URL filters to the backend", async () => {
     window.history.replaceState(
       null,

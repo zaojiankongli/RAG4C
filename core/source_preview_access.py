@@ -84,12 +84,6 @@ def locate_preview_source(
             "source_preview_disabled",
             "未配置原文目录（source_preview_roots），原文查看关闭",
         )
-    spec = resolve_source_preview_for_path(file_path)
-    if spec is None:
-        raise SourcePreviewRefused(
-            "source_preview_unsupported_kind",
-            "这个后缀不在可查看来源表里；不给它一个默认 content type",
-        )
     raw = str(file_path or "").strip()
     if not raw:
         raise SourcePreviewRefused("source_preview_missing", "这份文档没有记录原文路径")
@@ -103,6 +97,16 @@ def locate_preview_source(
         raise SourcePreviewRefused(
             "source_preview_out_of_scope",
             "原文不在已声明的目录内（符号链接跳出也算）",
+        )
+    # 后缀取自 resolve 之后的路径：content type 描述的是我们真正交出去的那些字节。按记录下来的
+    # 原始路径判类型，会让 root 内一个 link.pdf -> real.html 的符号链接拿到 application/pdf
+    # 却交出 HTML —— 界面上它会被当 PDF 塞进 iframe。放在越界检查之后，是为了让"跳出去了"
+    # 这个安全信号优先于"这个后缀不认得"。
+    spec = resolve_source_preview_for_path(candidate)
+    if spec is None:
+        raise SourcePreviewRefused(
+            "source_preview_unsupported_kind",
+            "这个后缀不在可查看来源表里；不给它一个默认 content type",
         )
     if not candidate.is_file():
         raise SourcePreviewRefused(

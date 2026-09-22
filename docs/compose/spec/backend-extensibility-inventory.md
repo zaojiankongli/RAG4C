@@ -3,7 +3,8 @@ feature: backend-extensibility-inventory
 status: delivered
 updated: 2026-09-23
 branch: main
-commits: 1d2e2e6, a50c697, b93e50d, fa32684, b532304, 4cdd051, 4d842e0
+commits: 1d2e2e6, a50c697, b93e50d, fa32684, b532304, 4cdd051, 4d842e0, 0a825f6, fa52c4c,
+  c5c02ee, 227f0f4
 ---
 
 # 后端扩展轴清单（"每个部分"的可核对版本）
@@ -31,6 +32,7 @@ retrieval 12/4606、models 3/9344、config 2/1473；字面量等值分派点 247
 | **诊断投影 parser_meta（本轮新增）** | 类型判定（JSON 标量过、容器挡）取代三处按名字点菜的键清单 | `tests/test_ingest_meta_extensibility.py`（7 条，3 路变异验证） |
 | **运行事件类型分区（本轮新增）** | 声明式规格表 `RunEventTypeSpec`，两个 reducer 查表派发 | `tests/test_run_event_taxonomy_registry.py`（45 条，含 5 路反向验证 + import 期一致性栅栏） |
 | **`parser_meta` 字符串键筛选/分面（本轮新增）** | 共享 helper 三件套：一个键一行声明，不再一个键一条内联分支（`engine` 与 `chunking_reason_code` 走同一条路） | `tests/test_document_catalog_api.py`（新增 4 条 + 分面/游标/旧库拒绝断言），落地记录见 §R |
+| **可查看来源后缀（补登记，落地记录见 §S）** | 声明式规格表 `SourcePreviewSpec`：一个后缀一行，content type / 可否 inline / 大小上限同源；HTTP 层与取文件层都只查表 | `tests/test_source_preview_registry.py`（36 条）+ `tests/test_knowledge_source_preview_api.py`（14 条）+ `frontend/src/parse-intervention/components/SourcePreview.test.tsx`（10 条） |
 
 `core/embedding.py` / `core/llm.py` / `core/reranker.py` 经核实**本就已经到位**：
 全部经 `ProviderRegistry`，`server/` 与 `config/` 里没有任何残留 `if provider ==`；
@@ -58,9 +60,10 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 | 14 | ~~PDF 分类 → 引擎路由 `pdf_type`~~ **本轮已完成**，见 §K | — | 0（加一类分类结果一行声明） | 否 | `parser_meta` 自由串（新增 `route_reason`） | 已落 `indexing/pdf_type_routing.py` |
 | 15 | ~~就绪探测的方言证明~~ **本轮已完成**，见 §I | — | 0（注册即全认） | 否 | 否 | 已落 `core/read_only_dialects.py`；`knowledge_consistency_api.py:1180` 经核是**写事务栅栏**不是只读证明，刻意没并进来 |
 | 16 | ~~审计导出格式~~ **本轮已完成**，见 §N | — | 0（注册即全认；认不出的存储行改判完整性失败） | 否 | 否 | 已落 `core/audit_export_formats.py` |
+| 17 | **capability 状态生产者**（本轮 §U-2 新登记，未动手） | `core/catalog_schema.py`：11 个 `inspect_*_capability` 名字 / 18 个 def（其中 7 个名字是「冻结-重绑」垫片，**不是缺陷**，见 §U-2）；状态字面量另有 11 处 `return "not_available", ()` 与 61 处 `"unavailable"` | 当前 ≈2（通用垫片 + 各 producer 自己的 ladder 一行） | 否 | 否：`state` 是自由字符串，消费侧三处都已 total（见 §D-1 更正） | 声明表 + 单一 ladder 实现；**硬约束：必须保住 `_KNOWLEDGE_SERVING_ORIGINAL_*` 冻结版的行为等价**，风险与 §D-6 同源 |
 
 **本轮之后仍为"待做"的原因**：5、6、8、9、10、12 六条要改数据库 CHECK → 按红线必须单独成切片；
-3 号虽无迁移但直接压在投影栅栏上，风险最高，需要独立设计与评审。
+3 号虽无迁移但直接压在投影栅栏上，风险最高，需要独立设计与评审。 17 号是新登记的一条，不在「顺手可修」里：每次改动都要同时证明与冻结版行为等价，而收益只是少抄一处 ladder。
 
 ## C. 故意不转（这一节和上表同等重要）
 
@@ -92,9 +95,38 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 
 ## D. 普查顺带挖出的真实缺陷（优先级高于架构）
 
-1. **授权路径 fail-open**：`capability_state` 无声明集合、三处手写谓词不一致，
-   `enterprise_access_control.py:254` 只判 `== "unavailable"` 才 raise，
-   任何第四种状态会**直接落进** `evaluate_workspace_authorization`。修法是共享分类器 + `raise` 兜底。
+> **本轮（2026-09-22 夜）已把本表逐条复读了一遍**，结论如下；普查是在 `a50c697` / `4cdd051` 等
+> 修复**之前**做的，而修的时候没回来销账，所以有两条已经修完却仍列为开放缺陷。
+>
+> | 条 | 复读结论 |
+> |---|---|
+> | 1 授权 fail-open | **已修**（`a50c697`）：共享分类器 + 三个消费点都拒绝未知状态 |
+> | 2 `.html` 贴错标签 | 普查时已自证**不成立**，按原行为留住（行内已记） |
+> | 3 CSV 入不了库 | **已修**（行内已记） |
+> | 4 approver_kind 两套策略 | **真实但降级**：两条 CHECK 把 `approver_kind` 与 `approver_ref=account_id/group_id` 钉死，所以"一行坏数据让人没资格"不可触达；剩纵深防御 + 一致性债务（详见行内，含我本轮一个被证伪的假设） |
+> | 5 `RagExecutor` 漏值 | **已修**：`Literal[tuple(RAG_EXECUTORS)]` 从单一声明集派生 |
+> | 6 `_ALLOWED_KINDS` + SourceKind else fail-open | **已修**（`4cdd051`，行内已记） |
+> | 7 `info` 严重度是死的 | **仍在**：`core/enterprise_notification_center.py:24` 仍收 `{info,warning,critical}` |
+> | 8 mineru 两个分派器 | **本轮没定位到**：普查给的 `mineru/base.py` / `mineru/plugins.py` 在本仓不存在（`find` 无命中）。要么路径记错，要么模块已搬；**不要按这条排活**，先重新定位 |
+> | 9 `gate_state` 别名 | **仍在，且普查低估**：是 5 处不是 2 处（3 处转换含筛选入参那一处，2 处并列两种拼写），详见行内 |
+> | 10 `state_mode` | **仍在，面已数清**：词表 2 处 + 三处成员判断（`:247`/`:258`/`:339`）可安全收成声明表；`server/source_dispatcher.py:238` 那处硬编码是**行为变更**，留在片外等裁定 |
+> | 11 `risk_tier` 写三遍 | 词表确在 `catalog_migrations/versions/0029-0031` 与 CHECK 里 → **需要迁移**，维持原判（单独成切片） |
+> | 12 通知 `source_kind` 不在契约 | **未核实**：`server/` 里没 grep 到通知侧的 `source_kind` Literal，而 `openapi.json` 有 `source_kinds`（复数）三处 schema。普查那句需要先重定位再说 |
+> | 13 落库 doc_type 词汇不一致 | 需要产品裁定，维持原判 |
+>
+> 抄一条给自己和下一位：**普查记的是短文件名**（`receipts.py` / `materializer.py` / `base.py`），
+> 实际路径带前缀（`core/enterprise_notification_*.py`），而 `rag_topology.py` 在**仓库根**不在 `core/`。
+> grep 不到不等于已删除。
+
+
+
+1. **授权路径 fail-open** —— **已修（`a50c697`）；本节先前把它留在"开放缺陷"里是一笔过期的账**。
+   现在的形状：`core/catalog_capability.py` 声明 `CAPABILITY_STATES` 全集 +
+   `require_safe_capability_state`（**构造上 total**：不在集合里的状态一律 raise，不会静默扩大
+   放行条件）。三个授权敏感消费点逐一读过是否闭合：`enterprise_access_control.py:255` 走共享
+   分类器；`enterprise_workspace_authorization.py:178-183` 只放行 `not_available`、其余非 `ready`
+   一律 raise；`enterprise_workspace_control.py:636` 判 `!= "ready"` 就抛。**第四种状态在三处都
+   不能放行**，这一条已无 fail-open 面；剩下的只是"三处各写一遍、报错文案不同"的可读性债务。
 2. **`.html` 解析成功却被贴错标签** —— **核实不成立，已按原行为留住**。本表的
    `resolved_doc_type` 只喂 `_segment` 与切分路由，**落库那份 doc_type 走别的路**
    （`server/documents.py` 用请求里的 `doc_type`，`sources/runner.py` 用裸后缀），
@@ -113,10 +145,25 @@ reranker 要处理 HTTP 状态，共性只有名字）。
    这是本轮唯一的**入库结果变化**：CSV 过去两条路都失败，现在按逐行 QA 对切。
    另两处 parser 边界顺带修好：`_validate_file` 改问 `self.supports()`（不再拿 MinerU
    的清单当全管线闸门），`.text` 的不对称（可读但不产 doc_type）如实保留而不是顺手统一。
-4. **approver_kind 未知值两套策略**：`materializer.py:356` raise，`receipts.py:466-490` 没有 `else`
-   静默返回 `False` → 一行坏数据让人"没资格"且毫无信号。
-5. **`RagExecutor` 枚举漏一个值**：`rag_topology.py:24` 只列 3 个，而 `:574` 会发
-   `executor="cache_replay"`，`server/app.py:1505-2043` 五处在判它。
+4. **approver_kind 未知值两套策略** —— **本轮复读：仍然真实，但优先级要下调，且普查那句话里
+   有一半是猜错的**。
+   两套策略确认：`core/enterprise_notification_materializer.py:350-357` 是
+   `account / role / group` 加 `else: raise`；`core/enterprise_notification_receipts.py:464-490`
+   三个 `if` 之后**没有 else**，未知 kind 落到 `return False`。
+   **但"一行坏数据就能让人没资格"这件事被约束挡住了**：`models/orm.py` 里
+   `TenantApprovalPolicyApprover` 带
+   `CheckConstraint("approver_kind IN ('account','role','group')")`，还带一条
+   `(kind='account' AND approver_ref=account_id) OR (kind='group' AND approver_ref=group_id) OR …`
+   的形态约束。**顺带证伪了我自己本轮的一个假设**：materializer 读 `row.account_id or row.approver_ref`
+   而 receipts 只读 `row.approver_ref`，看着像"两边认不同列 → 谁有资格可以不一致"，
+   但那条 `approver_ref=account_id` 的 CHECK 正好把这两者钉成恒等（与 §D-6 那个
+   `source_type` **没有** CHECK 所以第四值真能进来的情形相反）。
+   所以这条是**纵深防御 + 一致性债务**（未知值该在一处判死，而不是一个 raise 一个静默 False），
+   不是可触达的授权缺陷；与 §D-1/§D-5 一样，它排在"顺手可修"档，不排在"优先级高于架构"档。
+5. **`RagExecutor` 枚举漏一个值** —— **已修**（本轮复读时发现，账没跟上）。现在
+   `rag_topology.py:24-27` 是 `RagExecutor: TypeAlias = Literal[tuple(RAG_EXECUTORS)]`，
+   从 `core/run_events.py` 那一份声明的 executor 集合派生，源码注释就写着"曾经手写三个值而漏掉
+   `cache_replay`"。**同 §U-1 那一课：这条也停在"开放缺陷"里，会把下一位的预算引到已经做完的事上。**
 6. **`_ALLOWED_KINDS` 死拷贝 + SourceKind 的 else 分支 fail-open** —— **已修**。普查只记下
    "`:80` 的 `_ALLOWED_KINDS` 定义后从未被引用"；做的时候查出更严重的一半：HTTP 层的两处判断
    写成 `if kind == "local_dir": ... else: 按 GitHubRepoConfig 校验 + 按 GitHub 白名单放行`，
@@ -129,9 +176,36 @@ reranker 要处理 HTTP 状态，共性只有名字）。
    `info`（质量告警走 2 值 `_observation_alert_severity`，审批硬编码 `warning`）。
 8. **`mineru.provider` 有两个分派器**（`base.py:167-177` 与 `plugins.py:16-22`），前者不传 `mode`，
    只被 smoke 脚本用到；只在一边加 provider 会在另一边静默失效。
-9. **`gate_state` 存储值 `passing`、对外 `passed`，映射手写两遍**（`scheduler.py:2816`、`:3235`）。
-10. **`sources/runner.py:178` 重declare 了 `state_mode` 白名单**，且 `source_dispatcher.py:238`
-    硬编码 `state_mode="database"` 绕过设置。
+9. **`gate_state` 存储值 `passing`、对外 `passed`** —— **仍在，且普查记的"两遍"是低估**。
+   本轮读码数出来是 **5 处**知道这个别名，分两种性质：
+   * 三处**做转换**（各写一遍方向相反的三元式）：
+     `core/enterprise_release_quality_scheduler.py:2816`（写库：`passed → passing`）、
+     `:3235`（出参：`passing → passed`）、`:3286-3287`（筛选入参：`passed → passing`）。
+     第三处普查漏了 —— 它是最容易漏的一类：转换不只在"读/写实体"上，还在**查询谓词的入参**上。
+   * 两处**同时列两种拼写**当合法词表：
+     `core/enterprise_release_quality_alerts.py:81` 与
+     `server/enterprise_release_quality_operations_api.py:50` 都写
+     `{"passing","passed","waived","not_required","blocked","unavailable"}`。
+   **建议形状**（**尚未实现**，本轮只做到把面数清）：一对常量 +
+   `to_storage()` / `to_public()`（未知值 raise，不静默透传）+ 一个 `GATE_STATES_PUBLIC`；
+   三处转换改调函数，两处词表改成从同一声明派生
+   （`GATE_STATES_PUBLIC | {GATE_PASSED_STORAGE}`）。
+   常驻守卫三件：别名字面值钉死、未知值必须 raise、源码扫描禁止再出现
+   `"passing" if` / `"passed" if` 这种就地三元式（与 `tests/test_chunk_writers.py` 同型）。
+10. **`state_mode` 词表重declare + 派发处硬编码** —— **仍在，本轮把面数清；两半的风险不同，
+    必须分开做**。普查那两句都对但都只说了一半。
+    词表这一侧（**安全**，纯形状改造）：
+    * `config/settings.py:1027` 是设置侧真值：`Literal["json","dual","database"] = "json"`；
+    * `sources/runner.py:178` 把同一集合又写成一份运行时白名单；
+    * `:247` 与 `:339` 问 `in {"dual","database"}`（"这个模式写不写 ledger"），
+      `:258` 问 `in {"json","dual"}`（"写不写 JSON"）—— **这两问才是真正的轴**：
+      加第 4 个模式要记得在三个地方各自补一遍成员，漏一个就是静默少写一侧状态。
+    建议形状：每个模式一条声明（`writes_json` / `writes_ledger` 两个布尔），runner 改成问声明；
+    设置侧的 `Literal` 与声明表由一条常驻守卫对账（同一手法见 §G）。
+    派发那一侧（**是行为变更，不是重构**）：`server/source_dispatcher.py:238` 现在无条件
+    `state_mode="database"`。改成读设置会让"设置里写着 json/dual 的部署"**在升级后换一条状态写入路径**
+    —— 与 §D-2 里"登记 `.html` 会真的改切分"同一类：形状上看是修一致性，语义上是换契约。
+    **所以：第一片只做词表 + 三处成员判断收口，硬编码那一行留在片外，等一次明确裁定。**
 11. **`risk_tier {low,medium,high}` 写三遍**且抛不同异常类型。
 12. **通知 `source_kind` 不在 OpenAPI 也不在前端类型里**：契约层对它是瞎的，加 kind 抓不到。
 13. **落库的 doc_type 词汇与管线词汇不一致**（做 §D-2 时浮出，**未修**）：
@@ -575,3 +649,155 @@ B 筛选的结果（不报错，只是给出另一批行）。代价是**载荷�
 3. 分面对旧库返回单个 `unknown` 桶而不是报错——分面是"看见现状"，筛选具体值才是"要求答案"，
    两者失败模式必须不同。
 
+
+## S. 可查看来源后缀轴落地记录 + 第七轮独立评审（审 `0a825f6` / `fa52c4c` / `227f0f4`）八条处置
+
+### S-1 这条轴本来就在表里，只是这张表一直没登记（评审 nit 7）
+
+`0a825f6` 落的时候我只在 `docs/compose/智能体交接审查.md` §4 索引加了一行，**没进 A 表**，
+所以从这份清单查"可查看来源"是查不到的（§I–§R 每条轴都有落地记录，唯独它没有）。补上：
+
+| | 加一个可查看的后缀要改几处 |
+|---|---|
+| 改前 | content type、可否 inline、大小上限三处各自出现在 HTTP 层 / 取文件层 / 前端分类器，未知后缀靠一个默认值兜 |
+| 改后 | `core/source_previews.py` 的 `BUILTIN_SOURCE_PREVIEWS` 加一行 `SourcePreviewSpec`；HTTP 层、取文件层、契约全查表 |
+
+内建 13 个后缀 / 4 个 kind（pdf 1、image 5、text 4、office 3）。两个防漂移的注册期判死：
+`inline_renderable=True` 但 media type 不在 `INLINE_SAFE_MEDIA_TYPES` → 拒（:156），
+`media_type` 必须是小写 `type/subtype`（:150）。**未知后缀没有默认 content type**，
+这是这条轴存在的第一理由：`application/octet-stream` + 浏览器自己猜 = 存进去的 `.html`
+在控制台自己的源上跑脚本。第二理由是"按 family 贴标签"：5 个图像后缀是一个 kind、
+5 个 content type，JPEG 发成 `image/png` 在 `nosniff` 下直接坏图。
+
+常驻守卫：`tests/test_source_preview_registry.py`（36 条，含"注册一个后缀，
+`core/source_preview_access.py` 逐字节不变"）、`tests/test_knowledge_source_preview_api.py`
+（14 条）、`frontend/src/parse-intervention/components/SourcePreview.test.tsx`（10 条）。
+
+### S-2 评审查出的四条 should-fix
+
+| # | 发现 | 处置 |
+|---|---|---|
+| F2 | `fa52c4c` 的提交信息说"`openapi.ts` 已重新生成并随本条提交" —— **为假**：那份文件里`source-preview` 出现 0 次，`scripts/export_openapi.py --check` 在 HEAD 上 exit 1（`ADDED: [.../source-preview]`）。契约门禁当时只跑了后半段（json→ts），而事实源 `openapi.json` 从没重导过 | 已在 `227f0f4` 真正补上：先 `export_openapi.py` 再 `types:gen`，两份 generated 文件随该条提交。本轮复核读数：HEAD 上 json 含 `source-preview` ×2、ts ×1，`--check` exit 0。门禁口径写进 `智能体交接审查.md` §6（**契约是两步，只跑 `types:gen` 会假绿**）。这条同时是一句话写过头的教训：提交信息里的"已随本条提交"必须用 `git show --stat` 核 |
+| F1 | 我写进 spec 的"kind 由 resolve 之后的路径决定"是**假**的：`locate_preview_source` 先从原始 `file_path` 取 spec（:87），再 `resolve()`（:97）。root 内一个 `report.pdf -> payload.html` 软链会拿到 `application/pdf` 却交出 HTML，界面把它塞进 iframe。越界检查拦不住它——它没跳出去 | spec 改从 `candidate` 取，落在越界检查**之后**（"跳出去了"这个安全信号要优先于"这个后缀不认得"）。两条新用例，见 S-3 |
+| F3 | 前端"这三类既不渲染也不给链接"这道闸门**没有 DOM 守卫**：`previewKind` 的单测只证明分类器说 `download`，只改 JSX 让 `download` 长出一个 iframe，分类器一字不动 → 评审的变异 M5b 实测 **13 passed 存活** | 新增一条查真实节点的用例：三类各喂一份 blob，断言 `iframe`/`img`/`pre`/`a[href^="blob:"]` 全为 null、`querySelectorAll("a").length === 0`，同时断言"下载原文"仍在（挡住"缩成什么都不显示"） |
+| F4 | `PROTECTED_COLUMNS` 只挡了撤销五列 + 行身份三列，**溯源列没挡**：声明返回 `{"created_by": ...}` 能过注册也过写侧，于是行的"谁建的"被改写而审计仍记真实请求者 —— 两条记录对上假话 | `PROVENANCE_COLUMNS = {created_by, verified_by, issued_by, issued_at}`（四列都在 `models/orm.py:1204/1208/1291/1292` 真实存在），并进 `PROTECTED_COLUMNS`，注册期与写侧双拦 |
+
+### S-3 一条我自己加错的列，和一个"反向用例"的价值
+
+F4 我按评审点名的三列动手时**自己多加了 `updated_by` 和 `verified_by`**。前者是错的：
+`core/enterprise_identity_control.py:1707` 内建 `domain_revoke` 的 `release_values` 返回的
+正是 `{"updated_by": actor_id}`（`tests/…:330` 钉着字面值）。把它列进禁区不会在注册期炸，
+而会在**写侧**被仪式拒 —— 也就是线上才炸。已在源码注释里写明"这一列是 kind 拥有的一条"。
+
+参数化用例跑在 `sorted(PROTECTED_COLUMNS)` 上，所以"少一项"表现为**少跑一条而不是失败**
+（§Q 已经记过一次同样的坑）。这一条由 `test_the_protected_column_sets_are_exactly_what_the_ceremony_owns`
+补三组字面值钉死。
+
+F1 的两条用例是**成对**写的，这很值：
+`test_a_symlink_inside_the_root_is_typed_by_the_bytes_it_reaches_not_by_its_own_name` 钉
+"不能按名字贴标签"，而 `test_the_reverse_symlink_is_served_because_the_target_is_what_gets_read`
+（link 名未登记、target 已登记 → 必须放行且 spec 来自 target）钉"判据是**交出去的字节有一个
+登记类型**，不是路径里出现过链接"。只有前一条的话，`if Path(raw).is_symlink(): refuse` 这种
+过修也算"修好了"——后端变异 M2（一律拒符号链接）实测确实被反向用例抓红。
+
+### S-4 两条 nit 顺手修了（都改成"权威在后端"的形状）
+
+- **nit 5**：`previewKind` 的 `text/` 前缀规则会给"将来登记成只下载的 text 型后缀"白送一个
+  "新标签页打开"的 blob 链接。改成**表态优先**：`disposition !== "inline"` 直接落 `download`。
+  后端 `inline = spec.inline_renderable and disposition != "attachment"`
+  （`server/knowledge_source_preview_api.py:136`）已经把 Intent 写进 `Content-Disposition`，
+  前端第二道闸门没有理由自己猜。`NEVER_RENDERED` 保留为第二道。
+- **nit 6**：`download()` 在 `link.click()` 同 tick `revokeObjectURL`。评审说"jsdom 测不了"——
+  实测**测得了**：把 `waitFor` 换成只冲微任务的循环（`waitFor` 自己会推进宏任务，会把
+  "还没回收"看没），同 tick 不回收 / 跨一个宏任务恰好回收一次 / 卸载不重复回收，三条都断得住。
+  泄漏也堵了：`pendingDownloads` 在卸载时兜底清。
+
+### S-5 反向验证读数（脚本 `%TEMP%\mutate_round7.py` / `mutate_round7_fe.py`，均在仓外）
+
+后端 5/5 转红：M1 spec 退回原始路径 → F1 两条红；M2 过修（一律拒符号链接）→ 反向用例红；
+M3 `PROTECTED_COLUMNS` 并集去掉溯源集 → 字面值钉用例红；M4 注册期分支删除 → 8 条红
+（含 4 条新参数化）；M5 把 `updated_by` 加回去 → 整模块 import 期就 error。
+前端 5/5 转红：FM1（= 评审存活的 M5b）→ DOM 闸门红；FM2 去掉表态优先 → 分类器用例红；
+FM3 同 tick 回收 → 时序用例红；FM4 永不回收 → 时序用例红；FM5 `download` 长出 blob 链接 →
+DOM 闸门红。两组还原后均按字节断言与改前相同，复跑 75 passed / 91 passed。
+
+### S-6 仍未处理（登记，不当场糊）
+
+1. **nit 8**：`server/enterprise_readiness_api.py:573-577` 的 sqlite 只读证明把 host 写死。
+   fail-closed、无安全后果，但它是 §I 那张方言表**外面**残留的一处方言判断。归到轴 #15 的
+   延长线，不混进本轮。
+2. **派发到 Content-Disposition 而不是后缀**：前端现在读 `disposition`，但 `previewKind` 仍
+   自己判 `text/` 前缀挑渲染面。真正零猜的版本是后端在响应里给一个 `render_kind`。那要动契约，
+   单独切片。
+3. **放行与读取之间仍不是同一个句柄**。HTTP 层已经防住"文件被换大/换小"：读完比对
+   `len(payload) != source.size` 就拒（`server/knowledge_source_preview_api.py:130-135`）。
+   没防住的是**等字节数换内容**——`resolve()` → `stat()` → 再按路径打开，中间换成另一份同长度
+   的文件，尺寸核对过、content type 说的却不是交出去的那份字节。收口办法是先 open 再
+   `os.fstat` + 按 fd 读到底（或 `O_NOFOLLOW`）。这是端点硬化，不是这条轴的分支问题，
+   且它与 F1 不同性：F1 是"按名字贴标签"，这一条是"两次系统调用之间的竞态"。
+
+## T. 第八轮独立评审（审 `227f0f4`）：一条 blocker 查出的是我自己写下的"零改分支"没做到
+
+评审 VERDICT 是 FAIL，只有一条 blocker，但它打在这轮判据本身上。
+
+### T-1 B1：第 7 个筛选键只接了一半，而且我登记过这个风险却没去数消费点
+
+判据是"新增实现零改分支"。`DocumentsFilterState` 的键要在**五处**各写一遍：URL 解析、参数名
+对照、单键写入、URL 变了回灌 state、"有没有筛选生效"。本片只在前/中三处加了 `chunkingReason`，
+于是（评审逐条给了 file:line，我复读源码确认全部为真）：
+
+| 失败模式 | 现象 |
+|---|---|
+| 后退到只有 `chunking_reason_code` 变化的 URL | 六个键逐个比完，`filtersChanged` 是 `false`，**整条回灌不跑**：界面按旧值继续筛选，URL 说的是另一套 |
+| 该键与其它键同时变化 | 六个 setter 被回灌，这一项仍被吞 |
+| 后续任何一次别的键写 URL | 从 `route.params` 重写，活跃筛选**永久缺席**于分享/复制出去的 URL —— 直接推翻提交信息里"选择留在 URL"那句 |
+
+**修法不是补那三行。** 补三行只是把这一处的五处对齐再走一遍，下一个键还会漏。改成让**类型当注册表**：
+`documentFilterState: DocumentsFilterState` 与 `documentFilterSetters: Record<keyof
+DocumentsFilterState, (value: string) => void>` 两张表，回灌 / 单键写 / 清空全部按表遍历 ——
+**少一个键是编译错误而不是漏测**（`tsc --noEmit` 就是这道闸门）。顺带两件：
+
+1. 回灌效果原先手写的十个依赖项换成"当前值放快照 ref"，于是**依赖数组里一个筛选键都没有**，
+   "忘了加进 deps"这一类也没有落点了。
+2. **我读码时查出评审没点名的同一形状第二处**：`清除筛选` 那颗按钮的可见性判断也是手写六项
+   `!== "all"`，所以**只按切分判定时操作员没有退回全部的入口**。改成按 `documentFilterState`
+   与 `DEFAULT_DOCUMENT_FILTERS` 比。
+
+反向验证 4/4 转红（`%TEMP%\mutate_round8_b1.py`，还原后字节相同）：回灌退回六项清单 / 可见性
+退回六项（表现为"找不到名为 清除全部文档筛选 的按钮"）/ 单键写退回 if/else 链（`facet-item`
+少 `is-active`）/ 清空退回手写六次调用 —— 各自转红。新用例本身也钉了两侧 URL 方向。
+
+### T-2 四条 non-blocking 的处置
+
+| # | 处置 |
+|---|---|
+| N1 `_document_engine` 是 Python 侧第二份 `unknown` | **已删**。删前把"动态取用"这一条补核：`grep -rn document_engine` 排除 `__pycache__` 后只命中定义行本身，连字符串形态都没有。删后 catalog 四套件 61 passed、`ruff check .` 干净 |
+| N2 legacy 路径 trim+lowercase 与 SQL 精确比较不对称 | **如实登记不修**。当前没有产地能触发：四个码都是小写 snake_case 且由 `str(reason_code)` 直写。要改的是比较语义，属于另一件事 |
+| N3 判定码 ↔ 界面名没有对账 | **已补**跨语言守卫 `frontend/src/parse-intervention/model/chunkReasonLabels.source.test.ts`（正则读 `indexing/chunking_router.py` 真文件，双向钉 + 一条"不许空集自证"）。三路变异各点名一条红：丢中文名 → `每个后端会写下的判定码都有一个中文界面名`；留死名字 → `界面名表里没有后端已经不再产出的死名字`；正则失配 → 第一条自证用例 |
+| N4 部署窗口：旧 cursor 422 会被"刷新"与 3s 轮询重复触发；`facets.chunking_reasons.map` 对新前端 + 旧后端会抛 | **登记，不当场糊**。422 那侧是暂态且改一次筛选即自愈，属所有 hash 失效型部署的共性；`map` 那侧真正的缺口是**没有写下"后端先于前端上线"这条约定**——写进交接文档比加一个 `?? []` 更对症，加兜底会把"契约已断"降级成看不见的空分面 |
+
+### T-3 关于这次评审本身（两条要给下一位）
+
+1. **派发的 subagent 报了"credit limit 失败"，但报告是完整的。** 通知说 agent failed，
+   `review-round8.md` 却已 12 KB 全文落盘。所以**通知不等于产物**：先去看 artifact，再决定重派。
+2. **它的纪律是第七轮该有的样子**：自陈"未执行任何测试、未跑任何写类 git 命令、
+   `git status --porcelain` 为空"，唯一写入是 `$TEMP` 里的报告。对比 §S 记的第七轮就地变异 6 个
+   文件，本轮的结论反而更可复核（它还独立复核了 `_scoped_document` 两条 scope 谓词在 HEAD 完好，
+   推翻了我上一轮写进交接文档的一条指控 —— 见 §6 表末行的更正）。
+
+## U. 读 §D-1 时顺带查出/更正的两条账
+
+1. **§D-1 是一笔过期的账**：它写着"修法是共享分类器 + `raise` 兜底"，其实 `a50c697` 已经修完了。
+   本轮逐复读三个消费点确认三处都拒绝未知状态，已就地更正该行。教训给下一位也给自己：
+   **登记类文档里"未修"的断言，比"未修"这件事本身更需要及时核**——它会让下一位把已经闭住的
+   安全面重新当缺陷排优先级，白花一片预算。
+2. **`core/catalog_schema.py` 里 7 个 `inspect_*_capability` 名字各有两份定义**（11 个 distinct
+   名字 / 18 个 def；`ast.unparse` 逐对比对确认同一名字的两份**不同**）。
+   **这不是缺陷**：:10975-10990 先把当时那版实现赋给 `_KNOWLEDGE_SERVING_ORIGINAL_*_CAPABILITY`，
+   随后才把公开名重绑到通用的 `_knowledge_serving_revision_compatible(...)` —— 刻意的
+   "冻结-重绑"行为等价垫片。差点把它写成 §D-8 那一类"两个分派器只改一边会静默失效"，
+   是查了 `_ORIGINAL_*` 的赋值点才没写错。
+   **但它决定了这条轴的改法**：状态字面量除声明表外还散着 11 处 `return "not_available", ()` 与
+   61 处 `"unavailable"` 字面量，且收成声明表时必须同时保住冻结版的行为等价（垫片每处都拿
+   ORIGINAL 版做对照）。归为 §B 候选**轴 #17（capability 状态生产者）**，
+   与 §D-6 同源风险，**不属于"顺手可修"**。

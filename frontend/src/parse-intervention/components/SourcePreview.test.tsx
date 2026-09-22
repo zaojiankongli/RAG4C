@@ -70,6 +70,16 @@ describe("previewKind", () => {
     expect(previewKind("image/svg+xml")).toBe("download");
     expect(previewKind("")).toBe("download");
   });
+
+  it("表态优先于类型：后端说 attachment，text/ 前缀也拿不到渲染面", () => {
+    // 只按 mediaType 的前缀判，等于界面替后端决定"这一类可以 inline"。将来任何登记成
+    // 只下载的 text 型后缀都会从这条前缀规则里白拿到一个"新标签页打开"的 blob 链接。
+    expect(previewKind("text/plain", "attachment")).toBe("download");
+    expect(previewKind("application/pdf", "attachment")).toBe("download");
+    expect(previewKind("text/plain", "inline")).toBe("text");
+    // 默认值是 inline：只问类型的老调用口不变。
+    expect(previewKind("application/pdf")).toBe("pdf");
+  });
 });
 
 describe("SourcePreview", () => {
@@ -84,6 +94,27 @@ describe("SourcePreview", () => {
     expect(screen.getByText("2.0 KB")).toBeTruthy();
     expect(screen.getByText("revision 3-aaaa")).toBeTruthy();
     expect(api.fetchDocumentSource).toHaveBeenCalledWith(SCOPE, "inline", expect.any(AbortSignal));
+  });
+
+  it("会执行文档自身内容的类型：DOM 里既没有渲染面也没有 blob 链接，但仍给下载", async () => {
+    // 后端那张表已经把这三类划成 inline 不安全，这一条钉的是**第二道闸门真的落在 DOM 上**。
+    // previewKind 的单元测试只证明分类器说"download"；把 JSX 里那一支改成渲染 iframe，
+    // 分类器一字不动也能让 HTML 在本源上跑起来 —— 只有查真实节点能抓到。
+    for (const mediaType of ["text/html", "image/svg+xml", "application/xhtml+xml"]) {
+      cleanup();
+      api.fetchDocumentSource.mockResolvedValue(blobResponse(mediaType));
+      const { container } = render(<SourcePreview scope={SCOPE} documentName="payload" />);
+      const note = await waitFor(() => screen.getByText("这一类原文不支持在线查看"));
+      expect(note).toBeTruthy();
+      // 反手一条：也不能缩成"什么都不显示"，操作员要拿得到原文本身。
+      expect(screen.getByText("下载原文")).toBeTruthy();
+      expect(container.querySelector("iframe")).toBeNull();
+      expect(container.querySelector("img")).toBeNull();
+      expect(container.querySelector("pre")).toBeNull();
+      // blob: 链接继承本站源，"新标签页打开"对这三类等于把执行换到顶层窗口。
+      expect(container.querySelector('a[href^="blob:"]')).toBeNull();
+      expect(container.querySelectorAll("a").length).toBe(0);
+    }
   });
 
   it("每种拒绝原因给不同的一句话，而不是一条通用错误", async () => {
@@ -143,6 +174,28 @@ describe("SourcePreview", () => {
     await waitFor(() => expect(api.fetchDocumentSource).toHaveBeenCalledTimes(2));
     expect(api.fetchDocumentSource.mock.calls[1][1]).toBe("attachment");
     expect(click).toHaveBeenCalledTimes(1);
+    click.mockRestore();
+  });
+
+  it("下载用的 object URL 不在 click 同 tick 回收，也不重复回收", async () => {
+    // click() 只是把请求交给浏览器，同 tick revokeObjectURL 会让一份写到一半的文件落盘。
+    // 反向也要成立：延后不等于泄漏。
+    api.fetchDocumentSource.mockResolvedValue(blobResponse("application/vnd.openxmlformats-officedocument.wordprocessingml.document"));
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const { unmount } = render(<SourcePreview scope={SCOPE} documentName="plan.docx" />);
+    const button = await waitFor(() => screen.getByText("下载原文"));
+    (button.closest("button") ?? button).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    // 只冲微任务：下载那条 .then 不经过 React 状态，而同 tick 断言不能被定时器污染 ——
+    // 用 waitFor 观察这一步会自己推进宏任务，把"还没回收"看没。
+    for (let tick = 0; tick < 4; tick += 1) await Promise.resolve();
+    const downloadUrl = created[1];
+    expect(created[0]).not.toBe(downloadUrl);
+    expect(api.fetchDocumentSource).toHaveBeenCalledTimes(2);
+    expect(revoked).not.toContain(downloadUrl);
+    await new Promise((resolve) => { setTimeout(resolve, 10); });
+    expect(revoked.filter((url) => url === downloadUrl)).toHaveLength(1);
+    unmount();
+    expect(revoked.filter((url) => url === downloadUrl)).toHaveLength(1);
     click.mockRestore();
   });
 

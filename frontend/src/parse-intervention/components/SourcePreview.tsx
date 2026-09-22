@@ -19,11 +19,18 @@ export const REFUSAL_COPY: Record<string, string> = {
   source_preview_unavailable: "原文当前读不出来（文件被移动、占用或权限不足）。",
 };
 
-/** 权威在後端那张可查看来源表；这里只是第二道：会执行文档自身内容的类型，界面一律不渲染、
- * 也不给"新标签页打开"的链接（blob: 链接继承本站源）。 */
+/** 权威在後端那张可查看来源表：`?disposition=` 那一侧算出的 Content-Disposition 就是它对本
+ * 这份字节的表态（`inline = spec.inline_renderable and 不是 attachment`）。所以这里先问表态、
+ * 再按类型挑渲染面 —— 反过来只按 `text/` 前缀判，将来任何登记成"只下载"的 text 型后缀都会
+ * 从这条前缀规则里白拿到一个"新标签页打开"的 blob 链接。
+ * NEVER_RENDERED 是第二道：表态说 inline 也照样不渲染、不给链接（blob: 链接继承本站源）。 */
 const NEVER_RENDERED = new Set(["text/html", "image/svg+xml", "application/xhtml+xml"]);
 
-export function previewKind(mediaType: string): "pdf" | "image" | "text" | "download" {
+export function previewKind(
+  mediaType: string,
+  disposition: DocumentSourceBlob["disposition"] = "inline",
+): "pdf" | "image" | "text" | "download" {
+  if (disposition !== "inline") return "download";
   const type = mediaType.split(";")[0].trim().toLowerCase();
   if (NEVER_RENDERED.has(type)) return "download";
   if (type === "application/pdf") return "pdf";
@@ -36,6 +43,7 @@ export default function SourcePreview({ scope, documentName }: { scope: ParseSco
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [reload, setReload] = useState(0);
   const sequence = useRef(0);
+  const pendingDownloads = useRef(new Set<string>());
   const scopeKey = `${scope.datasetId}\u0000${scope.docId}`;
 
   useEffect(() => {
@@ -68,6 +76,12 @@ export default function SourcePreview({ scope, documentName }: { scope: ParseSco
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey, reload]);
 
+  // 只挂在卸载上：换文档/重试不是"这一轮下载结束了"，在那里回收会把在写的文件截断。
+  useEffect(() => () => {
+    for (const url of pendingDownloads.current) URL.revokeObjectURL(url);
+    pendingDownloads.current.clear();
+  }, []);
+
   const download = () => {
     const controller = new AbortController();
     fetchDocumentSource(scope, "attachment", controller.signal)
@@ -76,8 +90,14 @@ export default function SourcePreview({ scope, documentName }: { scope: ParseSco
         const link = document.createElement("a");
         link.href = url;
         link.download = documentName || "document";
+        pendingDownloads.current.add(url);
         link.click();
-        URL.revokeObjectURL(url);
+        // 不在同一个 tick 回收：click() 只是把请求交给浏览器，同 tick revoke 有把还在写盘的
+        // 那份下载截断的风险（真浏览器行为 jsdom 测不到，这里只按"交出去之后再延后回收"处理）。
+        // 定时器与卸载兜底二选一先到，delete() 的返回值保证每条只撤一次。
+        setTimeout(() => {
+          if (pendingDownloads.current.delete(url)) URL.revokeObjectURL(url);
+        }, 0);
       })
       .catch(() => undefined);
   };
@@ -102,7 +122,7 @@ export default function SourcePreview({ scope, documentName }: { scope: ParseSco
   }
 
   const { source, url } = phase;
-  const kind = previewKind(source.mediaType);
+  const kind = previewKind(source.mediaType, source.disposition);
   return (
     <div className="parse-source-preview">
       {kind === "pdf" ? (

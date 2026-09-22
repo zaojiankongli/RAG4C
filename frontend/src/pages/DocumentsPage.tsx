@@ -542,23 +542,47 @@ export default function DocumentsPage({
     invalidate();
   }, [modernCatalogEnabled, invalidate, loadModernCatalog]);
 
+  // 筛选键的"当前值"与"写入口"各一张表，键集合由 `DocumentsFilterState` 钉死：**少一个键
+  // tsc 就红**，所以任何一个消费点都不可能只接住一部分键。第八轮评审的 B1 就是这个形状 ——
+  // 第 7 个键 `chunkingReason` 进了 `readDocumentsFilters`，却没进下面那条重同步的六行比较、
+  // 六行 setter 和依赖数组，于是浏览器前进/后退带着 `chunking_reason_code` 回来时参数被吞掉。
+  const documentFilterState: DocumentsFilterState = {
+    keyword,
+    status: statusFilter,
+    type: typeFilter,
+    engine: engineFilter,
+    chunkingReason: chunkingReasonFilter,
+    category: categoryFilter,
+    tag: tagFilter,
+  };
+  const documentFilterSetters: Record<keyof DocumentsFilterState, (value: string) => void> = {
+    keyword: (value) => setKeyword(value),
+    status: (value) => setStatusFilter(value),
+    type: (value) => setTypeFilter(value),
+    engine: (value) => setEngineFilter(value),
+    chunkingReason: (value) => setChunkingReasonFilter(value),
+    category: (value) => setCategoryFilter(value),
+    tag: (value) => setTagFilter(value),
+  };
+  // "有没有筛选生效"也按同一张表算：原先这里手写六项 `!== "all"`，第 7 个键漏在外 ——
+  // 只按切分判定时，"清除筛选"那颗按钮根本不出现，操作员没有退回全部的入口。
+  const hasActiveDocumentFilter = (
+    Object.keys(documentFilterState) as (keyof DocumentsFilterState)[]
+  ).some((key) => documentFilterState[key] !== DEFAULT_DOCUMENT_FILTERS[key]);
+  // 监听器要读"当下"的筛选值，但不能因此每次改筛选都重新挂一次监听：值放快照，
+  // 依赖数组里就**一个筛选键都不需要**，"忘了加进 deps"这一类也没有落点了。
+  const documentFilterSnapshot = useRef({ state: documentFilterState, setters: documentFilterSetters });
+  useEffect(() => {
+    documentFilterSnapshot.current = { state: documentFilterState, setters: documentFilterSetters };
+  });
+
   useEffect(() => {
     const onLocationChange = () => {
       const nextFilters = readDocumentsFilters(window.location);
-      const filtersChanged =
-        nextFilters.keyword !== keyword ||
-        nextFilters.status !== statusFilter ||
-        nextFilters.type !== typeFilter ||
-        nextFilters.engine !== engineFilter ||
-        nextFilters.category !== categoryFilter ||
-        nextFilters.tag !== tagFilter;
-      if (filtersChanged) {
-        setKeyword(nextFilters.keyword);
-        setStatusFilter(nextFilters.status);
-        setTypeFilter(nextFilters.type);
-        setEngineFilter(nextFilters.engine);
-        setCategoryFilter(nextFilters.category);
-        setTagFilter(nextFilters.tag);
+      const { state, setters } = documentFilterSnapshot.current;
+      const keys = Object.keys(nextFilters) as (keyof DocumentsFilterState)[];
+      if (keys.some((key) => nextFilters[key] !== state[key])) {
+        keys.forEach((key) => setters[key](nextFilters[key]));
         resetModernPagination();
       }
       const next = parseDocumentWorkspaceLocation(window.location);
@@ -585,18 +609,7 @@ export default function DocumentsPage({
       window.removeEventListener("popstate", onLocationChange);
       window.removeEventListener("hashchange", onLocationChange);
     };
-  }, [
-    categoryFilter,
-    engineFilter,
-    keyword,
-    parseDirty,
-    parseRoute,
-    resetModernPagination,
-    setWorkspaceDirty,
-    statusFilter,
-    tagFilter,
-    typeFilter,
-  ]);
+  }, [parseDirty, parseRoute, resetModernPagination, setWorkspaceDirty]);
 
   useEffect(() => {
     if (!parseDirty) return;
@@ -770,26 +783,19 @@ export default function DocumentsPage({
   );
 
   const applyDocumentFilter = (key: keyof DocumentsFilterState, value: string) => {
-    const normalized = value.trim() || "all";
-    if (key === "keyword") setKeyword(value);
-    else if (key === "status") setStatusFilter(normalized);
-    else if (key === "type") setTypeFilter(normalized);
-    else if (key === "engine") setEngineFilter(normalized);
-    else if (key === "chunkingReason") setChunkingReasonFilter(normalized);
-    else if (key === "category") setCategoryFilter(normalized);
-    else if (key === "tag") setTagFilter(normalized);
+    // keyword 存原样（不去空白、不落到 "all"），其余键走 normalized —— 这一处差异是既有的，
+    // 收进表里而不是顺手统一。
+    documentFilterSetters[key](key === "keyword" ? value : value.trim() || "all");
     replaceDocumentsFilter(window.location, key, value);
     resetModernPagination();
   };
 
   const clearAllDocumentFilters = () => {
-    applyDocumentFilter("keyword", "");
-    applyDocumentFilter("status", "all");
-    applyDocumentFilter("type", "all");
-    applyDocumentFilter("engine", "all");
-    applyDocumentFilter("chunkingReason", "all");
-    applyDocumentFilter("category", "all");
-    applyDocumentFilter("tag", "all");
+    // 默认值本身是那张表（`DEFAULT_DOCUMENT_FILTERS`），所以"清空"按键集合走一遍就行：
+    // 加第 8 个键不需要记得在这里补一行。
+    (Object.keys(DEFAULT_DOCUMENT_FILTERS) as (keyof DocumentsFilterState)[]).forEach((key) => {
+      applyDocumentFilter(key, DEFAULT_DOCUMENT_FILTERS[key]);
+    });
   };
 
   const goToNextModernPage = useCallback(() => {
@@ -1867,12 +1873,7 @@ export default function DocumentsPage({
                     ))}
                 </div>
               )}
-              {(typeFilter !== "all" ||
-                engineFilter !== "all" ||
-                statusFilter !== "all" ||
-                categoryFilter !== "all" ||
-                tagFilter !== "all" ||
-                keyword.trim()) && (
+              {hasActiveDocumentFilter && (
                 <Button
                   tag="button"
                   variant="text"

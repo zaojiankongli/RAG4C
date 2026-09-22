@@ -2,7 +2,7 @@
 feature: chunking-reason-filter
 status: delivered
 base: c5c02ee
-commits: c5c02ee..本条提交（含本 spec）
+commits: c5c02ee..227f0f4（第七轮评审返工在 227f0f4 之后，只动 inventory §S 记的四条，判据未变）
 date: 2026-09-23
 ---
 
@@ -146,11 +146,34 @@ WeKnora 的对齐点也正在这里——诊断信息只有能被**筛选和聚�
 4. **`server/document_catalog_api.py` 与 `tests/test_document_catalog_api.py` 在 HEAD 是混合行尾**
    （分别有 17 / 60 行是 LF-only），本片编辑把它们归一成 CRLF。所以 raw numstat（30/28、193/60）
    比 `--ignore-cr-at-eol`（13/11、133/0）大得多。语义改动是纯增量，行尾归一是附带的。
-5. **顺带发现一处死代码，本片没动**：`core/catalog.py:1082 _document_engine()` 全仓无调用方
-   （`grep -rn "_document_engine" --include=*.py` 只命中它自己的定义）。它是 Python 侧的
-   `engine` 取值 + `unknown` 兜底，与本片抽出的 SQL 侧 `_document_catalog_meta_key_expression`
-   是同一语义的两份实现——**留着就是将来 `unknown` 漂移的第二个源头**。删除属于另一件事
-   （要确认没有动态取用），登记给下一轮，不在本片里顺手删。
+5. **顺带发现的一处死代码 —— 返工条已删除**：`core/catalog.py` 的 `_document_engine()` 全仓无
+   调用方（`grep -rn "document_engine"` 排除 `__pycache__` 后只命中它自己的定义，连字符串形态
+   的动态取用都没有）。它是 Python 侧的 `engine` 取值 + `unknown` 兜底，与本片抽出的 SQL 侧
+   `_document_catalog_meta_key_expression` 是同一语义的两份实现——**留着就是将来 `unknown`
+   漂移的第二个源头**。本片登记、第八轮评审（N1）之后删掉，删后 61 条 catalog 套件复跑全绿。
+6. **本片留下的一个真缺陷：第 7 个筛选键只接了一半（第八轮评审 B1，已修）**。
+   `DocumentsFilterState` 的键要在五处各写一遍：URL 解析、参数名对照、单键写入、"URL 变了回灌
+   state"、"有没有筛选生效"。本片只在前三处加了 `chunkingReason`，于是：
+   * 前进/后退到一条只有 `chunking_reason_code` 变化的 URL → 六个键逐个比完，没人发现筛选变了，
+     整条回灌不跑，界面按旧值继续筛选而 URL 说的是另一套；
+   * 与其它键同时变化 → 六个 setter 被回灌，这一项仍被吞；
+   * **只按切分判定时"清除筛选"那颗按钮根本不出现**（它的可见性也按六项手写判断），操作员没有
+     退回全部的入口。
+   修法不是补那三行，而是把"键集合"交给类型：`documentFilterState: DocumentsFilterState` 与
+   `documentFilterSetters: Record<keyof DocumentsFilterState, …>` 两张表 + 按表遍历，
+   于是**少一个键是编译错误而不是漏测**；回灌效果原先手写的十个依赖项也一并换成"值放快照 ref"，
+   连"忘了加进 deps"这一类都没有落点了。`clearAllDocumentFilters` 与可见性判断改为按
+   `DEFAULT_DOCUMENT_FILTERS` / `documentFilterState` 的键集合走。
+   反向验证 4/4 转红（`%TEMP%\mutate_round8_b1.py`）：回灌退回六项清单 → 新用例红；可见性退回
+   六项 → 找不到"清除筛选"按钮；单键写退回 if/else 链 → `facet-item` 少了 `is-active`；
+   清空退回手写六次调用 → 新用例红。
+7. **另补一条跨语言守卫（第八轮评审 N3）**：后端四个判定码与前端 `CHUNK_REASON_CODE_LABELS`
+   过去没有任何东西对账，第 5 个判定码落地时表现为分面里冒出一个裸 `snake_case`。
+   `frontend/src/parse-intervention/model/chunkReasonLabels.source.test.ts` 用正则读
+   `indexing/chunking_router.py` 真文件，双向钉（后端发的都有名 / 有名的是后端还在发的），
+   与 `appNav.source.test.ts` 同型。
+   未处理：N2（legacy 路径 trim+lowercase 与 SQL 精确比较不对称）当前无产地能触发它——四个码都是
+   小写 snake_case 且由 `str(reason_code)` 直写——如实登记，不顺手改切分语义。
 
 ## Tasks
 

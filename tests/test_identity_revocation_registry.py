@@ -22,6 +22,7 @@ import core.enterprise_identity_control as control
 from core.identity_revocations import (
     FENCE_COLUMNS,
     PROTECTED_COLUMNS,
+    PROVENANCE_COLUMNS,
     SCOPE_COLUMNS,
     RevocationKindSpec,
     register_revocation_kind,
@@ -219,12 +220,33 @@ def test_an_undeclared_kind_is_refused_instead_of_becoming_a_scim_revoke() -> No
 
 def test_the_protected_column_sets_are_exactly_what_the_ceremony_owns() -> None:
     """把 FENCE_COLUMNS 里的任何一列删掉，参数化用例只会**少跑一条**而不是失败 —— 评审发现 B
-    就是这样放过"少一列"的。这里把两组字面值钉死。"""
+    就是这样放过"少一列"的。这里把三组字面值钉死。"""
     assert FENCE_COLUMNS == frozenset(
         {"status", "revision", "revoked_at", "revoked_by", "updated_at"}
     )
     assert SCOPE_COLUMNS == frozenset({"id", "tenant_id", "created_at"})
-    assert PROTECTED_COLUMNS == FENCE_COLUMNS | SCOPE_COLUMNS
+    assert PROVENANCE_COLUMNS == frozenset(
+        {"created_by", "verified_by", "issued_by", "issued_at"}
+    )
+    assert PROTECTED_COLUMNS == FENCE_COLUMNS | SCOPE_COLUMNS | PROVENANCE_COLUMNS
+
+
+def test_updated_by_is_the_one_provenance_column_a_kind_still_owns() -> None:
+    """``updated_by`` 看着像溯源列，所以"顺手把它一起保护起来"是**错**的：仪式自己盖
+    ``updated_at``，而"是谁做的这次释放"只有声明知道 —— 内建 ``domain_revoke`` 返回的正是
+    ``{"updated_by": actor_id}``（:330 那条字面值钉用例）。把它列进禁区不会在注册期报错
+    （那条 lambda 会走 PROVENANCE 分支），而会在写侧被仪式拒绝 —— 也就是线上才炸。
+    这一条钉的是"没有越界保护"，不是"能写"。
+    """
+    assert "updated_by" not in PROTECTED_COLUMNS
+    assert "updated_by" not in PROVENANCE_COLUMNS
+    register_revocation_kind(
+        _probe_spec(release_values=lambda actor: {"updated_by": f"by-{actor}"})
+    )
+    try:
+        assert resolve_revocation_kind("probe_revoke") is not None
+    finally:
+        unregister_revocation_kind("probe_revoke")
 
 
 @pytest.mark.parametrize("column", sorted(PROTECTED_COLUMNS))
@@ -234,6 +256,9 @@ def test_a_kind_may_not_write_the_columns_the_ceremony_or_the_row_identity_owns(
         "status": "revoked", "revision": 99, "revoked_at": None, "revoked_by": "x",
         "updated_at": None, "id": "someone-elses-row", "tenant_id": TENANT_B,
         "created_at": None,
+        # 溯源四列：值随便给一个"改写历史"的形状即可，判据是注册期就得拒。
+        "created_by": "someone-else", "verified_by": None,
+        "issued_by": "someone-else", "issued_at": None,
     }[column]
     with pytest.raises(ValueError):
         register_revocation_kind(_probe_spec(release_values=lambda _actor: {column: stolen}))

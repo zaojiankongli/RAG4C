@@ -33,6 +33,7 @@ __all__ = [
     "RevocationKindSpec",
     "FENCE_COLUMNS",
     "SCOPE_COLUMNS",
+    "PROVENANCE_COLUMNS",
     "PROTECTED_COLUMNS",
     "register_revocation_kind",
     "unregister_revocation_kind",
@@ -51,8 +52,19 @@ FENCE_COLUMNS = frozenset(
 #: tenant — the trail would say something false. The five revoke-columns are not enough.
 SCOPE_COLUMNS = frozenset({"id", "tenant_id", "created_at"})
 
+#: Columns that record *who originated this row, and when*. Neither the fence nor the row's
+#: identity, but a kind must not rewrite them either: a declaration returning
+#: ``{"created_by": ...}`` would restamp the row's origin while the audit entry still names
+#: the real requester, so the two records would disagree about who acted.
+#:
+#: ``updated_by`` is deliberately **not** here. It is the one provenance column a kind owns:
+#: the ceremony stamps ``updated_at`` itself and the kind stamps who did it — the builtin
+#: ``domain_revoke`` returns exactly ``{"updated_by": actor_id}``. Protecting it would break
+#: that kind at the write-side check rather than at registration, i.e. in production.
+PROVENANCE_COLUMNS = frozenset({"created_by", "verified_by", "issued_by", "issued_at"})
+
 #: Everything the ceremony refuses to take from a declaration.
-PROTECTED_COLUMNS = FENCE_COLUMNS | SCOPE_COLUMNS
+PROTECTED_COLUMNS = FENCE_COLUMNS | SCOPE_COLUMNS | PROVENANCE_COLUMNS
 
 
 @dataclass(frozen=True)
@@ -108,6 +120,11 @@ def _validate_spec(spec: RevocationKindSpec) -> None:
             raise ValueError(
                 f"{kind}: release_values may not write {key!r} — that column says which row this"
                 " is and whose it is; moving it would leave the audit trail false"
+            )
+        if key in PROVENANCE_COLUMNS:
+            raise ValueError(
+                f"{kind}: release_values may not write {key!r} — that column records who"
+                " originated this row and when; a kind does not get to restamp history"
             )
 
 

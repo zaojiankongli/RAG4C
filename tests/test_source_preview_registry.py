@@ -240,6 +240,53 @@ def test_a_symlink_inside_the_root_that_points_out_is_refused(tmp_path: Path) ->
     assert excinfo.value.code == "source_preview_out_of_scope"
 
 
+def test_a_symlink_inside_the_root_is_typed_by_the_bytes_it_reaches_not_by_its_own_name(
+    tmp_path: Path,
+) -> None:
+    """越界检查只管"跳出去"，管不到**root 内**的符号链接。按记录下来的原始名判类型，
+    root 里一个 ``report.pdf -> payload.html`` 就会拿到 ``application/pdf`` 却交出 HTML：
+    界面把它塞进 iframe，而 content type 说的不是这些字节。
+    """
+    root = tmp_path / "kb"
+    root.mkdir()
+    (root / "payload.html").write_bytes(b"<script>alert(1)</script>")
+    try:
+        (root / "report.pdf").symlink_to(root / "payload.html")
+    except (OSError, NotImplementedError):  # pragma: no cover - Windows 无符号链接权限
+        pytest.skip("this checkout cannot create symlinks")
+    with pytest.raises(SourcePreviewRefused) as excinfo:
+        locate_preview_source(root / "report.pdf", roots=[root])
+    assert excinfo.value.code == "source_preview_unsupported_kind", (
+        "原始名 .pdf 在表里 —— 放行就是按名字贴标签"
+    )
+
+
+def test_the_reverse_symlink_is_served_because_the_target_is_what_gets_read(
+    tmp_path: Path,
+) -> None:
+    """上一条的反向，用来挡住"那就干脆禁止符号链接"这种过修：真正的判据是**交出去的字节
+    有一个登记的类型**，不是路径里出现过链接。target 登记、link 名没登记 → 应该正常放行，
+    且 spec 来自 target。
+    """
+    root = tmp_path / "kb"
+    root.mkdir()
+    target = root / "real.probe"
+    payload = b"%PDF-1.4 target"
+    target.write_bytes(payload)
+    try:
+        (root / "alias.html").symlink_to(target)
+    except (OSError, NotImplementedError):  # pragma: no cover - Windows 无符号链接权限
+        pytest.skip("this checkout cannot create symlinks")
+    register_source_preview(_spec(max_bytes=4096))
+    try:
+        found = locate_preview_source(root / "alias.html", roots=[root])
+        assert found.spec.suffix == ".probe"
+        assert found.path == target.resolve()
+        assert found.size == len(payload)
+    finally:
+        unregister_source_preview(".probe")
+
+
 def test_the_root_itself_counts_and_a_directory_is_not_a_file(tmp_path: Path) -> None:
     root = tmp_path / "kb"
     root.mkdir()
