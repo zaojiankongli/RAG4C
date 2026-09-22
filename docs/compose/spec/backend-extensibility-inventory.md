@@ -51,7 +51,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 | 8 | 通知 `source_kind` | `notification_center.py:465,480,489-496,615,678-695`、`receipts.py:258-324,519`、`materializer.py:572,746` | ~13 | **是**（`orm.py:4183,4203-4210`） | **不在 OpenAPI 里**（`approval_pending_for_me` 命中 0 次）→ 前端契约抓不到 | 声明式规格表 + 每 kind 两个 callable |
 | 9 | `gate_reason → alert_type` 派生 | `alerts.py:1102-1133`（7 条顺序 if），`_ALERT_TYPES:71-80`，CHECK `orm.py:3799` | 3 | **是** | 否 | 有序 matcher 表，保末尾两条启发式的位置 |
 | 10 | 身份 provider `oidc/saml` | `enterprise_identity_control.py:972-1008`，消费 `:1030,1040,1086,1269` | 3 | **是**（`orm.py:1220` + 字段组合 CHECK `0021:171`） | openapi 2 hits | Adapter（每 provider 一份字段形状）；**登录凭据信任形状，须 fail closed** |
-| 11 | 身份吊销 `kind` | `enterprise_identity_control.py:1538` 驱动 6 处三元（`1545-1547,1609-1627`），仪式其余全共享 | 6 | 否 | 否 | Template Method + 规格表；**双吊销栅栏不能被表绕过** |
+| 11 | ~~身份吊销 `kind`~~ **本轮已完成**，见 §J | — | 0（注册即全认；栅栏由注册期拒绝而非约定） | 否 | 否 | 已落 `core/identity_revocations.py` |
 | 12 | 自动化 trigger/condition/action 码 | `enterprise_automation_workflows_api.py:225,233,241,556-563,568-598`；`service.py:68,2107-2291,2322,2307` | 3–4 | **是**（`orm.py:5588`） | openapi `:6371,6415` | `TRIGGER_ADAPTER_ORDER` 改为从注册表推导 |
 | 13 | 文档排序 `sort` / 游标耦合 | `core/catalog.py:1304-1312,1486,1628-1639` | 3 | 否 | openapi 枚举 `:8327,8330` + 前端字面量 | `SortSpec(sql_columns, keyset_capable)`，消掉 `:1639` 特例 |
 | 14 | PDF 分类 → 引擎路由 `pdf_type` | `parsers/router.py:84-124,138` | 2–3 | 否 | `parser_meta` 自由串 | 声明式表（值选外部形状 = Adapter） |
@@ -273,10 +273,41 @@ connect_args, live_probe_required, proof_statements, accepted_values)`。三条�
 - 行为等价（判据 §3.3，未改任何断言）：`tests/test_enterprise_readiness_api.py` 93 条 +
   `tests/test_enterprise_automation_workflows_readiness.py` 29 条 + 新守卫 16 条 =
   **138 passed in 156.50s**；`ruff check .` 全仓通过。
-- 反向验证（§3.4，脚本与输出都放在仓外 `%TEMP%ag4c-verify`）：8 个变异各自 turn 红 ——
+- 反向验证（§3.4，脚本与输出都放在仓外 `%TEMP%
+ag4c-verify`）：8 个变异各自 turn 红 ——
   未注册方言改成"证明不了就算证明"（2 红）、宿主退回手写清单（2 红，其中一条是宿主守卫）、
   只删 `isinstance` 检查（1 红）、整个形状校验提前 return（7 红）、撤回不归一键名（1 红）、
   MySQL 两语句颠倒（2 红）、开引擎丢掉声明的 connect_args（1 红）。
   **第一轮有一个变异逃逸**：我只删了 `_validate_spec` 的 `isinstance` 分支却全绿 ——
   因为当时没有任何用例去注册一个非 spec 对象。补了 `test_only_a_real_declaration_can_be_registered`
   之后同一变异转红。这正是判据 §3.4 说的"破坏了要能说清哪条用例红"，而不是"我写了守卫"。
+
+## J. 轴 #11（身份吊销 kind）落地记录，含一次我自己写出的假断言
+
+`_simple_state_mutation` 里八处 `kind == "domain_revoke"` 三元回答"撤销这种资源有什么不
+一样"（预留哪个 operation、锁哪张表、审计动作、响应键名、让出哪一列），其余仪式（幂等预留、
+`SELECT … FOR UPDATE`、revision CAS、审计信封）全共享。收成 `core/identity_revocations.py`
+的 `RevocationKindSpec` 之后顺手关掉一个**真实的静默 fail-open**：三元链的 `else` 会把任何
+没预期的 kind 当成 SCIM token 撤销 —— 换了表、换了审计动作，还是一次真写入。现在未声明
+一律 `ValueError`。
+
+**栅栏做成注册期的，不是约定式的**：`status` / `revision` / `revoked_at` / `revoked_by` /
+`updated_at` 这五列"就是撤销本身"，`release_values` 若返回其中任何一列，注册直接被拒。
+旧写法里这个风险是隐形的（新 kind 若忘了 CAS 列就可能把撤销改成一次普通更新）。
+
+门禁读数（本机 `.venv`，`PYTHONPATH=.`）：
+
+- 新守卫 `tests/test_identity_revocation_registry.py` **23 条 / 2.53s**，其中两条是
+  **真走一遍仪式**：注册 `probe_revoke` 后 `_simple_state_mutation` 立刻按声明锁表、
+  按声明出响应、按声明让出列，而 `core/enterprise_identity_control.py` **逐字节不变**；
+  另一条把声明里的 `table_name` 换成 scim 表，同一个 id 就 `IdentityNotFound` ——
+  证明表是从声明来的，不是从 kind 猜的。
+- 行为等价（判据 §3.3，未改任何既有断言）：
+  `tests/test_enterprise_identity_federation_api.py` + `tests/test_oidc_sso_runtime_api.py`
+  = **39 passed in 65.57s**；`ruff check .` 全仓通过。
+- 反向验证 7 个变异，第一轮 **D 逃逸**：把 `values.update(spec.release_values(actor_id))`
+  改成 `pass`（仪式彻底不听声明）居然 23 条全绿 —— 因为我断言的是 `updated_by`，而
+  **建域名时那一列就已经是 owner-a**，断言区分不出"仪式写了"和"本来就写着"。换成让探针
+  写一列只有声明能改动的 `txt_value` 并断言其值，同一变异立刻转红。
+  教训与 §3.4 同源：**断言必须选在"只有被改的那个机制会让它成立"的位置上**，
+  否则写测试的人会以为自己钉住了，而变异跑会当场拆穿。

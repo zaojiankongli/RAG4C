@@ -36,6 +36,11 @@ from core.enterprise_tenant_idempotency import (
     tenant_request_hash,
 )
 from models.orm import Account, Tenant, TenantAuditEvent, TenantMember
+from core.identity_revocations import (
+    RevocationKindSpec,
+    register_revocation_kind,
+    resolve_revocation_kind,
+)
 
 IdentityRole = Literal["owner", "admin", "editor", "member"]
 _REVISION = "0021_enterprise_identity_federation"
@@ -1542,9 +1547,14 @@ def _simple_state_mutation(
     revision = _positive(expected_revision, "revision")
     safe_reason = _clean(reason, "reason", 512)
     key = _clean(idempotency_key, "Idempotency-Key", 128)
-    operation = "identity.domain.revoke" if kind == "domain_revoke" else "identity.scim.revoke"
-    resource_type = "tenant_verified_domain" if kind == "domain_revoke" else "tenant_scim_token"
-    table_name = "tenant_verified_domains" if kind == "domain_revoke" else "tenant_scim_tokens"
+    spec = resolve_revocation_kind(kind)
+    if spec is None:
+        # 原先这三行按 kind 二选一：没预期的 kind 会被静默当成 SCIM token 撤销 ——
+        # 换掉表、换掉审计动作。表在这里拒绝，而不是猜一个。
+        raise ValueError(f"未声明的撤销 kind：{kind!r}")
+    operation = spec.operation
+    resource_type = spec.resource_type
+    table_name = spec.table_name
     request_hash = tenant_request_hash(
         operation=operation,
         path_identity={"tenant_id": tenant_id, "resource_id": resource_id},
@@ -1594,10 +1604,7 @@ def _simple_state_mutation(
                     "revoked_by": actor_id,
                     "updated_at": now,
                 }
-                if kind == "domain_revoke":
-                    values["updated_by"] = actor_id
-                else:
-                    values["active_name_key"] = None
+                values.update(spec.release_values(actor_id))
                 session.execute(
                     update(table)
                     .where(table.c.id == resource_id, table.c.revision == revision)
@@ -1606,14 +1613,9 @@ def _simple_state_mutation(
                 row = (
                     session.execute(select(table).where(table.c.id == resource_id)).mappings().one()
                 )
-                facts = _domain_payload(row) if kind == "domain_revoke" else _scim_payload(row)
-                key_name = "domain" if kind == "domain_revoke" else "token"
-                payload = {key_name: facts}
-                action = (
-                    "tenant_domain.revoked"
-                    if kind == "domain_revoke"
-                    else "tenant_scim_token.revoked"
-                )
+                facts = spec.project(row)
+                payload = {spec.payload_key: facts}
+                action = spec.audit_action
                 _audit(
                     session,
                     tenant_id=tenant_id,
@@ -1623,9 +1625,7 @@ def _simple_state_mutation(
                     action=action,
                     resource_type=resource_type,
                     resource_id=resource_id,
-                    before=_domain_payload(current)
-                    if kind == "domain_revoke"
-                    else _scim_payload(current),
+                    before=spec.project(current),
                     after={**facts, "reason": safe_reason},
                     request_id=request_id,
                     request_ip=request_ip,
@@ -1671,3 +1671,34 @@ __all__ = [
     "update_provider",
     "verify_domain",
 ]
+
+
+# 两种可撤销的身份资源各自声明"哪里不一样"；仪式（幂等预留、FOR UPDATE、revision CAS、
+# 审计信封）全在 _simple_state_mutation 里共享。release_values 的差别本身就是一道栅栏：
+# 域名撤销要落 updated_by，SCIM token 撤销必须让出 active_name_key 那个"同名只允许一个
+# 生效"的唯一槽位，否则轮换出来的新 token 建不出来。写 status/revision/revoked_* 会被
+# 注册期直接拒绝 —— 那一列就是撤销本身。
+register_revocation_kind(
+    RevocationKindSpec(
+        kind="domain_revoke",
+        operation="identity.domain.revoke",
+        resource_type="tenant_verified_domain",
+        table_name="tenant_verified_domains",
+        payload_key="domain",
+        audit_action="tenant_domain.revoked",
+        project=_domain_payload,
+        release_values=lambda actor_id: {"updated_by": actor_id},
+    )
+)
+register_revocation_kind(
+    RevocationKindSpec(
+        kind="scim_revoke",
+        operation="identity.scim.revoke",
+        resource_type="tenant_scim_token",
+        table_name="tenant_scim_tokens",
+        payload_key="token",
+        audit_action="tenant_scim_token.revoked",
+        project=_scim_payload,
+        release_values=lambda _actor_id: {"active_name_key": None},
+    )
+)
