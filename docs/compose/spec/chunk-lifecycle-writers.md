@@ -319,3 +319,29 @@ R7 §5.2 实测这类推进会带来 20 条测试漂移。**本切片不做**，
 **反向验证（invariant #5）**：临时摘掉 `list_revisions` 的 tenant/dataset/document 三个过滤条件后，
 `test_list_revisions_is_scoped_to_its_tenant_dataset_and_document` 在 `tests/test_chunk_revisions.py:180`
 变红；还原后 `git diff` 只剩预期改动，`ruff check` 对受改 5 文件全绿。
+
+## 交付后二次评审的更正（commit `9a7476d`）
+
+第二个独立评审子 agent 对 `bc00a46 / ce9b57d / 05bbf98` 判 **FAIL**，三条 blocker 全部核实为真，
+本节把被说过头的结论改正过来，原上方文字照例不涂改：
+
+1. **"解除整文档写入死锁"是说过头的。** 那一版把计数对账放在写入之后，而完整性 fence 跑在写入
+   之前——fence 一拒绝就永远走不到对账。所以对旧代码已经漂移出去的那些文档，那次修复只**预防**
+   新漂移，不**治愈**旧锁死。现在对齐发生在写入方本就持有的 `Document` 行 `FOR UPDATE` 事务里
+   （fence 处一次、写入后一次），漂移文档下一次写入即自愈。
+2. **提交后补写本身就是并发窗口。** 旧对账在 commit 之后另开 session，既不持行锁，又会从写入前的
+   快照回灌 `parser_meta`。已删除该路径；租户 / 知识库聚合改为在同一事务内按同一差量跟随，
+   不能改调 `catalog.set_document_status`（它会再开一个 session 抢同一把行锁）。
+3. **幂等墓碑仍会写删除审计计数**（active 分支漏了 legacy 分支保留的 `authority_changed` 守卫），
+   违反不变量 5：重放一次 `DELETE` 就把 `manual_chunk_deletes` 加一、重戳时间。已修，权威计数照实回报。
+4. **`05bbf98` 把"墓碑后 `projection_pending` 恒真"钉成断言是错的。** 评审判定：那确实是被核实过的
+   缺陷（`ProjectionHandlers.handle_milvus` 只对 `mutation == "edit"` 调 `mark_indexed`，删除分支
+   从不标记，而 `edit_chunk` 已经把 `desired_index_revision` 推上去并把 `index_status` 置 pending），
+   把它断言成期望值会把缺陷洗成契约、并挡住那一行修复。登记待裁决，不再当作已定行为。
+
+**修后实跑**：`test_chunk_count_reconciliation + test_chunk_authority_api + test_chunk_writers +
+test_knowledge_chunks_api + test_chunk_revisions` = **52 passed / 197.25s**，
+`ruff check server/chunk_operations.py tests/test_chunk_count_reconciliation.py` 干净。
+过程中两次真实回归（`tenant/dataset` 聚合停在 1、`remaining_chunks` 从陈旧 dict 取值报成 1）
+都由既有测试抓到并据此改正，非改断言迁就。
+
