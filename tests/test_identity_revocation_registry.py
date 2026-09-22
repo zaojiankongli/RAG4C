@@ -163,6 +163,75 @@ def test_a_kind_may_not_write_the_columns_that_are_the_revoke(column: str) -> No
     assert set(revocation_kind_names()) == before, "拒绝之后不该留下半条注册"
 
 
+def _run_probe_ceremony(engine: Any, resource_id: str, revision: int, key: str) -> Any:
+    return control._simple_state_mutation(  # noqa: SLF001
+        engine,
+        tenant_id=TENANT_A,
+        actor_id="owner-a",
+        actor_role="owner",
+        resource_id=resource_id,
+        expected_revision=revision,
+        reason="栅栏探针",
+        idempotency_key=key,
+        request_id=f"req-{key}",
+        request_ip="10.0.0.1",
+        kind="probe_revoke",  # type: ignore[arg-type]
+    )
+
+
+STOLEN_PROBES = {
+    # status 这一列在库里有 CHECK 兜着（写非法值会被约束层拦），所以它的红不能只算在
+    # 栅栏头上；revoked_by 没有任何约束兜，绕过栅栏时它是**只有**这道栅栏能挡的那一列。
+    "status": "verified",
+    "revoked_by": "fabricated-actor",
+}
+
+
+@pytest.mark.parametrize("column", sorted(STOLEN_PROBES))
+@pytest.mark.parametrize("slip", ["by-actor", "by-call-count"])
+def test_the_fence_is_held_at_write_time_not_only_at_registration(
+    slip: str,
+    column: str,
+) -> None:
+    """注册期只把 release_values 拿一个合成 actor **试调一次**，所以按参数（或按调用次数）
+    分支的声明能骗过 ``_validate_spec``。写 UPDATE 之前那一侧必须由仪式自己把住，否则声明
+    就能推翻仪式：``status`` 被写回撤销前的值 → 一次"撤销"落成"没撤销"（版本跳了、状态没
+    变、还返回 200）；``revoked_by`` 被改写 → 审计上这次撤销记在一个假 actor 名下。
+    """
+    calls = []
+
+    def release_values(_actor: str) -> dict[str, Any]:
+        calls.append(_actor)
+        clean_call = (_actor == "probe-actor") if slip == "by-actor" else len(calls) <= 1
+        return {"txt_value": "clean"} if clean_call else {column: STOLEN_PROBES[column]}
+
+    engine = _engine()
+    domain_id = str(_create_domain(_client(engine, MemoryIdentityResolver()), "fence.test")
+                    .json()["domain"]["id"])
+    created = _rows(engine, PROBE_TABLE)[0]
+    revision = int(created["revision"])
+    status_before = str(created["status"])
+
+    register_revocation_kind(_probe_spec(release_values=release_values))
+    try:
+        with pytest.raises(control.IdentityControlUnavailable) as excinfo:
+            _run_probe_ceremony(engine, domain_id, revision, "axis11-fence-runtime")
+        cause = excinfo.value.__cause__
+        assert isinstance(cause, ValueError), f"{slip}/{column} 的声明没被写侧拦住"
+        assert "release_values" in str(cause)
+    finally:
+        unregister_revocation_kind("probe_revoke")
+
+    assert len(calls) == 2, "注册期 + 写期各一次"
+    row = _rows(engine, PROBE_TABLE)[0]
+    # 拒绝发生在 UPDATE 之前：整行还是撤销前的样子（既没被写成"没撤销"，也没把 CAS 推上去，
+    # 更没有一列被声明改名）。
+    assert row["status"] == status_before != "revoked"
+    assert int(row["revision"]) == revision
+    assert row["revoked_at"] is None and row["revoked_by"] is None
+    assert row["txt_value"] != "clean", "拒绝发生在 UPDATE 之前，不是 UPDATE 之后回滚出来"
+
+
 # --------------------------------------------------------------------------- #
 # 内建声明的字面值 + 注册期形状判死
 # --------------------------------------------------------------------------- #

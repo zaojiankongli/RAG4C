@@ -37,6 +37,7 @@ from core.enterprise_tenant_idempotency import (
 )
 from models.orm import Account, Tenant, TenantAuditEvent, TenantMember
 from core.identity_revocations import (
+    FENCE_COLUMNS,
     RevocationKindSpec,
     register_revocation_kind,
     resolve_revocation_kind,
@@ -1604,7 +1605,18 @@ def _simple_state_mutation(
                     "revoked_by": actor_id,
                     "updated_at": now,
                 }
-                values.update(spec.release_values(actor_id))
+                # 栅栏由仪式把住，不由声明的自查把住：注册期只拿一个合成 actor 试调一次
+                # release_values，任何按参数（或按调用次数）分支的声明都能在第二次调用里给出
+                # status/revision —— 那会把一次"撤销"写成"没撤销"或推翻 CAS。这里第二次调用
+                # 的结果同样要过一遍禁写列，且直接拒绝而不是丢弃：一条写坏的声明必须响。
+                released = dict(spec.release_values(actor_id) or {})
+                blocked = sorted(set(released) & FENCE_COLUMNS)
+                if blocked:
+                    raise ValueError(
+                        f"{spec.kind}: release_values 试图写撤销本身拥有的列 {blocked}；"
+                        "注册期核过一次不代表运行时也一样"
+                    )
+                values.update(released)
                 session.execute(
                     update(table)
                     .where(table.c.id == resource_id, table.c.revision == revision)
