@@ -32,6 +32,8 @@ from typing import Any, Callable, Mapping
 __all__ = [
     "RevocationKindSpec",
     "FENCE_COLUMNS",
+    "SCOPE_COLUMNS",
+    "PROTECTED_COLUMNS",
     "register_revocation_kind",
     "unregister_revocation_kind",
     "resolve_revocation_kind",
@@ -42,6 +44,15 @@ __all__ = [
 FENCE_COLUMNS = frozenset(
     {"status", "revision", "revoked_at", "revoked_by", "updated_at"}
 )
+
+#: Columns that say *which row and whose row* this is. Outside both sets a released key
+#: reaches the UPDATE unfiltered, so a declaration that returned ``{"tenant_id": ...}``
+#: would move a document between tenants while the audit row still stamped the requesting
+#: tenant — the trail would say something false. The five revoke-columns are not enough.
+SCOPE_COLUMNS = frozenset({"id", "tenant_id", "created_at"})
+
+#: Everything the ceremony refuses to take from a declaration.
+PROTECTED_COLUMNS = FENCE_COLUMNS | SCOPE_COLUMNS
 
 
 @dataclass(frozen=True)
@@ -93,8 +104,11 @@ def _validate_spec(spec: RevocationKindSpec) -> None:
             raise ValueError(
                 f"{kind}: release_values may not write {key!r} — that column is the revoke itself"
             )
-    if "updated_at" in probe:
-        raise ValueError(f"{kind}: updated_at is written by the shared ceremony")
+        if key in SCOPE_COLUMNS:
+            raise ValueError(
+                f"{kind}: release_values may not write {key!r} — that column says which row this"
+                " is and whose it is; moving it would leave the audit trail false"
+            )
 
 
 def register_revocation_kind(spec: RevocationKindSpec, *, replace: bool = False) -> None:

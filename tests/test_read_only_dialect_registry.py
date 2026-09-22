@@ -163,6 +163,27 @@ def _proved_with(
     return engine
 
 
+def test_a_url_proven_dialect_still_offers_no_open_side_mechanism() -> None:
+    """`proved_by_url` 不是只给注册期看的装饰：靠 URI 成立的方言在"怎么开"这一侧必须仍然报
+    unsupported —— 否则开连接的一方会以为自己有驱动级机制。"""
+    from core.read_only_dialects import ReadOnlyDialectSpec as _S
+
+    register_read_only_dialect(
+        _S(dialect="probeurl", mechanism="probeurl-uri-mode-ro", live_probe_required=False,
+           proved_by_url=True)
+    )
+    try:
+        assert resolve_read_only_dialect("probeurl") is not None
+        options, proof = api._non_sqlite_read_only_engine_options(  # noqa: SLF001
+            SimpleNamespace(get_backend_name=lambda: "probeurl")
+        )
+        assert proof.mechanism == "unsupported"
+        assert proof.guaranteed is False
+        assert "connect_args" not in options
+    finally:
+        unregister_read_only_dialect("probeurl")
+
+
 def test_each_condition_of_the_proof_is_alone_enough_to_refuse_it() -> None:
     """评审发现 R1/R4：删掉宿主里 ``proof.mechanism != spec.mechanism`` 或
     ``proof.guaranteed is not True`` 这两句，16 条守卫全绿 —— 因为原来那条"机制写错"的

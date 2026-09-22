@@ -77,6 +77,23 @@ BUILTIN_PDF_TYPE_ROUTES: tuple[PdfTypeRoute, ...] = (
         engine="vision",
         reason="整页图像需要视觉引擎",
     ),
+    # 分类器没给出结论的三种情形也算"分类结果"：它们同样只能从这张表拿引擎，
+    # 否则宿主里就还留着两处写死的 "engine": "vision"（改一处就没人发现）。
+    PdfTypeRoute(
+        pdf_type="other",
+        engine="vision",
+        reason="不是 PDF，交给通用（vision）解析路径",
+    ),
+    PdfTypeRoute(
+        pdf_type="routing_disabled",
+        engine="vision",
+        reason="路由开关已关闭，按配置走通用解析路径",
+    ),
+    PdfTypeRoute(
+        pdf_type="classification_failed",
+        engine="vision",
+        reason="分类器失败，保守交给能处理扫描件的视觉引擎（原因见 fallback_reason）",
+    ),
 )
 
 _BY_TYPE: dict[str, PdfTypeRoute] = {}

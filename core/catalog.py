@@ -1533,7 +1533,9 @@ def _document_cursor_timestamp(row: Any) -> Any:
 
 
 # 三个内建排序各一行声明：名字、方向、表达式，以及"谁能用 keyset 游标 + 游标取哪一列"。
-# updated_at_desc 的 ORDER BY 表达式和游标值都从这里出，所以两者不会各自演化后互相错位。
+# 声明把 ORDER BY 与游标取值放在同一处书写，但**不保证两者一致**（那是同一个作者写下的两遍）：
+# 一致性由实走翻页证明 —— tests/test_document_sort_registry.py 里那条"created 与 updated
+# 顺序不一致"的全表走查，会把错配当场照出来。
 def register_builtin_document_sorts() -> None:
     """Declare the built-in sorts. Replace rather than refuse, so a second instantiation of
     this module (``importlib.reload`` or a copy-load under another name) re-declares its own

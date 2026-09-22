@@ -170,6 +170,48 @@ def test_the_whole_decision_reaches_the_parse_metadata_not_just_the_engine(
     assert recorded["route_reason"] == resolve_pdf_type_route(pdf_type).reason  # type: ignore[union-attr]
 
 
+@pytest.mark.parametrize(
+    ("file_path", "pdf_type"),
+    [("notes.docx", "other"), ("notes.pdf", "routing_disabled")],
+)
+def test_the_three_no_verdict_situations_also_come_from_the_table(
+    file_path: str,
+    pdf_type: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """宿主里原先还留着两处写死的 ``"engine": "vision"``：把任何一处改成 fast，四条内建用例
+    都看不见（评审发现 F）。现在这三种情形也是表里的行，改一行就有用例红。"""
+    router, fast, vision = _router({"pdf_type": pdf_type, "confidence": 1.0})
+    if pdf_type == "routing_disabled":
+        monkeypatch.setattr(router, "router_on", False)
+    decision = router.route(file_path)
+    declared = resolve_pdf_type_route(pdf_type)
+    assert declared is not None, f"{pdf_type} 没在表里，宿主又开始自己定引擎"
+    assert decision["engine"] == declared.engine == "vision"
+    assert decision["route_reason"] == declared.reason
+    router.parse(file_path)
+    assert (fast.parsed, vision.parsed) == (0, 1)
+
+
+def test_a_classification_failure_records_why_the_engine_was_switched() -> None:
+    """前端那条"降级解析"警示读的正是 `parser_meta.fallback_reason`。它唯一的产地就是这里
+    （classify 抛了、且还有 vision 引擎可用）—— 没有这条后端用例，界面那盏灯就是悬空的。
+    """
+    class _Boom(_FakeFast):
+        def classify(self, file_path: str) -> dict[str, Any]:
+            raise RuntimeError("pdf inspector died")
+
+    fast, vision = _Boom({"pdf_type": "text_based"}), _FakeVision()
+    router = DocumentRouter(vision_parser=vision, fast_parser=fast, page_limit=0)
+    decision = router.route("docs/broken.pdf")
+    assert decision["engine"] == "vision"
+    assert decision["pdf_type"] == "classification_failed"
+    assert "pdf inspector died" in decision["fallback_reason"]
+    parsed = router.parse("docs/broken.pdf")
+    assert parsed.metadata["router"]["fallback_reason"] == decision["fallback_reason"]
+    assert vision.parsed == 1 and fast.parsed == 0
+
+
 def test_the_reason_is_a_bounded_operator_facing_string() -> None:
     """评审发现 E：判由会进 ``documents.parser_meta`` 并被前端直接渲染，但注册期只看
     pdf_type 和 engine，reason 给多长、什么类型都不问。
@@ -209,8 +251,10 @@ def test_a_duplicate_route_declaration_is_refused_without_an_explicit_replace() 
 
 def test_a_route_may_only_name_an_engine_that_can_actually_run() -> None:
     before = set(pdf_type_route_names())
-    with pytest.raises(ValueError):
-        register_pdf_type_route(PdfTypeRoute(pdf_type="typo", engine="vison"))
+    # 必须带上合法 reason：否则"空/坏 reason"那条检查先响，这条用例就是在为错误的理由通过
+    # （评审发现 E：删掉 engine not in ENGINE_NAMES 那道闸门时它照样绿）。
+    with pytest.raises(ValueError, match="engine must be one of"):
+        register_pdf_type_route(PdfTypeRoute(pdf_type="typo", engine="vison", reason="探针"))
     assert set(pdf_type_route_names()) == before
     assert "vison" not in ENGINE_NAMES
 
@@ -240,10 +284,13 @@ def test_only_a_real_declaration_can_be_registered() -> None:
 
 
 def test_the_router_holds_no_copy_of_the_classification_ladder() -> None:
-    source = inspect.getsource(DocumentRouter.route)
+    source = inspect.getsource(DocumentRouter.route) + inspect.getsource(DocumentRouter._decided)  # noqa: SLF001
     assert 'pdf_type == "text_based"' not in source
     assert 'elif pdf_type == "mixed"' not in source
     assert "resolve_pdf_type_route" in source
+    # 引擎只能从表里拿：宿主里再留一处写死的 "engine": "vision"，改它就没有守卫会响。
+    assert '"engine": "vision"' not in source
+    assert '"engine": "fast"' not in source
     parse_source = inspect.getsource(DocumentRouter.parse)
     assert 'if engine == "fast"' in parse_source
     assert 'elif engine == "vision"' in parse_source

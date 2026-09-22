@@ -1,8 +1,8 @@
 ---
 feature: document-source-preview
-status: proposed
+status: delivered
 base: 6727e1f
-commits: 6727e1f..pending
+commits: 0a825f6..pending（后端表+端点、前端查看面各一条）
 date: 2026-09-22
 ---
 

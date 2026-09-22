@@ -92,6 +92,11 @@ class DocumentRouter:
             return {"pdf_type": "routing_disabled", "confidence": 1.0, "pages_needing_ocr": []}
         return self.fast_parser.classify(file_path)
 
+    def _decided(self, pdf_type: str, **facts: Any) -> dict[str, Any]:
+        """引擎与判由只从那张表拿（含"分类器没给结论"的三种情形）。"""
+        chosen = resolve_pdf_type_route(pdf_type) or UNKNOWN_PDF_TYPE_ROUTE
+        return {"pdf_type": pdf_type, "engine": chosen.engine, "route_reason": chosen.reason, **facts}
+
     def route(self, file_path: str) -> dict[str, Any]:
         """路由决策。
 
@@ -100,24 +105,22 @@ class DocumentRouter:
         """
         ext = Path(file_path).suffix.lower()
         if ext != ".pdf" or not (self.router_on and self.pdf_inspector_on):
-            return {
-                "engine": "vision",
-                "pdf_type": "other" if ext != ".pdf" else "routing_disabled",
-                "confidence": 1.0,
-                "pages_needing_ocr": [],
-            }
+            return self._decided(
+                "other" if ext != ".pdf" else "routing_disabled",
+                confidence=1.0,
+                pages_needing_ocr=[],
+            )
         try:
             cls = self.fast_parser.classify(file_path)
         except Exception as exc:
             if self.vision_parser is None:
                 raise
-            return {
-                "engine": "vision",
-                "pdf_type": "classification_failed",
-                "confidence": 0.0,
-                "pages_needing_ocr": [],
-                "fallback_reason": str(exc)[:300],
-            }
+            return self._decided(
+                "classification_failed",
+                confidence=0.0,
+                pages_needing_ocr=[],
+                fallback_reason=str(exc)[:300],
+            )
         # 分类结果 -> 引擎是一行声明（indexing/pdf_type_routing.py）。没声明过的分类
         # 保守落到 vision，而不是靠 if/else 的分支顺序碰巧落对；理由跟着决策一起进
         # parser_meta，操作员能在诊断面上看见"这本为什么走 vision"。

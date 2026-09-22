@@ -40,6 +40,10 @@ def _seeded_engine() -> Any:
             [
                 _document("doc-old", name="Alpha", created_offset=0, updated_offset=0),
                 _document("doc-new", name="Beta", created_offset=40, updated_offset=40),
+                # 两行 created 与 updated **顺序不一致**的数据：没有它们，"表达式按 A 列排序、
+                # 游标却按 B 列取值"这种错配在任何断言上都看不出来（评审发现 D）。
+                _document("doc-created-late", name="Gamma", created_offset=90, updated_offset=5),
+                _document("doc-updated-late", name="Delta", created_offset=5, updated_offset=90),
             ]
         )
         session.commit()
@@ -229,6 +233,29 @@ def test_the_encoder_refuses_a_sort_that_never_declared_a_cursor() -> None:
         catalog_module._encode_document_cursor(  # noqa: SLF001
             "never_declared", datetime(2026, 1, 1), "doc-old", "0" * 64
         )
+
+
+def test_the_builtin_cursor_pages_the_whole_table_when_created_and_updated_disagree() -> None:
+    """声明把 ORDER BY 与游标取值放在同一处书写，但它们是同一个作者写的**两遍**：这一条把
+    错配变成看得见的东西 —— 把内建的 cursor_value 改成 created_at，limit=1 全表走查就会
+    漏行或重行。"""
+    engine = _seeded_engine()
+    capable = cursor_capable_sorts()
+    assert capable, "内建的 keyset 排序没注册上，这条守卫就成了空话"
+    for sort in capable:
+        whole = _ids_sorted_by(engine, sort)
+        assert len(whole) >= 4, "至少要几行 created/updated 顺序不一致的数据才判得出错配"
+        walked: list[str] = []
+        cursor: str | None = None
+        for _ in range(len(whole) + 1):
+            page = list_documents_page(
+                "tenant-a", "dataset-a", limit=1, sort=sort, cursor=cursor, engine_override=engine
+            )
+            walked += [item["id"] for item in page["items"]]
+            cursor = page["next_cursor"]
+            if not cursor:
+                break
+        assert walked == whole, f"{sort}：按自己续出的游标走不完这张表，表达式与取值不一致"
 
 
 def test_a_newly_registered_cursor_sort_pages_with_its_own_cursor() -> None:

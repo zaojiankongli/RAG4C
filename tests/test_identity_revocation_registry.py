@@ -21,6 +21,8 @@ import pytest
 import core.enterprise_identity_control as control
 from core.identity_revocations import (
     FENCE_COLUMNS,
+    PROTECTED_COLUMNS,
+    SCOPE_COLUMNS,
     RevocationKindSpec,
     register_revocation_kind,
     resolve_revocation_kind,
@@ -29,6 +31,7 @@ from core.identity_revocations import (
 )
 from tests.test_enterprise_identity_federation_api import (
     TENANT_A,
+    TENANT_B,
     MemoryIdentityResolver,
     _client,
     _create_domain,
@@ -54,7 +57,13 @@ def _probe_spec(**overrides: Any) -> RevocationKindSpec:
         "table_name": PROBE_TABLE,
         "payload_key": "probe",
         "audit_action": "tenant_probe.revoked",
-        "project": lambda row: {"normalized_domain": str(row["normalized_domain"])},
+        "project": lambda row: {
+            # 投影要看得见"撤销改了什么"：只读 normalized_domain 的投影，让审计把 before
+            # 写成"什么都没变"也照样全绿（评审发现 C）。
+            "normalized_domain": str(row["normalized_domain"]),
+            "status": str(row["status"]),
+            "revision": int(row["revision"]),
+        },
         "release_values": lambda actor_id: {"txt_value": f"released:{actor_id}"},
     }
     fields.update(overrides)
@@ -72,7 +81,9 @@ def test_a_new_kind_is_honoured_live_by_the_shared_ceremony() -> None:
     engine = _engine()
     domain_id = str(_create_domain(_client(engine, MemoryIdentityResolver()), "probe.test")
                     .json()["domain"]["id"])
-    revision = int(_rows(engine, PROBE_TABLE)[0]["revision"])
+    created_row = _rows(engine, PROBE_TABLE)[0]
+    revision = int(created_row["revision"])
+    status_before = str(created_row["status"])
 
     register_revocation_kind(_probe_spec())
     try:
@@ -89,11 +100,29 @@ def test_a_new_kind_is_honoured_live_by_the_shared_ceremony() -> None:
             request_ip="10.0.0.1",
             kind="probe_revoke",  # type: ignore[arg-type]
         )
+        # 同一个幂等键重放必须拿回同一份响应：把 response_for_replay 写成空也照样"能用"，
+        # 但操作员重放时会看到一次没有结果的撤销（评审发现 C）。
+        replayed = control._simple_state_mutation(  # noqa: SLF001
+            engine,
+            tenant_id=TENANT_A,
+            actor_id="owner-a",
+            actor_role="owner",
+            resource_id=domain_id,
+            expected_revision=revision,
+            reason="探针撤销",
+            idempotency_key="axis11-probe",
+            request_id="req-axis11-probe-replay",
+            request_ip="10.0.0.1",
+            kind="probe_revoke",  # type: ignore[arg-type]
+        )
     finally:
         unregister_revocation_kind("probe_revoke")
 
-    # 响应的键名与形状都来自声明，不是宿主里写死的 domain/token。
-    assert payload == {"probe": {"normalized_domain": "probe.test"}}
+    # 响应的键名与形状都来自声明，不是宿主里写死的 domain/token；投影取的是**更新后**的行。
+    assert payload == {
+        "probe": {"normalized_domain": "probe.test", "status": "revoked", "revision": revision + 1}
+    }
+    assert replayed == payload
     # 共享仪式照旧：CAS 递增、状态落 revoked、声明让出的那一列也写进去了。
     row = _rows(engine, PROBE_TABLE)[0]
     assert row["status"] == "revoked"
@@ -113,9 +142,15 @@ def test_a_new_kind_is_honoured_live_by_the_shared_ceremony() -> None:
     event = events[0]
     assert event["action"] == "tenant_probe.revoked"
     assert event["resource_id"] == domain_id
-    assert _as_dict(event["before_snapshot"]) == {"normalized_domain": "probe.test"}
+    assert _as_dict(event["before_snapshot"]) == {
+        "normalized_domain": "probe.test",
+        "status": status_before,
+        "revision": revision,
+    }
     assert _as_dict(event["after_snapshot"]) == {
         "normalized_domain": "probe.test",
+        "status": "revoked",
+        "revision": revision + 1,
         "reason": "探针撤销",
     }
     reserved = [
@@ -182,11 +217,24 @@ def test_an_undeclared_kind_is_refused_instead_of_becoming_a_scim_revoke() -> No
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("column", sorted(FENCE_COLUMNS))
-def test_a_kind_may_not_write_the_columns_that_are_the_revoke(column: str) -> None:
+def test_the_protected_column_sets_are_exactly_what_the_ceremony_owns() -> None:
+    """把 FENCE_COLUMNS 里的任何一列删掉，参数化用例只会**少跑一条**而不是失败 —— 评审发现 B
+    就是这样放过"少一列"的。这里把两组字面值钉死。"""
+    assert FENCE_COLUMNS == frozenset(
+        {"status", "revision", "revoked_at", "revoked_by", "updated_at"}
+    )
+    assert SCOPE_COLUMNS == frozenset({"id", "tenant_id", "created_at"})
+    assert PROTECTED_COLUMNS == FENCE_COLUMNS | SCOPE_COLUMNS
+
+
+@pytest.mark.parametrize("column", sorted(PROTECTED_COLUMNS))
+def test_a_kind_may_not_write_the_columns_the_ceremony_or_the_row_identity_owns(column: str) -> None:
     before = set(revocation_kind_names())
-    stolen = {"status": "revoked", "revision": 99, "revoked_at": None,
-              "revoked_by": "x", "updated_at": None}[column]
+    stolen = {
+        "status": "revoked", "revision": 99, "revoked_at": None, "revoked_by": "x",
+        "updated_at": None, "id": "someone-elses-row", "tenant_id": TENANT_B,
+        "created_at": None,
+    }[column]
     with pytest.raises(ValueError):
         register_revocation_kind(_probe_spec(release_values=lambda _actor: {column: stolen}))
     assert set(revocation_kind_names()) == before, "拒绝之后不该留下半条注册"
@@ -210,9 +258,11 @@ def _run_probe_ceremony(engine: Any, resource_id: str, revision: int, key: str) 
 
 STOLEN_PROBES = {
     # status 这一列在库里有 CHECK 兜着（写非法值会被约束层拦），所以它的红不能只算在
-    # 栅栏头上；revoked_by 没有任何约束兜，绕过栅栏时它是**只有**这道栅栏能挡的那一列。
+    # 栅栏头上；revoked_by 与 tenant_id 没有任何约束兜，绕过栅栏时它们是**只有**这道栅栏
+    # 能挡的那两列 —— 后者还会把行搬到别的租户，而审计仍记请求租户，链路说的是假话。
     "status": "verified",
     "revoked_by": "fabricated-actor",
+    "tenant_id": TENANT_B,
 }
 
 
@@ -258,7 +308,8 @@ def test_the_fence_is_held_at_write_time_not_only_at_registration(
     assert row["status"] == status_before != "revoked"
     assert int(row["revision"]) == revision
     assert row["revoked_at"] is None and row["revoked_by"] is None
-    assert row["txt_value"] != "clean", "拒绝发生在 UPDATE 之前，不是 UPDATE 之后回滚出来"
+    # 这条是补刀，不是判据：上面"状态与 revision 都没动"已经证明没有任何半行写入。
+    assert row["txt_value"] != "clean"
 
 
 # --------------------------------------------------------------------------- #
