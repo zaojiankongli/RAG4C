@@ -54,7 +54,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 | 11 | ~~身份吊销 `kind`~~ **本轮已完成**，见 §J | — | 0（注册即全认；栅栏由注册期拒绝而非约定） | 否 | 否 | 已落 `core/identity_revocations.py` |
 | 12 | 自动化 trigger/condition/action 码 | `enterprise_automation_workflows_api.py:225,233,241,556-563,568-598`；`service.py:68,2107-2291,2322,2307` | 3–4 | **是**（`orm.py:5588`） | openapi `:6371,6415` | `TRIGGER_ADAPTER_ORDER` 改为从注册表推导 |
 | 13 | 文档排序 `sort` / 游标耦合 | `core/catalog.py:1304-1312,1486,1628-1639` | 3 | 否 | openapi 枚举 `:8327,8330` + 前端字面量 | `SortSpec(sql_columns, keyset_capable)`，消掉 `:1639` 特例 |
-| 14 | PDF 分类 → 引擎路由 `pdf_type` | `parsers/router.py:84-124,138` | 2–3 | 否 | `parser_meta` 自由串 | 声明式表（值选外部形状 = Adapter） |
+| 14 | ~~PDF 分类 → 引擎路由 `pdf_type`~~ **本轮已完成**，见 §K | — | 0（加一类分类结果一行声明） | 否 | `parser_meta` 自由串（新增 `route_reason`） | 已落 `indexing/pdf_type_routing.py` |
 | 15 | ~~就绪探测的方言证明~~ **本轮已完成**，见 §I | — | 0（注册即全认） | 否 | 否 | 已落 `core/read_only_dialects.py`；`knowledge_consistency_api.py:1180` 经核是**写事务栅栏**不是只读证明，刻意没并进来 |
 | 16 | 审计导出格式 | `enterprise_compliance_api.py:78`；`compliance.py:1087,1166,1225,1376-1379` | 4 | 否 | 否 | Strategy+Registry（可能性低，排最后） |
 
@@ -311,3 +311,35 @@ ag4c-verify`）：8 个变异各自 turn 红 ——
   写一列只有声明能改动的 `txt_value` 并断言其值，同一变异立刻转红。
   教训与 §3.4 同源：**断言必须选在"只有被改的那个机制会让它成立"的位置上**，
   否则写测试的人会以为自己钉住了，而变异跑会当场拆穿。
+
+## K. 轴 #14（PDF 分类 → 引擎路由）落地记录
+
+`DocumentRouter.route` 原先是一条三枝梯（`text_based`→fast、`mixed`→vision、其余→vision），
+`DocumentRouter.parse` 又是一条 `if engine == "fast" / else vision`。两处各自有一个"没说出口的
+决定"：
+
+- **没预期的分类结果**落进 `else`，今天恰好是较重的引擎，但那是分支顺序的巧合，没有任何东西
+  阻止下一次编辑把便宜引擎放进 `else`。现在保守落点是表里的一个值
+  `UNKNOWN_PDF_TYPE_ROUTE`，并且理由随决策一起进 `parser_meta`（新键 `route_reason`，
+  操作员能在诊断面看见"这本为什么走 vision"）。
+- **不认识的引擎标签**在 `parse` 里静默按 vision 跑。现在直接抛 `MineruParserError`：
+  标签必须是真跑得起来的那两个之一，注册期也照样拒（`engine not in ENGINE_NAMES`）。
+
+**这条轴此前完全没有用例覆盖**（`grep -rln DocumentRouter\|create_document_parser tests/` 只
+命中新加的这份与一条 run-registry 集成套件），所以新守卫同时是把旧行为第一次钉住：
+四条内建分类结果的引擎、混合型走 vision 的 MVP 理由，都按字面写进了断言。
+
+判据与门禁（本机 `.venv`，`PYTHONPATH=.`）：
+
+- `tests/test_pdf_type_routing_registry.py` **15 条 / 0.26s**：注册 `vector_heavy → fast` 之后
+  `route()` 与 `parse()` 立刻照声明办事（真调 fake parser，断言 fast 被调用 1 次、vision 0 次），
+  而 `indexing/parsers/router.py` **逐字节不变**；撤掉声明后同一本回到保守落点。
+- 行为等价（未改任何既有断言）：`test_ingest_meta_extensibility / test_doc_type_registry /
+  test_chunk_diagnostics` = **26 passed**，`test_run_registry_integration`（引用 `router_on`）
+  = **28 passed in 246.91s**；`ruff check .` 全仓通过。
+- 反向验证 5 个变异全部转红：宿主退回分支梯（3 红）、未声明分类改成走便宜引擎（2 红）、
+  注册期不校验（6 红）、允许拼错的引擎标签（2 红）、去掉"不认识的引擎标签要报错"（1 红）。
+  脚本与输出在仓外 `%TEMP%ag4c-verify`。
+
+**没假装做到的部分**：加一个**引擎**仍然要动两处（`ENGINE_NAMES` 一项 + `parse` 里的分发），
+因为引擎是真解析器对象而不是标签；这条轴免改的是"新增一类分类结果"。

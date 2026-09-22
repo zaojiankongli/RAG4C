@@ -24,6 +24,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+from indexing.pdf_type_routing import (
+    ENGINE_NAMES,
+    UNKNOWN_PDF_TYPE_ROUTE,
+    resolve_pdf_type_route,
+)
 from indexing.parsers.base import MineruParserError, ParsedDocument
 from indexing.parsers.pdf_inspector import PdfInspectorParser
 
@@ -113,15 +118,11 @@ class DocumentRouter:
                 "pages_needing_ocr": [],
                 "fallback_reason": str(exc)[:300],
             }
-        pdf_type = cls["pdf_type"]
-        if pdf_type == "text_based":
-            engine = "fast"
-        elif pdf_type == "mixed":
-            # MVP：混合型整本走 vision（页级混合拼接预留 pages_needing_ocr）
-            engine = "vision"
-        else:  # scanned / image_based
-            engine = "vision"
-        return {**cls, "engine": engine}
+        # 分类结果 -> 引擎是一行声明（indexing/pdf_type_routing.py）。没声明过的分类
+        # 保守落到 vision，而不是靠 if/else 的分支顺序碰巧落对；理由跟着决策一起进
+        # parser_meta，操作员能在诊断面上看见"这本为什么走 vision"。
+        chosen = resolve_pdf_type_route(cls["pdf_type"]) or UNKNOWN_PDF_TYPE_ROUTE
+        return {**cls, "engine": chosen.engine, "route_reason": chosen.reason}
 
     def parse(self, file_path: str) -> ParsedDocument:
         """按路由决策解析文件（fast / vision），并应用后处理开关。
@@ -135,10 +136,11 @@ class DocumentRouter:
 
         decision = self.route(file_path)
         self._check_page_limit(file_path, decision)
-        if decision["engine"] == "fast":
+        engine = str(decision["engine"])
+        if engine == "fast":
             parsed = self.fast_parser.parse(file_path)
             parsed.metadata.setdefault("router", decision)
-        else:
+        elif engine == "vision":
             # vision：扫描件 / Office / 路由关闭 / 混合型（插拔式引擎）
             if self.vision_parser is None:
                 raise MineruParserError(
@@ -153,6 +155,13 @@ class DocumentRouter:
                 ) from exc
             parsed.engine = "vision"
             parsed.metadata.setdefault("router", decision)
+        else:
+            # 标签必须能真跑：原先这是 else 分支，任何不认识的引擎标签都会静默按
+            # vision 解析。现在拒绝，让"表里写了个不存在的引擎"在第一次解析就响。
+            raise MineruParserError(
+                f"路由决策给出了不认识的引擎标签 {engine!r}；"
+                f"能真跑的标签只有 {sorted(ENGINE_NAMES)}"
+            )
         # TSR 增强（失败静默：增强非硬约束）
         if self.tsr_on:
             for block in parsed.layout:
