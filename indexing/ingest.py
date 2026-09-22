@@ -54,6 +54,22 @@ if TYPE_CHECKING:
     from models.schemas import Chunk
 
 
+def _json_scalar_snapshot(mapping: dict[str, Any]) -> dict[str, Any]:
+    """留 JSON 标量，其余原样丢弃。
+
+    这里过去写的是两份按名字的白名单（切分事实五个键、解析决策四个键），注释说的是
+    "只保留稳定标量"，实现却是按名字点菜：生产方（``chunking_router`` 的 facts、
+    parser 的 router 决策）新加一个诊断字段，必须回来加一行才会落库，忘了就
+    **静默丢掉** —— 前端的诊断面板于是永远看不到它，而生产方毫无察觉。判据本来就看
+    类型，那就按类型判：标量走，list/dict/对象继续挡在外面。
+    """
+    return {
+        str(key): value
+        for key, value in mapping.items()
+        if value is None or isinstance(value, (bool, int, float, str))
+    }
+
+
 def _safe_file_size(path: Path) -> int:
     """读取文件大小（失败返回 0，避免权限问题中断入库）。"""
     try:
@@ -230,26 +246,12 @@ class IngestPipeline:
             meta["chunking_reason_code"] = str(decision_meta["reason_code"])
         facts = decision_meta.get("facts")
         if isinstance(facts, dict) and facts:
-            # 只保留稳定标量，避免把非 JSON 可序列化对象写进 parser_meta
-            meta["chunking_decision"] = {
-                key: facts[key]
-                for key in (
-                    "doc_type",
-                    "text_chars",
-                    "layout_blocks",
-                    "simple_max_chars",
-                    "configured_mode",
-                )
-                if key in facts
-            }
+            meta["chunking_decision"] = _json_scalar_snapshot(facts)
         if isinstance(router, dict):
-            # 只取稳定且对排查有用的字段，避免把整个决策对象塞进库
-            for key in ("engine", "pdf_type", "page_count", "confidence"):
-                if key in router:
-                    meta[key] = router[key]
-        for key in ("file_name", "file_size"):
-            if key in parsed:
-                meta[key] = parsed[key]
+            for key, value in _json_scalar_snapshot(router).items():
+                meta[key] = value
+        for key, value in _json_scalar_snapshot(parsed).items():
+            meta[key] = value
         graph = getattr(result, "graph", None) if result is not None else None
         if graph is not None:
             meta["graph"] = {
