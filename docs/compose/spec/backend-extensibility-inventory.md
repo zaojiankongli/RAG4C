@@ -203,9 +203,13 @@ reranker 要处理 HTTP 状态，共性只有名字）。
    `if event_type == "node.timed_out":`（用一个还没声明的拼写）能完全躲过原扫描。
    现在按形状拦：reducer 源码里 `family.name` 字面量一律不许出现（变异验：加进去 6 条用例红）。
 3. **性能预算用例在并发负载下会撒谎**。`test_registry_sink_production_offer_hot_path_budget`
-   阈值 1.0ms，我同时跑三个子 agent 时读到 **3.008ms（红）**，隔离重跑 3 次
-   **1.47 / 1.98 / 1.59s 全过**。所以这类用例的读数只在机器空闲时可信 —— 报红之前
-   先确认没有别的进程在跑，别按一次污染读数去改代码。
+   的断言是 `p95_ms < 1.0`（**毫秒**）。我同时跑三个子 agent 时读到 **3.008ms（红）**，
+   隔离重跑 3 次全过 —— 那三个读数 **1.47 / 1.98 / 1.59 是 pytest 报告的整条用例墙钟
+   秒数，不是 p95 读数**（原写法漏了单位说明，被 2026-09-22 的独立评审按 p95 误读成
+   "把 1.47ms 的失败说成全过"；这是我的表述缺陷，不是结论缺陷）。同日复核：机器空载时
+   连跑 3 次 `1 passed in 1.56s / 1.16s / 1.27s`，全过；评审在我跑 vitest+tsc 期间跑到的
+   6/6 红正是这条记录的又一次复现。所以这类用例的读数只在机器空闲时可信 —— 报红之前
+   先确认没有别的进程在跑，别按一次污染读数去改代码；**引用读数时必须带上它量的是什么**。
 
 **仍未收的同型镜像副本**（评审点名，本轮刻意不做）：`server/app.py:1430-1446` 的
 `_SseRunEventSink` 又写了一遍 node-terminal / retry-terminal 两个集合（它是第三个 reducer，
@@ -218,3 +222,23 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 一份。但 `BackendRunEventType` 是从 OpenAPI 生成的，TS 只校验**子集**合法性 ——
 也就是说 Python 侧加一种事件类型，前端不会变红，只会静默不认它。这条决定了
 "加事件类型"这件事的跨栈成本仍然不是 0，只是从 8 处分支降到 2 处声明。
+
+## H. 第三轮独立评审（审 `23503c9` / `80ad1dc` / `b84fe0a`）查出并已修的九条
+
+评审判 **PASS-WITH-FIXES**（三个提交各一条），我逐条回源码核对后**全部成立**，没有一条是
+误报。处置与证据：
+
+| # | 成立的事实 | 处置 | 反向验证（把修复改回旧写法） |
+|---|---|---|---|
+| F1 | `unregister_run_event_type` 把参数交给内核（内核按 `strip().lower()` 存键），自己却按原样 `_BY_NAME.pop`。用规范外的写法撤回 → 一份存储被清空、另一份仍活着，`resolve` 继续命中而枚举已不认识它 | `core/run_event_taxonomy.py` 撤回时归一一次再用 | 改回 `_BY_NAME.pop(event_type, None)` → `test_withdrawing_with_a_non_canonical_spelling_moves_both_stores` 红 |
+| F6 | 我上一轮把 parser_meta 从"按名字点菜"改成"按类型投影"时，让**后写的解析器键盖掉了管线自己的诊断键**：一个 parser 只要肯写 `chunking_mode`，就能改写诊断面上唯一能看见切分事实的那个键 | `meta.setdefault` —— 解析器只补齐，管线键先写者胜 | 两处退回 `meta[key]=value` → `test_a_parser_cannot_rewrite_the_pipelines_own_diagnostics` 红 |
+| F5 | `test_a_new_scalar_field_reaches_the_db_without_editing_ingest` 手工拼 `_last_parsed_metadata`，只证明了 `ingest_meta` 认它，没证明生产方能把它送到那里、也没证明字符串化后过得了 catalog 的解码（判据 §3.1：字节不变 ≠ 改了也不生效，反过来说**手搭输入也不等于真生产方接得上**） | 该用例改为真解析器 → `parse_and_chunk` → `ingest_meta` → `json.dumps` → `_coerce_document_parser_meta` / `_document_management_values` 逐跳断言 | 摘掉投影循环即红（上一轮 M9 已验） |
+| F3 | 热路径 23 倍回归是**行为等价**的：`_BY_NAME.get(x) if x in RUN_EVENT_TYPE_SPECS.names() else None` 语义完全正确，95/95 全绿，那条 p95 预算用例也区分不出来 | 新增形状守卫 `test_the_hot_path_looks_up_in_its_own_index_not_the_kernel_menu`，并在用例里**如实写明它不是行为证据** | 套用上面那个等价写法 → 该守卫红；同时先断言计数桩真的接到了 `names()`，否则这条守卫是空跑（第一版就是空跑，被自检抓出来） |
+| F4 | rollup 装饰词的用例断言 `status == spec.rollup_status(t)` —— 拿被测方法比自己，`rollup_status` 忽略 `rollup_prefix` 也只有 1 条红 | 改成按字面钉住 `completed` / `retry_completed` / `retry_running` / `retry_unknown`，并断言 node 与 retry 同后缀不许装饰出同一个词 | 让 `rollup_status` 忽略前缀 → 2 条红 |
+| F8 | QA 深链的 `stamp` 一旦置起就不再复核：定位成功后那条 QA 被改到不满足筛选、或被别人过期掉，`focusedQaId` 仍留着而提示为 null —— 一个既不标蓝也不提示的第三种状态，且永久 | 命中后每次列表变化都复核：消失→清标记+给提示并清 stamp，回来→重新定位 | 退回 `if(...===stamp)return` → `test_...从结果里消失时如实退回未命中` 红 |
+| F9 | 深链监听两条路只测了一条（用例在 render **前**改 hash，走的是初始 state 读取）。摘掉 `popstate`/`hashchange` 任一 `addEventListener`，21/21 全绿 | 各补一条"页面挂着时"的用例 | 分别摘掉两个监听 → 各自那条红 2 行 |
+| F2 | 我的台账把 pytest 的**整条用例墙钟秒数**写在"阈值 1.0ms"旁边且没标单位，读起来就像"1.47ms 的失败被我写成全过" | 补单位说明 + 本次空载复测读数；结论（负载下会撒谎）不变 | —— 属于表述缺陷，见 §G-3 |
+| F7 | 评审主动核了五个生产方的 `metadata` 字面量：没有凭证形状进来（`api_key`/`api_base` 不进 parser metadata）。真正的风险就是 F6 | 无需额外处置 | —— |
+
+**评审还点名了两条刻意不动**：M6（关掉 local_dir 的本地重复检查仍全绿，但内核照样拒，
+判为良性）；`resolve_run_event_type` 对未知类型继续 fail-soft（改前改后都不抛，§A 已记）。

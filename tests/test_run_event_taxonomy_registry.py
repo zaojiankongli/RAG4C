@@ -321,6 +321,69 @@ def test_the_two_stores_of_the_partition_never_disagree() -> None:
     assert "node.consistency" not in _BY_NAME
 
 
+def test_withdrawing_with_a_non_canonical_spelling_moves_both_stores() -> None:
+    """内核按 ``strip().lower()`` 存键，精确索引按原样存：撤回时少归一一次就只清空一边。
+
+    留下的那份仍然被 ``resolve_run_event_type`` 命中，于是同一个事件类型"在枚举里
+    不存在、在查表里活着"——两个 reducer 会各按一半事实投影。
+    """
+    from core.run_event_taxonomy import _BY_NAME  # noqa: SLF001
+
+    register_run_event_type(_probe("node.padded", "node"))
+    unregister_run_event_type("  NODE.PADDED  ")
+    assert set(_BY_NAME) == set(RUN_EVENT_TYPE_SPECS.names())
+    assert resolve_run_event_type("node.padded") is None
+    assert "node.padded" not in run_event_types_in_family("node")
+
+
+def test_the_rollup_words_are_the_ones_the_console_shows() -> None:
+    """装饰词按字面钉住，不能拿被测方法自己比自己。
+
+    node 与 retry 的终端事件**后缀是同一批词**（completed/failed/skipped），全靠
+    ``rollup_prefix`` 装饰才不撞键。原有用例断言的是 ``status == spec.rollup_status(t)``，
+    把 ``rollup_status`` 改成忽略前缀也照样全绿。
+    """
+    assert _spec("node.completed").rollup_status("node.completed") == "completed"
+    assert _spec("node.failed").rollup_status("node.failed") == "failed"
+    assert _spec("retry.completed").rollup_status("retry.completed") == "retry_completed"
+    assert _spec("retry.failed").rollup_status("retry.failed") == "retry_failed"
+    assert _spec("node.started").running_rollup_status == "running"
+    assert _spec("retry.started").running_rollup_status == "retry_running"
+    assert _spec("node.skipped").unknown_rollup_status == "unknown"
+    assert _spec("retry.skipped").unknown_rollup_status == "retry_unknown"
+    assert (
+        _spec("node.completed").rollup_status("node.completed")
+        != _spec("retry.completed").rollup_status("retry.completed")
+    ), "两族终端事件装饰出同一个词，两个 rollup 会互相盖"
+
+
+def test_the_hot_path_looks_up_in_its_own_index_not_the_kernel_menu(monkeypatch) -> None:
+    """23 倍热路径回归是**行为等价**的，任何用例都挡不住，只能钉实现形状。
+
+    走 ``RUN_EVENT_TYPE_SPECS.names()`` 每次要排两遍序，而这条查表每个 SSE 事件、每
+    条存库事件的 reducer 都要跑一次。这里如实记下：本条不是判据 §3.1 的行为等价证据，
+    是给一个可测不出来的性质上的形状守卫。
+    """
+    from core.providers import ProviderRegistry
+
+    calls: list[str] = []
+    real = ProviderRegistry.names
+
+    def counted(self: ProviderRegistry) -> tuple[str, ...]:
+        calls.append("names")
+        return real(self)
+
+    monkeypatch.setattr(ProviderRegistry, "names", counted)
+    assert RUN_EVENT_TYPE_SPECS.names()
+    assert calls == ["names"], "计数桩没接到内核菜单上，下面几条断言会是空跑"
+    calls.clear()
+    assert resolve_run_event_type("run.completed") is not None
+    assert resolve_run_event_type("run.not-a-type") is None
+    assert resolve_run_event_type("RUN.COMPLETED") is None
+    assert run_event_types_in_family("node")
+    assert calls == [], "热路径又去排内核那份菜单了"
+
+
 def test_the_builtin_declaration_list_has_no_duplicate() -> None:
     """清单里写重一次过去是静默后者覆盖前者；现在注册期就拒，所以清单本身也要钉住。"""
     names = [spec.event_type for spec in BUILTIN_RUN_EVENT_SPECS]

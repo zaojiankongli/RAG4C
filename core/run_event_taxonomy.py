@@ -230,9 +230,14 @@ def register_run_event_type(spec: RunEventTypeSpec, *, replace: bool = False) ->
 
 
 def unregister_run_event_type(event_type: str) -> None:
-    """Withdraw a declaration (tests and plugins). Both stores move together."""
+    """Withdraw a declaration (tests and plugins). Both stores move together.
+
+    The kernel keys itself by ``name.strip().lower()``; declarations themselves are
+    rejected unless already canonical, so applying the kernel's normalisation here is
+    what keeps a padded or upper-cased argument from emptying one store only.
+    """
     RUN_EVENT_TYPE_SPECS.unregister(event_type)
-    _BY_NAME.pop(event_type, None)
+    _BY_NAME.pop(event_type.strip().lower(), None)
 
 
 def resolve_run_event_type(event_type: object) -> RunEventTypeSpec | None:

@@ -61,28 +61,85 @@ def _meta_with(*, facts: dict, router: dict) -> dict:
 
 
 def test_a_new_scalar_field_reaches_the_db_without_editing_ingest(tmp_path: Path) -> None:
-    """判据：生产方新加一个诊断字段，ingest 一行都不改也能落库。"""
-    host = Path(inspect.getsourcefile(ingest_module) or "")
-    before = host.read_bytes()
-    meta = _meta_with(
-        facts={
-            "doc_type": "csv",
-            "layout_blocks": 0,
-            "producer_added_yesterday": "page-level tables",
-        },
-        router={
-            "engine": "vision",
-            "pdf_type": "mixed",
-            "page_count": 12,
-            "confidence": 0.9,
-            "classifier_build": "2026.09",
-        },
+    """判据：生产方新加一个诊断字段，ingest 一行都不改也能落库。
+
+    这条必须走**真生产方**：一个 parser 实例经 ``parse_and_chunk`` 填
+    ``_last_parsed_metadata``，再经 ``ingest_meta`` → ``json.dumps`` → 目录层那两份
+    投影。手工拼 ``_last_parsed_metadata`` 只证明 ``ingest_meta`` 认它，不证明解析器
+    真能把它送到那里，也不证明字符串化的 meta 过得了 catalog 的解码。
+    """
+    from types import SimpleNamespace
+
+    from core.catalog import _coerce_document_parser_meta, _document_management_values
+
+    class _ProducerAddingOneField:
+        def __init__(self) -> None:
+            self.supports_calls = 0
+
+        def supports(self, file_path: str) -> bool:
+            self.supports_calls += 1
+            return file_path.endswith(".md")
+
+        def parse(self, file_path: str):
+            return SimpleNamespace(
+                text="# 标题\n\n正文一段，够长到能切出一个片段。\n",
+                metadata={
+                    "provider": "markdown-inspector",
+                    "file_name": Path(file_path).name,
+                    "producer_added_scalar": "page-level tables",
+                },
+                layout=[],
+            )
+
+    probe = tmp_path / "note.md"
+    probe.write_text("# 标题\n\n正文一段，够长到能切出一个片段。\n", encoding="utf-8")
+    pipeline = IngestPipeline(
+        embedder=_FakeEmbedder(), milvus=_FakeStore(), parser=_ProducerAddingOneField()
     )
-    assert meta["chunking_decision"]["producer_added_yesterday"] == "page-level tables"
-    assert meta["classifier_build"] == "2026.09"
-    assert meta["provider"] == "cli" and meta["language"] == "ch"
-    assert meta["file_name"] == "a.csv"
-    assert host.read_bytes() == before
+    host = Path(inspect.getsourcefile(ingest_module) or "").read_bytes()
+
+    assert pipeline.parse_and_chunk(str(probe), doc_id="doc-note")
+    meta = pipeline.ingest_meta(None)
+    assert meta["producer_added_scalar"] == "page-level tables"
+
+    stored = json.dumps(meta, ensure_ascii=False)
+    assert _coerce_document_parser_meta(stored)["producer_added_scalar"] == "page-level tables"
+    _folder, _tags, projected = _document_management_values("", stored)
+    assert projected["producer_added_scalar"] == "page-level tables"
+    assert Path(inspect.getsourcefile(ingest_module) or "").read_bytes() == host
+
+
+def test_a_parser_cannot_rewrite_the_pipelines_own_diagnostics() -> None:
+    """解析器只**补齐**诊断，不许接管：``chunking_mode`` 是管线算出来的事实。
+
+    把投影从"按键名点菜"改成"按类型判定"时，晚到的解析器键会盖掉先写入的管线键 ——
+    一个 parser 只要肯写 ``chunking_mode``，文档管理页就会显示一篇从没发生过的切分。
+    """
+    pipeline = _pipeline()
+    pipeline._last_chunk_decision = "recursive"
+    pipeline._last_chunk_decision_meta = {"mode": "recursive", "facts": {"doc_type": "md"}}
+    pipeline._last_parsed_metadata = {
+        "router": {"engine": "vision", "chunking_mode": "clobbered-by-router"},
+        "file_name": "note.md",
+        "chunking_mode": "clobbered-by-parser",
+        "chunk_count": 99999,
+        "text_chars": 99999,
+        "stage_ms": "not-a-dict",
+        "parse_ms": 99999.0,
+        "provider": "cli",
+    }
+    pipeline._last_counts = {"text_chars": 12, "chunk_count": 1}
+    pipeline._last_parse_ms = 3.0
+    pipeline._last_stage_ms = {name: 0.5 for name in (
+        "parse", "clean", "split", "contextual", "embed", "insert", "graph")}
+    meta = pipeline.ingest_meta(None)
+    assert meta["chunking_mode"] == "recursive"
+    assert meta["chunk_count"] == 1
+    assert meta["text_chars"] == 12
+    assert meta["parse_ms"] == 3.0
+    assert isinstance(meta["stage_ms"], dict)
+    # 不冲突的键照旧透传 —— 修这一条不能把扩展性一起修回去。
+    assert meta["provider"] == "cli" and meta["engine"] == "vision"
 
 
 def test_the_old_whitelisted_fields_are_all_still_there() -> None:

@@ -247,11 +247,13 @@ class IngestPipeline:
         facts = decision_meta.get("facts")
         if isinstance(facts, dict) and facts:
             meta["chunking_decision"] = _json_scalar_snapshot(facts)
+        # 解析器侧只补齐管线没写的键：管线那批诊断键若被覆盖，一篇文档实际用的切分
+        # 模式就能被某个解析器随口改掉，而诊断面正是唯一能看见它的地方。
         if isinstance(router, dict):
             for key, value in _json_scalar_snapshot(router).items():
-                meta[key] = value
+                meta.setdefault(key, value)
         for key, value in _json_scalar_snapshot(parsed).items():
-            meta[key] = value
+            meta.setdefault(key, value)
         graph = getattr(result, "graph", None) if result is not None else None
         if graph is not None:
             meta["graph"] = {
