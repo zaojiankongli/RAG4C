@@ -9,6 +9,7 @@ afterEach(cleanup);
 import type { AnswerFact } from "../model/answerEvidenceModel";
 import AnswerEvidencePanel from "./AnswerEvidencePanel";
 import * as api from "../api/answerEvidenceApi";
+import { parseChunkWorkbenchLocation } from "../../run/appRoute";
 
 vi.mock("../api/answerEvidenceApi", () => ({
   loadAnswerEvidence: vi.fn(),
@@ -144,6 +145,36 @@ describe("AnswerEvidencePanel", () => {
     // QA ref must not produce a documents deep-link for qa:: / source doc only when kind=qa
     expect(screen.queryByLabelText("打开文档 doc-src-9")).toBeNull();
     expect(screen.getByLabelText("QA 权威命中数").textContent).toBe("1");
+  });
+
+  it("links a document reference into the 解析干预 workbench so that chunk gets selected, not just navigated", async () => {
+    vi.mocked(api.loadAnswerEvidence).mockResolvedValue({ items: [answeredFact], count: 1 });
+    render(<AnswerEvidencePanel runId="run-1" datasetId="ds-1" />);
+    await waitFor(() => expect(screen.getByTestId("answer-evidence-panel")).toBeTruthy());
+
+    const link = screen.getByLabelText("在解析干预中查看切片 chunk-1") as HTMLAnchorElement;
+    expect(link.textContent).toContain("在解析干预中查看这个切片");
+    expect(link.getAttribute("class") || "").toContain("answer-evidence-control-min-h");
+    const href = link.getAttribute("href") ?? "";
+    expect(href).toBe("#/parse-intervention?doc=doc-1&chunk=chunk-1&dataset=ds-1");
+    // 深链必须能被工作区原样解析回同一个 chunk —— 只带 doc 的链接等于没接上回路
+    expect(parseChunkWorkbenchLocation({ pathname: "/", search: "", hash: href })).toEqual({
+      docId: "doc-1",
+      chunkId: "chunk-1",
+      datasetId: "ds-1",
+    });
+    // 没有 document 归属的证据不编造工作区链接
+    expect(screen.queryByLabelText("在解析干预中查看切片 chunk-2")).toBeNull();
+  });
+
+  it("never offers a chunk workbench link for QA authority hits", async () => {
+    vi.mocked(api.loadAnswerEvidence).mockResolvedValue({ items: [qaFact], count: 1 });
+    render(<AnswerEvidencePanel runId="run-qa" datasetId="ds-1" />);
+    await waitFor(() => expect(screen.getByTestId("answer-evidence-panel")).toBeTruthy());
+
+    expect(screen.getAllByLabelText(/^在解析干预中查看切片/).map((a) => a.getAttribute("href"))).toEqual([
+      "#/parse-intervention?doc=doc-1&chunk=chunk-1&dataset=ds-1",
+    ]);
   });
 
   it("falls back to list mode on load without a run and can switch facts", async () => {

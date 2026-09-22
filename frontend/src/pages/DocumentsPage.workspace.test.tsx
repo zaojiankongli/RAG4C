@@ -39,6 +39,9 @@ const api = vi.hoisted(() => {
     fetchParseChunkDetail: vi.fn(),
     patchParseChunk: vi.fn(),
     tombstoneParseChunk: vi.fn(),
+    setParseChunkEnabled: vi.fn(),
+    fetchParseChunkRevisions: vi.fn(),
+    revertParseChunk: vi.fn(),
     ingestDocument: vi.fn(),
     ingestFolder: vi.fn(),
     reindexDocument: vi.fn(),
@@ -82,6 +85,9 @@ vi.mock("../parse-intervention/api/parseInterventionApi", () => ({
   fetchParseChunkDetail: api.fetchParseChunkDetail,
   patchParseChunk: api.patchParseChunk,
   tombstoneParseChunk: api.tombstoneParseChunk,
+  setParseChunkEnabled: api.setParseChunkEnabled,
+  fetchParseChunkRevisions: api.fetchParseChunkRevisions,
+  revertParseChunk: api.revertParseChunk,
 }));
 vi.mock("../context/ConnectionContext", () => ({
   ConnectionProvider: ({ children }: { children: ReactNode }) => children,
@@ -665,6 +671,19 @@ describe("DocumentsPage shared knowledge workspace", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "文档管理" })).toBeTruthy());
   });
 
+  it("leaves /parse-intervention to the workbench page instead of taking it over in place", async () => {
+    // App 用 keep-alive 保留文档页（隐藏 ≠ 卸载）：别名若也解析新路径，这里会长出第二个工作区
+    window.history.replaceState(null, "", "/parse-intervention?doc=doc-1&chunk=chunk-1");
+    render(
+      <TestKnowledgeWorkspaceProvider preferSummaryApi={false}>
+        <DocumentsPage preferModernCatalog={false} />
+      </TestKnowledgeWorkspaceProvider>,
+    );
+    await screen.findByRole("heading", { name: "文档管理" });
+    expect(screen.queryByRole("region", { name: "切片编辑器" })).toBeNull();
+    expect(screen.queryByLabelText("Knowledge Lifeline")).toBeNull();
+  });
+
   it("closes a direct hash deep link with replace semantics and does not add history", async () => {
     window.history.replaceState(null, "", "/#/documents/parse?doc=doc-1");
     const initialLength = window.history.length;
@@ -1031,6 +1050,7 @@ describe("DocumentsPage shared knowledge workspace", () => {
         CHUNK.chunk_id,
         "edited chunk body",
         CHUNK.content_revision,
+        "修正 OCR",
         expect.any(AbortSignal),
       ),
     );

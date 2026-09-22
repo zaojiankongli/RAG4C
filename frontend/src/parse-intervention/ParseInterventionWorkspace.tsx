@@ -13,8 +13,8 @@ import "./parse-intervention.css";
 type PaneKey="context"|"chunks"|"editor";const PANES:PaneKey[]=["context","chunks","editor"];
 function label(k:PaneKey){return k==="context"?"上下文":k==="chunks"?"切片":"编辑";}
 function useMobile(){const q="(max-width: 720px)";const [m,setM]=useState(()=>matchMedia(q).matches);useEffect(()=>{const x=matchMedia(q),f=()=>setM(x.matches);x.addEventListener?.("change",f);return()=>x.removeEventListener?.("change",f)},[]);return m;}
-export default function ParseInterventionWorkspace(props:{scope:ParseScope|null;document?:DocumentItem|null;online:boolean|null;onReturn:()=>void;onNavigateOperator:(t:"consistency"|"monitor")=>void;onChanged?:()=>void;onDirtyChange?:(d:boolean)=>void}){
- const state=useParseIntervention(props.scope,props.online,(props.document??null) as never);const onDirtyChange=props.onDirtyChange;const mobile=useMobile(),[pane,setPane]=useState<PaneKey>("context"),tabRefs=useRef<Record<string,HTMLButtonElement|null>>({});
+export default function ParseInterventionWorkspace(props:{scope:ParseScope|null;document?:DocumentItem|null;online:boolean|null;onReturn:()=>void;onNavigateOperator:(t:"consistency"|"monitor")=>void;onChanged?:()=>void;onDirtyChange?:(d:boolean)=>void;initialChunkId?:string|null}){
+ const state=useParseIntervention(props.scope,props.online,(props.document??null) as never,props.initialChunkId??null);const onDirtyChange=props.onDirtyChange;const mobile=useMobile(),[pane,setPane]=useState<PaneKey>("context"),tabRefs=useRef<Record<string,HTMLButtonElement|null>>({});
  useEffect(()=>onDirtyChange?.(state.dirty),[onDirtyChange,state.dirty]);const doc=state.document??props.document;
  if(state.status==="loading")return <div className="parse-workspace-state"><Loading text="正在加载权威 ChunkHead…"/></div>;
  if(state.status==="scope-error")return <div className="parse-workspace-state"><Alert theme="error" title="工作区范围校验失败" message="需要有效的签名 Actor、tenant、dataset 和 document 范围。"/></div>;

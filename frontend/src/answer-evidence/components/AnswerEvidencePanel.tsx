@@ -7,6 +7,7 @@ import {
   resolveAnswerEvidenceDatasetId,
 } from "../api/answerEvidenceApi";
 import {
+  chunkWorkbenchDeepLink,
   citationStatusColor,
   citationStatusLabel,
   countQaEvidence,
@@ -87,6 +88,10 @@ function EvidenceRefRow({
   const docLink =
     kind === "document" ? documentDeepLink(evidenceRef.document_id, datasetId) : null;
   const qaLink = kind === "qa" ? qaDeepLink(qaId, datasetId) : null;
+  const workbenchLink =
+    kind === "document"
+      ? chunkWorkbenchDeepLink(evidenceRef.document_id, evidenceRef.chunk_id, datasetId)
+      : null;
   return (
     <li
       key={evidenceRef.id}
@@ -154,6 +159,15 @@ function EvidenceRefRow({
               </span>
             </>
           )}
+          {workbenchLink ? (
+            <a
+              className="answer-evidence-chunk-link answer-evidence-control-min-h"
+              href={workbenchLink}
+              aria-label={`在解析干预中查看切片 ${evidenceRef.chunk_id}`}
+            >
+              在解析干预中查看这个切片
+            </a>
+          ) : null}
         </div>
       </div>
     </li>

@@ -109,3 +109,26 @@
 .parse-mobile-tablist .t-button { width: 100%; }
 
 .parse-editor-pane .t-alert--info .t-alert__description { color: var(--color-text); }
+
+/* 生命周期开关：状态用文字 + 标签表达，不只靠颜色 */
+.parse-lifecycle { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; margin-bottom: 12px; padding: 10px; border: 1px solid var(--color-border-secondary); border-radius: 6px; background: var(--color-bg-secondary); }
+.parse-lifecycle > div { display: grid; gap: 3px; min-width: 0; }
+.parse-lifecycle span { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
+.parse-lifecycle p { margin: 0; font-size: var(--font-size-sm); line-height: 1.5; }
+.parse-view-toggle { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.parse-editor-pane .parse-empty { display: grid; gap: 8px; justify-items: center; min-height: 0; padding: 12px; text-align: center; }
+.parse-workbench-control-min-h { min-height: var(--control-min-h, 44px); }
+/* Revision 历史侧叠层：一个抽屉，不新造第三层弹层 */
+.parse-history-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; color: var(--color-text-secondary); font-size: var(--font-size-xs); }
+.parse-history-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.parse-history-list > li { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--color-border-secondary); border-radius: 6px; background: var(--color-bg-secondary); }
+.parse-history-list > li.is-current { border-color: var(--color-primary-strong); box-shadow: inset 3px 0 0 var(--color-primary); }
+.parse-history-list pre { max-height: 160px; margin: 0; padding: 8px; overflow: auto; border-radius: 5px; background: var(--color-bg-container); font-family: var(--font-mono); font-size: var(--font-size-xs); white-space: pre-wrap; }
+.parse-history-row-top, .parse-history-row-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; min-width: 0; }
+.parse-history-row-top strong { font-size: var(--font-size-sm); }
+.parse-history-row-facts { color: var(--color-text-secondary); font-family: var(--font-mono); font-size: var(--font-size-xxs); }
+@media (max-width: 720px) { .parse-lifecycle { grid-template-columns: minmax(0, 1fr); } }
+/* 整篇合并视图：与切片列表共用行样式，只多一处视图切换和一处墓碑占位的虚线。 */
+.parse-view-switch { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.parse-merged-gap { border: 1px dashed currentColor; border-left-width: 3px; color: var(--color-text-secondary); }
+.parse-merged-gap p { margin: 0; }

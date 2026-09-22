@@ -1,0 +1,114 @@
+// @vitest-environment jsdom
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DocumentChunkItem } from "../../types/rag";
+import type { ParseFilters } from "../hooks/useParseIntervention";
+import ChunkListPane from "./ChunkListPane";
+
+afterEach(cleanup);
+
+const FILTERS: ParseFilters = {
+  lifecycle: "all",
+  projection: "all",
+  relation: "all",
+  warningsOnly: false,
+  showTombstones: true,
+};
+
+function head(id: string, overrides: Partial<DocumentChunkItem> = {}): DocumentChunkItem {
+  return {
+    chunk_id: id,
+    doc_id: "doc-a",
+    tenant_id: "tenant-a",
+    dataset_id: "dataset-a",
+    text: `正文 ${id}`,
+    text_hash: "h",
+    content_revision: 1,
+    document_revision: 3,
+    enabled: true,
+    chunk_role: "flat",
+    seq: Number(id.slice(-1)),
+    context: "",
+    char_count: 4,
+    parent_relation: "none",
+    metadata: {},
+    ...overrides,
+  };
+}
+
+function renderPane(overrides: Partial<Parameters<typeof ChunkListPane>[0]> = {}) {
+  const props = {
+    chunks: [head("c1"), head("c2", { enabled: false }), head("p9", { chunk_role: "parent" })],
+    total: 250,
+    selectedId: "c1",
+    query: "",
+    filters: FILTERS,
+    knownParents: new Set<string>(),
+    missingParents: new Set<string>(),
+    hasMore: true,
+    loadingMore: false,
+    onQueryChange: vi.fn(),
+    onFiltersChange: vi.fn(),
+    onSelect: vi.fn(),
+    onLoadMore: vi.fn(),
+    ...overrides,
+  };
+  render(<ChunkListPane {...props} />);
+  return props;
+}
+
+describe("切片列表与整篇合并视图的切换", () => {
+  it("默认是切片列表，合并视图不提前渲染", () => {
+    renderPane();
+    expect(screen.getAllByRole("region", { name: "切片列表" })).toHaveLength(1);
+    expect(screen.queryAllByRole("region", { name: "整篇合并视图" })).toEqual([]);
+  });
+
+  it("切到合并视图后如实说明只载入了部分，不把局部当整篇", async () => {
+    const user = userEvent.setup();
+    renderPane();
+    await user.click(screen.getByRole("button", { name: "整篇合并" }));
+    const region = await waitFor(() => screen.getByRole("region", { name: "整篇合并视图" }));
+    expect(region.textContent).toContain("仅包含已载入的前 2 / 250");
+    expect(region.textContent).toContain("下面的正文不是全文");
+  });
+
+  it("墓碑原位留占位并进正文之外，父块被排除且说明数量", async () => {
+    const user = userEvent.setup();
+    renderPane();
+    await user.click(screen.getByRole("button", { name: "整篇合并" }));
+    const region = await waitFor(() => screen.getByRole("region", { name: "整篇合并视图" }));
+    expect(region.textContent).toContain("此处已被人工停用");
+    expect(region.textContent).not.toContain("正文 p9");
+    expect(region.textContent).toContain("已排除 1 个父块");
+    expect(region.textContent).toContain("其中 1 处已停用");
+  });
+
+  it("每一段都能定位回对应切片，含墓碑那段", async () => {
+    const user = userEvent.setup();
+    const props = renderPane();
+    await user.click(screen.getByRole("button", { name: "整篇合并" }));
+    await waitFor(() => screen.getByRole("region", { name: "整篇合并视图" }));
+    await user.click(screen.getByRole("button", { name: "定位到已停用的切片 c2" }));
+    expect(props.onSelect).toHaveBeenCalledWith("c2");
+  });
+
+  it("继续载入直接走既有的分页回调，不自建第二套取数", async () => {
+    const user = userEvent.setup();
+    const props = renderPane();
+    await user.click(screen.getByRole("button", { name: "整篇合并" }));
+    await waitFor(() => screen.getByRole("region", { name: "整篇合并视图" }));
+    await user.click(screen.getByRole("button", { name: "继续载入" }));
+    expect(props.onLoadMore).toHaveBeenCalled();
+  });
+
+  it("全部载入后不再出现「仅包含」措辞", async () => {
+    const user = userEvent.setup();
+    renderPane({ chunks: [head("c1"), head("c2")], total: 2, hasMore: false });
+    await user.click(screen.getByRole("button", { name: "整篇合并" }));
+    const region = await waitFor(() => screen.getByRole("region", { name: "整篇合并视图" }));
+    expect(region.textContent).toContain("整篇 2 个切片已全部载入");
+    expect(region.textContent).not.toContain("仅包含");
+  });
+});

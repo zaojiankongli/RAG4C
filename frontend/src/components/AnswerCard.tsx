@@ -423,7 +423,11 @@ function AnswerCard({
                 </Text>
               ),
               children: (
-                <RetrievalTrace traces={result.traces} citations={result.citations} />
+                <RetrievalTrace
+                  traces={result.traces}
+                  citations={result.citations}
+                  evidence={result.evidence ?? []}
+                />
               ),
             },
           ]}

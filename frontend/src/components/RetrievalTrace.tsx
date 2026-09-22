@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import type { ReactNode } from "react";
 import { Tag, Tooltip, Typography } from "../ui/index";
 import {
@@ -10,7 +10,8 @@ import {
 } from "../ui/icons";
 import { parseTraces, stageColor } from "../strategy/traceParse";
 import type { StrategyState } from "../strategy/traceParse";
-import type { Citation, CitationStatus } from "../types/rag";
+import type { Citation, CitationStatus, EvidenceChunk } from "../types/rag";
+import { chunkWorkbenchDeepLink } from "../run/appRoute";
 import { FONT_SIZE } from "../theme/tokens";
 
 const { Text } = Typography;
@@ -35,6 +36,8 @@ const STATE_META: Record<StrategyState, { color: string; icon: ReactNode; text: 
 interface Props {
   traces: string[];
   citations: Citation[];
+  /** 证据片段带 doc_id：用于把 stale 引用深链回被改的那个 ChunkHead */
+  evidence?: EvidenceChunk[];
 }
 
 /**
@@ -44,7 +47,7 @@ interface Props {
  * 各阶段耗时占比、本次实际生效的策略、引用逐层核验结果。
  * 解析规则见 `strategy/traceParse.ts`。
  */
-export default function RetrievalTrace({ traces, citations }: Props) {
+export default function RetrievalTrace({ traces, citations, evidence = [] }: Props) {
   const parsed = useMemo(() => parseTraces(traces), [traces]);
   const { stages, totalMs, strategies, notes, retried } = parsed;
 
@@ -56,6 +59,17 @@ export default function RetrievalTrace({ traces, citations }: Props) {
     }
     return map;
   }, [citations]);
+
+  // stale 引用 -> 可直达的切片；chunk->document 归属缺失时不编造链接
+  const staleLinks = useMemo(() => {
+    const docByChunk = new Map(evidence.map((item) => [item.chunk_id, item.doc_id]));
+    return citations
+      .filter((item) => item.status === "stale")
+      .map((item) => {
+        const docId = docByChunk.get(item.chunk_id) ?? "";
+        return { chunkId: item.chunk_id, url: docId ? chunkWorkbenchDeepLink(docId, item.chunk_id) : null };
+      });
+  }, [citations, evidence]);
 
   const slowest = stages.reduce(
     (max, s) => (s.ms > (max?.ms ?? -1) ? s : max),
@@ -162,7 +176,8 @@ export default function RetrievalTrace({ traces, citations }: Props) {
                 const info = LEVEL_BY_STATUS[status];
                 const count = byStatus.get(status) ?? 0;
                 return (
-                  <div key={status} className={"rtrace-verify-row is-" + info.tone}>
+                  <Fragment key={status}>
+                    <div className={"rtrace-verify-row is-" + info.tone}>
                     <span className="rtrace-verify-icon">
                       {info.tone === "ok" ? (
                         <CheckCircleOutlined />
@@ -174,8 +189,29 @@ export default function RetrievalTrace({ traces, citations }: Props) {
                     </span>
                     <span className="rtrace-verify-level mono">{info.level}</span>
                     <span className="rtrace-verify-label">{info.label}</span>
-                    <span className="rtrace-verify-count tabular-nums">{count} 条</span>
-                  </div>
+                      <span className="rtrace-verify-count tabular-nums">{count} 条</span>
+                    </div>
+                    {status === "stale" && staleLinks.length > 0 && (
+                    <div className="rtrace-verify-links">
+                      {staleLinks.map((link) =>
+                        link.url ? (
+                          <a
+                            key={link.chunkId}
+                            className="rtrace-verify-link"
+                            href={link.url}
+                            aria-label={`在解析干预中查看已变更的切片 ${link.chunkId}`}
+                          >
+                            在解析干预中核对 <code>{link.chunkId}</code>
+                          </a>
+                        ) : (
+                          <span key={link.chunkId} className="rtrace-verify-link is-unavailable">
+                            切片 <code>{link.chunkId}</code> 缺少文档归属，无法直达
+                          </span>
+                        ),
+                      )}
+                    </div>
+                  )}
+                  </Fragment>
                 );
               })}
           </div>

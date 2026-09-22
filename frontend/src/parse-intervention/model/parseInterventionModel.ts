@@ -1,4 +1,4 @@
-import type { DocumentChunkItem } from "../../types/rag";
+import type { DocumentChunkItem, DocumentChunkRevisionItem } from "../../types/rag";
 
 export interface ParseScope {
   tenantId: string;
@@ -187,4 +187,96 @@ export function buildDiff(before: string, after: string): DiffLine[] {
     }
   }
   return result;
+}
+
+/** `edit_source` 的服务端取值；未知值原样透出，不猜测语义 */
+const EDIT_SOURCE_LABELS: Record<string, string> = {
+  user: "人工编辑",
+  restore: "启用（自墓碑恢复）",
+  revert: "回滚到历史 Revision",
+  delete: "停用（写入墓碑）",
+  parser: "解析器",
+  ingest: "入库",
+};
+
+export function editSourceLabel(value: string | null | undefined): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "未记录";
+  return EDIT_SOURCE_LABELS[raw] ?? `来源 ${raw}`;
+}
+
+export interface ChunkRevisionRow {
+  revision: number;
+  content: string;
+  contentHash: string;
+  enabled: boolean;
+  editorId: string;
+  editSource: string;
+  editSourceLabel: string;
+  editedAt: string;
+  /** 该 Revision 是否就是当前 ChunkHead 的内容 */
+  isCurrent: boolean;
+  /** 可作为「回滚到此版」的目标：非当前版、且不是仅记录墓碑状态的快照 */
+  canRevertTo: boolean;
+}
+
+/**
+ * Revision 行的视图模型：接口按 revision 升序返回，操作者先看最近的一版，
+ * 故这里按倒序投影；当前 head 的 revision 不来自 Revision 表，只做标记。
+ */
+export function projectChunkRevisions(
+  items: readonly DocumentChunkRevisionItem[],
+  currentRevision: number,
+): ChunkRevisionRow[] {
+  return items
+    .map((item) => {
+      const isCurrent = Number(item.revision) === Number(currentRevision);
+      return {
+        revision: Number(item.revision),
+        content: String(item.content ?? ""),
+        contentHash: String(item.content_hash ?? ""),
+        enabled: item.enabled !== false,
+        editorId: String(item.editor_id ?? ""),
+        editSource: String(item.edit_source ?? ""),
+        editSourceLabel: editSourceLabel(item.edit_source),
+        editedAt: formatRevisionTime(item.edited_at),
+        isCurrent,
+        canRevertTo: !isCurrent,
+      };
+    })
+    .sort((a, b) => b.revision - a.revision);
+}
+
+function formatRevisionTime(value: string | null | undefined): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "时间未记录";
+  const stamp = Date.parse(raw);
+  if (Number.isNaN(stamp)) return raw.slice(0, 32);
+  return new Date(stamp).toLocaleString("zh-CN", { hour12: false });
+}
+
+export interface ChunkSourceComparison {
+  /** 服务端是否给了原始内容；列表响应刻意不带 source_content，此时不伪造对比 */
+  available: boolean;
+  changed: boolean;
+  added: number;
+  removed: number;
+  lines: DiffLine[];
+}
+
+/** 原始（解析器产出）vs 当前（ChunkHead）的逐行对比，复用 buildDiff，不写第二套 diff。 */
+export function compareChunkToSource(chunk: DocumentChunkItem | null): ChunkSourceComparison {
+  const source = chunk?.source_content;
+  if (typeof source !== "string") {
+    return { available: false, changed: false, added: 0, removed: 0, lines: [] };
+  }
+  const lines = buildDiff(source, chunk?.text ?? "");
+  const added = lines.filter((line) => line.kind === "add").length;
+  const removed = lines.filter((line) => line.kind === "remove").length;
+  return { available: true, changed: added + removed > 0, added, removed, lines };
+}
+
+/** 最近一次人工写入的原因（ChunkHead 元数据）；不假装它是逐 Revision 的审计记录。 */
+export function chunkEditReason(chunk: DocumentChunkItem | null): string {
+  return String(chunk?.edit_reason ?? "").trim();
 }

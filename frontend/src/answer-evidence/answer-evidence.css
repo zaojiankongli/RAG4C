@@ -143,3 +143,14 @@
 .answer-evidence-doc-link:hover {
   text-decoration: underline;
 }
+
+.answer-evidence-chunk-link {
+  color: var(--color-primary, #0052d9);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.answer-evidence-chunk-link:hover,
+.answer-evidence-chunk-link:focus-visible {
+  text-decoration: underline;
+}

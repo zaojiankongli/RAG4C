@@ -606,7 +606,7 @@ export default function DocumentsPage({
           `#${intent.url}`,
         );
       setWorkspaceDirty(false);
-      setParseRoute({ docId: document.id });
+      setParseRoute({ docId: document.id, chunkId: "", datasetId: "" });
     },
     [setParseRoute, setWorkspaceDirty, usingMock],
   );
@@ -1612,6 +1612,7 @@ export default function DocumentsPage({
       <ParseInterventionWorkspace
         scope={scoped}
         document={target ?? null}
+        initialChunkId={parseRoute.chunkId || null}
         online={online}
         onReturn={closeParseWorkspace}
         onChanged={refreshVisibleDocuments}

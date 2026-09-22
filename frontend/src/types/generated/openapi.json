@@ -14162,6 +14162,350 @@
         }
       }
     },
+    "/api/knowledge-bases/{dataset_id}/qa/import": {
+      "post": {
+        "tags": [
+          "knowledge-content"
+        ],
+        "summary": "Import Qa",
+        "operationId": "import_qa_api_knowledge_bases__dataset_id__qa_import_post",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QAImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Import Qa Api Knowledge Bases  Dataset Id  Qa Import Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge-bases/{dataset_id}/qa/batch/review": {
+      "post": {
+        "tags": [
+          "knowledge-content"
+        ],
+        "summary": "Batch Review Qa",
+        "operationId": "batch_review_qa_api_knowledge_bases__dataset_id__qa_batch_review_post",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QABatchReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Batch Review Qa Api Knowledge Bases  Dataset Id  Qa Batch Review Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge-bases/{dataset_id}/qa/batch/expire": {
+      "post": {
+        "tags": [
+          "knowledge-content"
+        ],
+        "summary": "Batch Expire Qa",
+        "operationId": "batch_expire_qa_api_knowledge_bases__dataset_id__qa_batch_expire_post",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QABatchLifecycleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Batch Expire Qa Api Knowledge Bases  Dataset Id  Qa Batch Expire Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge-bases/{dataset_id}/qa/batch/restore": {
+      "post": {
+        "tags": [
+          "knowledge-content"
+        ],
+        "summary": "Batch Restore Qa",
+        "operationId": "batch_restore_qa_api_knowledge_bases__dataset_id__qa_batch_restore_post",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QABatchLifecycleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Batch Restore Qa Api Knowledge Bases  Dataset Id  Qa Batch Restore Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge-bases/{dataset_id}/qa/export": {
+      "get": {
+        "tags": [
+          "knowledge-content"
+        ],
+        "summary": "Export Qa",
+        "operationId": "export_qa_api_knowledge_bases__dataset_id__qa_export_get",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "review_status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ReviewStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Review Status"
+            }
+          },
+          {
+            "name": "lifecycle_state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/QALifecycle"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lifecycle State"
+            }
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/QAOrigin"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(json|csv)$",
+              "default": "json",
+              "title": "Format"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 500,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Export Qa Api Knowledge Bases  Dataset Id  Qa Export Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/knowledge-bases/{dataset_id}/qa/{qa_id}": {
       "patch": {
         "tags": [
@@ -14581,6 +14925,149 @@
         }
       }
     },
+    "/api/knowledge-bases/{dataset_id}/qa/{qa_id}/negative-questions": {
+      "post": {
+        "tags": [
+          "knowledge-content"
+        ],
+        "summary": "Add Negative Question",
+        "operationId": "add_negative_question_api_knowledge_bases__dataset_id__qa__qa_id__negative_questions_post",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "qa_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Qa Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QAAlternativeCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Add Negative Question Api Knowledge Bases  Dataset Id  Qa  Qa Id  Negative Questions Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge-bases/{dataset_id}/qa/{qa_id}/negative-questions/{negative_id}": {
+      "delete": {
+        "tags": [
+          "knowledge-content"
+        ],
+        "summary": "Remove Negative Question",
+        "operationId": "remove_negative_question_api_knowledge_bases__dataset_id__qa__qa_id__negative_questions__negative_id__delete",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "qa_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Qa Id"
+            }
+          },
+          {
+            "name": "negative_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Negative Id"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 10,
+              "pattern": "^[1-9][0-9]*$",
+              "title": "Expected Revision"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/knowledge-bases/{dataset_id}/documents/{doc_id}/chunks": {
       "get": {
         "tags": [
@@ -14769,6 +15256,7 @@
           "knowledge-chunks"
         ],
         "summary": "Patch Chunk",
+        "description": "Edit text, tombstone (``enabled: false``) or restore (``enabled: true``) one chunk.",
         "operationId": "patch_chunk_api_knowledge_bases__dataset_id__documents__doc_id__chunks__chunk_id__patch",
         "security": [
           {
@@ -14916,6 +15404,170 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Delete Chunk Api Knowledge Bases  Dataset Id  Documents  Doc Id  Chunks  Chunk Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge-bases/{dataset_id}/documents/{doc_id}/chunks/{chunk_id}/revisions": {
+      "get": {
+        "tags": [
+          "knowledge-chunks"
+        ],
+        "summary": "List Chunk Revisions",
+        "description": "Immutable content snapshots this head has superseded, newest revision last.\n\nThe head is resolved through the tenant/dataset/document scope first, so an\nunscoped ``chunk_id`` cannot reach another tenant's revision content.",
+        "operationId": "list_chunk_revisions_api_knowledge_bases__dataset_id__documents__doc_id__chunks__chunk_id__revisions_get",
+        "security": [
+          {
+            "KnowledgeBearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Doc Id"
+            }
+          },
+          {
+            "name": "chunk_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Chunk Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Chunk Revisions Api Knowledge Bases  Dataset Id  Documents  Doc Id  Chunks  Chunk Id  Revisions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge-bases/{dataset_id}/documents/{doc_id}/chunks/{chunk_id}/revert": {
+      "post": {
+        "tags": [
+          "knowledge-chunks"
+        ],
+        "summary": "Revert Chunk",
+        "description": "Roll a chunk back to ``target_revision`` as a new head revision (never rewinding).",
+        "operationId": "revert_chunk_api_knowledge_bases__dataset_id__documents__doc_id__chunks__chunk_id__revert_post",
+        "security": [
+          {
+            "KnowledgeBearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Doc Id"
+            }
+          },
+          {
+            "name": "chunk_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Chunk Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChunkRevertRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Revert Chunk Api Knowledge Bases  Dataset Id  Documents  Doc Id  Chunks  Chunk Id  Revert Post"
                 }
               }
             }
@@ -18366,6 +19018,607 @@
         }
       }
     },
+    "/api/storage-backends/types": {
+      "get": {
+        "tags": [
+          "storage-backends"
+        ],
+        "summary": "List Types",
+        "operationId": "list_types_api_storage_backends_types_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response List Types Api Storage Backends Types Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage-backends": {
+      "get": {
+        "tags": [
+          "storage-backends"
+        ],
+        "summary": "List Backends",
+        "operationId": "list_backends_api_storage_backends_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response List Backends Api Storage Backends Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "storage-backends"
+        ],
+        "summary": "Create Backend",
+        "operationId": "create_backend_api_storage_backends_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Create Backend Api Storage Backends Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage-backends/{backend_id}": {
+      "get": {
+        "tags": [
+          "storage-backends"
+        ],
+        "summary": "Get Backend",
+        "operationId": "get_backend_api_storage_backends__backend_id__get",
+        "parameters": [
+          {
+            "name": "backend_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Backend Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Backend Api Storage Backends  Backend Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "storage-backends"
+        ],
+        "summary": "Update Backend",
+        "operationId": "update_backend_api_storage_backends__backend_id__patch",
+        "parameters": [
+          {
+            "name": "backend_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Backend Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Backend Api Storage Backends  Backend Id  Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "storage-backends"
+        ],
+        "summary": "Delete Backend",
+        "operationId": "delete_backend_api_storage_backends__backend_id__delete",
+        "parameters": [
+          {
+            "name": "backend_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Backend Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage-backends/test": {
+      "post": {
+        "tags": [
+          "storage-backends"
+        ],
+        "summary": "Test Unsaved",
+        "operationId": "test_unsaved_api_storage_backends_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Test Unsaved Api Storage Backends Test Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage-backends/{backend_id}/test": {
+      "post": {
+        "tags": [
+          "storage-backends"
+        ],
+        "summary": "Test Saved",
+        "operationId": "test_saved_api_storage_backends__backend_id__test_post",
+        "parameters": [
+          {
+            "name": "backend_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Backend Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Test Saved Api Storage Backends  Backend Id  Test Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage-backends/{backend_id}/default": {
+      "post": {
+        "tags": [
+          "storage-backends"
+        ],
+        "summary": "Set Default",
+        "operationId": "set_default_api_storage_backends__backend_id__default_post",
+        "parameters": [
+          {
+            "name": "backend_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Backend Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Default Api Storage Backends  Backend Id  Default Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage-backends/bind-dataset": {
+      "put": {
+        "tags": [
+          "storage-backends"
+        ],
+        "summary": "Bind Dataset",
+        "operationId": "bind_dataset_api_storage_backends_bind_dataset_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DatasetBindRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Bind Dataset Api Storage Backends Bind Dataset Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge-bases/{dataset_id}/answer-facts": {
+      "get": {
+        "tags": [
+          "answer-evidence"
+        ],
+        "summary": "List Answer Facts",
+        "operationId": "list_answer_facts_api_knowledge_bases__dataset_id__answer_facts_get",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 24
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Answer Facts Api Knowledge Bases  Dataset Id  Answer Facts Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge-bases/{dataset_id}/answer-facts/by-run/{run_id}": {
+      "get": {
+        "tags": [
+          "answer-evidence"
+        ],
+        "summary": "Get By Run",
+        "operationId": "get_by_run_api_knowledge_bases__dataset_id__answer_facts_by_run__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get By Run Api Knowledge Bases  Dataset Id  Answer Facts By Run  Run Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge-bases/{dataset_id}/answer-facts/{fact_id}": {
+      "get": {
+        "tags": [
+          "answer-evidence"
+        ],
+        "summary": "Get Answer Fact",
+        "operationId": "get_answer_fact_api_knowledge_bases__dataset_id__answer_facts__fact_id__get",
+        "parameters": [
+          {
+            "name": "fact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Fact Id"
+            }
+          },
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Answer Fact Api Knowledge Bases  Dataset Id  Answer Facts  Fact Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/knowledge-bases/{dataset_id}/retrieval-experiments": {
       "post": {
         "tags": [
@@ -20455,7 +21708,7 @@
     "/api/eval/run": {
       "post": {
         "summary": "Eval Run",
-        "description": "运行一次评测（dry-run 或真实管线），返回 EvalReport 并落盘。\n\n真实模式（pipeline != \"none\"）会逐条调用 RAG 全链路，耗时取决于数据集大小；\n同时间仅允许一个评测任务（忙时 409）。",
+        "description": "运行一次评测（dry-run 或真实管线），返回 EvalReport 并落盘。\n\n真实模式（pipeline != \"none\"）会逐条调用 RAG 全链路，耗时取决于数据集大小；\n同时间仅允许一个评测任务（忙时 409）。远程经 admin operator 中间件；\n业务层在 require_actor_on_admin_writes 时要求 Knowledge MANAGE。",
         "operationId": "eval_run_api_eval_run_post",
         "requestBody": {
           "content": {
@@ -20538,7 +21791,7 @@
     "/api/config/update": {
       "post": {
         "summary": "Config Update",
-        "description": "把指定配置项写入 .env（RAG4C_<SECTION>_<KEY>=value）并尝试热更新。\n\n    安全约束：\n    - 仅接受 Settings 模型结构内的合法路径（白名单）；\n    - 拒绝修改敏感字段（api_key / token）；\n    - 值按当前字段类型做严格校验（bool / int / float / str）；\n    - 原子写入（临时文件 + os.replace）+ 写锁。\n\n    热更新的边界：``hot_reloaded=True`` 表示**回读核实过**——重建管线后从新的\n    ``get_settings()`` 把每个改动路径读回来，与提交值一致才算数。做不到的路径\n    列在 `\needs_restart`` 里（bridge 段是进程启动时读的模块级常量，天然属于\n    这一类）。这个接口从前只保证\"上面那段没抛异常\"就报成功。",
+        "description": "把指定配置项写入 .env（RAG4C_<SECTION>_<KEY>=value）并尝试热更新。\n\n安全约束：\n- 仅接受 Settings 模型结构内的合法路径（白名单）；\n- 拒绝修改敏感字段（api_key / token）；\n- 值按当前字段类型做严格校验（bool / int / float / str）；\n- 原子写入（临时文件 + os.replace）+ 写锁；\n- 远程经 admin operator 中间件；require_actor_on_admin_writes 时要求 MANAGE。",
         "operationId": "config_update_api_config_update_post",
         "requestBody": {
           "content": {
@@ -21226,10 +22479,40 @@
       "ChunkPatch": {
         "properties": {
           "text": {
-            "type": "string",
-            "maxLength": 200000,
-            "minLength": 1,
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200000,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Text"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           },
           "expected_revision": {
             "type": "integer",
@@ -21240,10 +22523,44 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "text",
           "expected_revision"
         ],
-        "title": "ChunkPatch"
+        "title": "ChunkPatch",
+        "description": "Edit a chunk's text and/or flip its enabled flag, under optimistic concurrency.\n\n``reason`` is recorded on the chunk head for operator audit; it is not carried on\nhistorical revision rows (see ``docs/compose/spec/chunk-lifecycle-writers.md`` S2.4)."
+      },
+      "ChunkRevertRequest": {
+        "properties": {
+          "target_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Target Revision"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "target_revision",
+          "expected_revision"
+        ],
+        "title": "ChunkRevertRequest",
+        "description": "Roll a chunk head back to one of its recorded revisions."
       },
       "ChunkUpdateRequest": {
         "properties": {
@@ -21369,6 +22686,16 @@
           "has_drift": {
             "type": "boolean",
             "title": "Has Drift"
+          },
+          "qa_authority": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QAAuthorityCounts"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -21543,6 +22870,34 @@
           "reason"
         ],
         "title": "DatasetAccessGrantStateRequest"
+      },
+      "DatasetBindRequest": {
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Dataset Id"
+          },
+          "storage_backend_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Backend Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "dataset_id"
+        ],
+        "title": "DatasetBindRequest"
       },
       "DatasetPoliciesPatch": {
         "properties": {
@@ -23946,6 +25301,121 @@
         ],
         "title": "QAAlternativeCreate"
       },
+      "QAAuthorityCounts": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "effective_retrieval": {
+            "type": "integer",
+            "title": "Effective Retrieval"
+          },
+          "pending_review": {
+            "type": "integer",
+            "title": "Pending Review"
+          },
+          "rejected": {
+            "type": "integer",
+            "title": "Rejected"
+          },
+          "expired": {
+            "type": "integer",
+            "title": "Expired"
+          },
+          "retrieval_disabled": {
+            "type": "integer",
+            "title": "Retrieval Disabled"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "total",
+          "effective_retrieval",
+          "pending_review",
+          "rejected",
+          "expired",
+          "retrieval_disabled",
+          "note"
+        ],
+        "title": "QAAuthorityCounts",
+        "description": "Catalog-only QA retrieval authority (not a Milvus projection claim)."
+      },
+      "QABatchItem": {
+        "properties": {
+          "qa_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Qa Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Revision"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "qa_id",
+          "expected_revision"
+        ],
+        "title": "QABatchItem"
+      },
+      "QABatchLifecycleRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/QARevisionRequestItem"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "QABatchLifecycleRequest"
+      },
+      "QABatchReviewRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/QABatchItem"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "QABatchReviewRequest"
+      },
       "QACreate": {
         "properties": {
           "question": {
@@ -24021,6 +25491,77 @@
         ],
         "title": "QACreate"
       },
+      "QAImportItem": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Question"
+          },
+          "answer": {
+            "type": "string",
+            "maxLength": 65535,
+            "minLength": 1,
+            "title": "Answer"
+          },
+          "alternatives": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Alternatives"
+          },
+          "negative_questions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Negative Questions"
+          },
+          "source_uri": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Source Uri",
+            "default": ""
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "question",
+          "answer"
+        ],
+        "title": "QAImportItem"
+      },
+      "QAImportRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/QAImportItem"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Items"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/QAOrigin",
+            "default": "import"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "QAImportRequest"
+      },
       "QALifecycle": {
         "type": "string",
         "enum": [
@@ -24037,7 +25578,8 @@
         "type": "string",
         "enum": [
           "manual",
-          "automatic"
+          "automatic",
+          "import"
         ],
         "title": "QAOrigin"
       },
@@ -24074,6 +25616,28 @@
           "expected_revision"
         ],
         "title": "QARevisionRequest"
+      },
+      "QARevisionRequestItem": {
+        "properties": {
+          "qa_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Qa Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "qa_id",
+          "expected_revision"
+        ],
+        "title": "QARevisionRequestItem"
       },
       "QAUpdate": {
         "properties": {
@@ -28416,6 +29980,210 @@
         "additionalProperties": false,
         "type": "object",
         "title": "SourceSyncRequest"
+      },
+      "StorageConfigModel": {
+        "properties": {
+          "root_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Path"
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          },
+          "bucket": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bucket"
+          },
+          "bucket_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bucket Name"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "path_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path Prefix"
+          },
+          "access_key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Key Id"
+          },
+          "secret_access_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret Access Key"
+          },
+          "use_ssl": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Use Ssl"
+          },
+          "force_path_style": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Force Path Style"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "StorageConfigModel"
+      },
+      "StorageCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "provider": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Provider"
+          },
+          "config": {
+            "$ref": "#/components/schemas/StorageConfigModel"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "provider"
+        ],
+        "title": "StorageCreate"
+      },
+      "StorageTestRequest": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Provider"
+          },
+          "config": {
+            "$ref": "#/components/schemas/StorageConfigModel"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider"
+        ],
+        "title": "StorageTestRequest"
+      },
+      "StorageUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(active|disabled)$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StorageConfigModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "StorageUpdate"
       },
       "SubscriptionPatchRequest": {
         "properties": {

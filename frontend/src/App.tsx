@@ -75,6 +75,7 @@ import {
 
 const KnowledgeOverviewPage = lazy(() => import("./pages/KnowledgeOverviewPage"));
 const DocumentsPage = lazy(() => import("./pages/DocumentsPage"));
+const ChunkWorkbenchPage = lazy(() => import("./pages/ChunkWorkbenchPage"));
 const KnowledgeTaxonomyPage = lazy(() => import("./pages/KnowledgeTaxonomyPage"));
 const KnowledgeGovernancePage = lazy(() => import("./pages/KnowledgeGovernancePage"));
 const KnowledgeSourcesPage = lazy(() => import("./pages/KnowledgeSourcesPage"));
@@ -130,6 +131,7 @@ const MENU_ITEMS: MenuProps["items"] = [
     children: [
       { key: "overview", icon: <DatabaseOutlined />, label: "知识概览" },
       { key: "documents", icon: <FolderOpenOutlined />, label: "文档管理" },
+      { key: "parse-intervention", icon: <FileSearchOutlined />, label: "解析干预" },
       { key: "taxonomy", icon: <TagsOutlined />, label: "知识组织" },
       { key: "sources", icon: <CloudServerOutlined />, label: "数据来源" },
       { key: "knowledge-bases", icon: <ApartmentOutlined />, label: "知识库注册表" },
@@ -176,6 +178,7 @@ export default function App({ themeMode, onToggleTheme }: Props) {
   const [acl, setAcl] = useState<string[]>([]);
   const [mountedPages, setMountedPages] = useState<PageKey[]>(() => [page]);
   const [documentsWorkspaceDirty, setDocumentsWorkspaceDirty] = useState(false);
+  const [workbenchDirty, setWorkbenchDirty] = useState(false);
   const [routeRevision, setRouteRevision] = useState(0);
   const [enterpriseIdentity, setEnterpriseIdentity] = useState<EnterpriseContext | null>(null);
   const [notificationDrawerOpen, setNotificationDrawerOpen] = useState(false);
@@ -206,14 +209,19 @@ export default function App({ themeMode, onToggleTheme }: Props) {
 
   const navigate = useCallback(
     (key: PageKey) => {
+      const dirtyWorkspace =
+        (page === "documents" && documentsWorkspaceDirty) ||
+        (page === "parse-intervention" && workbenchDirty);
       if (
-        page === "documents" &&
-        key !== "documents" &&
-        documentsWorkspaceDirty &&
+        dirtyWorkspace &&
+        key !== page &&
         !window.confirm("当前切片修改尚未提交。离开解析干预工作区将丢弃草稿，是否继续？")
       )
         return;
-      if (page === "documents" && key !== "documents") setDocumentsWorkspaceDirty(false);
+      if (dirtyWorkspace && key !== page) {
+        setDocumentsWorkspaceDirty(false);
+        setWorkbenchDirty(false);
+      }
       setPage(key);
       setMobileNavOpen(false);
       setNotificationDrawerOpen(false);
@@ -226,7 +234,7 @@ export default function App({ themeMode, onToggleTheme }: Props) {
         } else window.location.hash = intent.url;
       }
     },
-    [documentsWorkspaceDirty, page],
+    [documentsWorkspaceDirty, page, workbenchDirty],
   );
 
   const handleGlobalSearch = useCallback((value: string) => {
@@ -666,6 +674,7 @@ export default function App({ themeMode, onToggleTheme }: Props) {
         <KnowledgeSourcesPage active={page === "sources"} embedded />
       </KnowledgeBaseResourceShell>
     ),
+    "parse-intervention": <ChunkWorkbenchPage onDirtyChange={setWorkbenchDirty} />,
     "retrieval-lab": <RetrievalLabPage />,
     visualize: <VisualizePage />,
     eval: <EvalPage />,

@@ -3044,6 +3044,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/knowledge-bases/{dataset_id}/qa/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Qa */
+        post: operations["import_qa_api_knowledge_bases__dataset_id__qa_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge-bases/{dataset_id}/qa/batch/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Batch Review Qa */
+        post: operations["batch_review_qa_api_knowledge_bases__dataset_id__qa_batch_review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge-bases/{dataset_id}/qa/batch/expire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Batch Expire Qa */
+        post: operations["batch_expire_qa_api_knowledge_bases__dataset_id__qa_batch_expire_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge-bases/{dataset_id}/qa/batch/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Batch Restore Qa */
+        post: operations["batch_restore_qa_api_knowledge_bases__dataset_id__qa_batch_restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge-bases/{dataset_id}/qa/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Qa */
+        get: operations["export_qa_api_knowledge_bases__dataset_id__qa_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/knowledge-bases/{dataset_id}/qa/{qa_id}": {
         parameters: {
             query?: never;
@@ -3146,6 +3231,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/knowledge-bases/{dataset_id}/qa/{qa_id}/negative-questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add Negative Question */
+        post: operations["add_negative_question_api_knowledge_bases__dataset_id__qa__qa_id__negative_questions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge-bases/{dataset_id}/qa/{qa_id}/negative-questions/{negative_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Negative Question */
+        delete: operations["remove_negative_question_api_knowledge_bases__dataset_id__qa__qa_id__negative_questions__negative_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/knowledge-bases/{dataset_id}/documents/{doc_id}/chunks": {
         parameters: {
             query?: never;
@@ -3178,8 +3297,54 @@ export interface paths {
         delete: operations["delete_chunk_api_knowledge_bases__dataset_id__documents__doc_id__chunks__chunk_id__delete"];
         options?: never;
         head?: never;
-        /** Patch Chunk */
+        /**
+         * Patch Chunk
+         * @description Edit text, tombstone (``enabled: false``) or restore (``enabled: true``) one chunk.
+         */
         patch: operations["patch_chunk_api_knowledge_bases__dataset_id__documents__doc_id__chunks__chunk_id__patch"];
+        trace?: never;
+    };
+    "/api/knowledge-bases/{dataset_id}/documents/{doc_id}/chunks/{chunk_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Chunk Revisions
+         * @description Immutable content snapshots this head has superseded, newest revision last.
+         *
+         *     The head is resolved through the tenant/dataset/document scope first, so an
+         *     unscoped ``chunk_id`` cannot reach another tenant's revision content.
+         */
+        get: operations["list_chunk_revisions_api_knowledge_bases__dataset_id__documents__doc_id__chunks__chunk_id__revisions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge-bases/{dataset_id}/documents/{doc_id}/chunks/{chunk_id}/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revert Chunk
+         * @description Roll a chunk back to ``target_revision`` as a new head revision (never rewinding).
+         */
+        post: operations["revert_chunk_api_knowledge_bases__dataset_id__documents__doc_id__chunks__chunk_id__revert_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/knowledge-bases/{dataset_id}/consistency/summary": {
@@ -3700,6 +3865,179 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/storage-backends/types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Types */
+        get: operations["list_types_api_storage_backends_types_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/storage-backends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Backends */
+        get: operations["list_backends_api_storage_backends_get"];
+        put?: never;
+        /** Create Backend */
+        post: operations["create_backend_api_storage_backends_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/storage-backends/{backend_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Backend */
+        get: operations["get_backend_api_storage_backends__backend_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Backend */
+        delete: operations["delete_backend_api_storage_backends__backend_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Backend */
+        patch: operations["update_backend_api_storage_backends__backend_id__patch"];
+        trace?: never;
+    };
+    "/api/storage-backends/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test Unsaved */
+        post: operations["test_unsaved_api_storage_backends_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/storage-backends/{backend_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test Saved */
+        post: operations["test_saved_api_storage_backends__backend_id__test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/storage-backends/{backend_id}/default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Default */
+        post: operations["set_default_api_storage_backends__backend_id__default_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/storage-backends/bind-dataset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Bind Dataset */
+        put: operations["bind_dataset_api_storage_backends_bind_dataset_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge-bases/{dataset_id}/answer-facts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Answer Facts */
+        get: operations["list_answer_facts_api_knowledge_bases__dataset_id__answer_facts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge-bases/{dataset_id}/answer-facts/by-run/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get By Run */
+        get: operations["get_by_run_api_knowledge_bases__dataset_id__answer_facts_by_run__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge-bases/{dataset_id}/answer-facts/{fact_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Answer Fact */
+        get: operations["get_answer_fact_api_knowledge_bases__dataset_id__answer_facts__fact_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/knowledge-bases/{dataset_id}/retrieval-experiments": {
         parameters: {
             query?: never;
@@ -4211,7 +4549,8 @@ export interface paths {
          * @description 运行一次评测（dry-run 或真实管线），返回 EvalReport 并落盘。
          *
          *     真实模式（pipeline != "none"）会逐条调用 RAG 全链路，耗时取决于数据集大小；
-         *     同时间仅允许一个评测任务（忙时 409）。
+         *     同时间仅允许一个评测任务（忙时 409）。远程经 admin operator 中间件；
+         *     业务层在 require_actor_on_admin_writes 时要求 Knowledge MANAGE。
          */
         post: operations["eval_run_api_eval_run_post"];
         delete?: never;
@@ -4277,17 +4616,12 @@ export interface paths {
          * Config Update
          * @description 把指定配置项写入 .env（RAG4C_<SECTION>_<KEY>=value）并尝试热更新。
          *
-         *         安全约束：
-         *         - 仅接受 Settings 模型结构内的合法路径（白名单）；
-         *         - 拒绝修改敏感字段（api_key / token）；
-         *         - 值按当前字段类型做严格校验（bool / int / float / str）；
-         *         - 原子写入（临时文件 + os.replace）+ 写锁。
-         *
-         *         热更新的边界：``hot_reloaded=True`` 表示**回读核实过**——重建管线后从新的
-         *         ``get_settings()`` 把每个改动路径读回来，与提交值一致才算数。做不到的路径
-         *         列在 `
-         *     eeds_restart`` 里（bridge 段是进程启动时读的模块级常量，天然属于
-         *         这一类）。这个接口从前只保证"上面那段没抛异常"就报成功。
+         *     安全约束：
+         *     - 仅接受 Settings 模型结构内的合法路径（白名单）；
+         *     - 拒绝修改敏感字段（api_key / token）；
+         *     - 值按当前字段类型做严格校验（bool / int / float / str）；
+         *     - 原子写入（临时文件 + os.replace）+ 写锁；
+         *     - 远程经 admin operator 中间件；require_actor_on_admin_writes 时要求 MANAGE。
          */
         post: operations["config_update_api_config_update_post"];
         delete?: never;
@@ -4503,12 +4837,34 @@ export interface components {
             /** Reason */
             reason: string;
         };
-        /** ChunkPatch */
+        /**
+         * ChunkPatch
+         * @description Edit a chunk's text and/or flip its enabled flag, under optimistic concurrency.
+         *
+         *     ``reason`` is recorded on the chunk head for operator audit; it is not carried on
+         *     historical revision rows (see ``docs/compose/spec/chunk-lifecycle-writers.md`` S2.4).
+         */
         ChunkPatch: {
             /** Text */
-            text: string;
+            text?: string | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Reason */
+            reason?: string | null;
             /** Expected Revision */
             expected_revision: number;
+        };
+        /**
+         * ChunkRevertRequest
+         * @description Roll a chunk head back to one of its recorded revisions.
+         */
+        ChunkRevertRequest: {
+            /** Target Revision */
+            target_revision: number;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Reason */
+            reason?: string | null;
         };
         /** ChunkUpdateRequest */
         ChunkUpdateRequest: {
@@ -4580,6 +4936,7 @@ export interface components {
             best_effort: true;
             /** Has Drift */
             has_drift: boolean;
+            qa_authority?: components["schemas"]["QAAuthorityCounts"] | null;
         };
         /** DatasetAccessControlDisableRequest */
         DatasetAccessControlDisableRequest: {
@@ -4632,6 +4989,13 @@ export interface components {
             revision: number;
             /** Reason */
             reason: string;
+        };
+        /** DatasetBindRequest */
+        DatasetBindRequest: {
+            /** Dataset Id */
+            dataset_id: string;
+            /** Storage Backend Id */
+            storage_backend_id?: string | null;
         };
         /** DatasetPoliciesPatch */
         DatasetPoliciesPatch: {
@@ -5444,6 +5808,44 @@ export interface components {
             /** Question */
             question: string;
         };
+        /**
+         * QAAuthorityCounts
+         * @description Catalog-only QA retrieval authority (not a Milvus projection claim).
+         */
+        QAAuthorityCounts: {
+            /** Total */
+            total: number;
+            /** Effective Retrieval */
+            effective_retrieval: number;
+            /** Pending Review */
+            pending_review: number;
+            /** Rejected */
+            rejected: number;
+            /** Expired */
+            expired: number;
+            /** Retrieval Disabled */
+            retrieval_disabled: number;
+            /** Note */
+            note: string;
+        };
+        /** QABatchItem */
+        QABatchItem: {
+            /** Qa Id */
+            qa_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            decision?: components["schemas"]["ReviewDecision"] | null;
+        };
+        /** QABatchLifecycleRequest */
+        QABatchLifecycleRequest: {
+            /** Items */
+            items: components["schemas"]["QARevisionRequestItem"][];
+        };
+        /** QABatchReviewRequest */
+        QABatchReviewRequest: {
+            /** Items */
+            items: components["schemas"]["QABatchItem"][];
+        };
         /** QACreate */
         QACreate: {
             /** Question */
@@ -5468,6 +5870,33 @@ export interface components {
             /** Expires At */
             expires_at?: string | null;
         };
+        /** QAImportItem */
+        QAImportItem: {
+            /** Question */
+            question: string;
+            /** Answer */
+            answer: string;
+            /** Alternatives */
+            alternatives?: string[];
+            /** Negative Questions */
+            negative_questions?: string[];
+            /**
+             * Source Uri
+             * @default
+             */
+            source_uri: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        /** QAImportRequest */
+        QAImportRequest: {
+            /** Items */
+            items: components["schemas"]["QAImportItem"][];
+            /** @default import */
+            origin: components["schemas"]["QAOrigin"];
+        };
         /**
          * QALifecycle
          * @enum {string}
@@ -5477,7 +5906,7 @@ export interface components {
          * QAOrigin
          * @enum {string}
          */
-        QAOrigin: "manual" | "automatic";
+        QAOrigin: "manual" | "automatic" | "import";
         /** QAReviewRequest */
         QAReviewRequest: {
             /** Expected Revision */
@@ -5486,6 +5915,13 @@ export interface components {
         };
         /** QARevisionRequest */
         QARevisionRequest: {
+            /** Expected Revision */
+            expected_revision: number;
+        };
+        /** QARevisionRequestItem */
+        QARevisionRequestItem: {
+            /** Qa Id */
+            qa_id: string;
             /** Expected Revision */
             expected_revision: number;
         };
@@ -6846,6 +7282,51 @@ export interface components {
              * @default false
              */
             dry_run: boolean;
+        };
+        /** StorageConfigModel */
+        StorageConfigModel: {
+            /** Root Path */
+            root_path?: string | null;
+            /** Endpoint */
+            endpoint?: string | null;
+            /** Bucket */
+            bucket?: string | null;
+            /** Bucket Name */
+            bucket_name?: string | null;
+            /** Region */
+            region?: string | null;
+            /** Path Prefix */
+            path_prefix?: string | null;
+            /** Access Key Id */
+            access_key_id?: string | null;
+            /** Secret Access Key */
+            secret_access_key?: string | null;
+            /** Use Ssl */
+            use_ssl?: boolean | null;
+            /** Force Path Style */
+            force_path_style?: boolean | null;
+        };
+        /** StorageCreate */
+        StorageCreate: {
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string;
+            config?: components["schemas"]["StorageConfigModel"];
+        };
+        /** StorageTestRequest */
+        StorageTestRequest: {
+            /** Provider */
+            provider: string;
+            config?: components["schemas"]["StorageConfigModel"];
+        };
+        /** StorageUpdate */
+        StorageUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Status */
+            status?: string | null;
+            config?: components["schemas"]["StorageConfigModel"] | null;
         };
         /** SubscriptionPatchRequest */
         SubscriptionPatchRequest: {
@@ -14807,6 +15288,191 @@ export interface operations {
             };
         };
     };
+    import_qa_api_knowledge_bases__dataset_id__qa_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QAImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    batch_review_qa_api_knowledge_bases__dataset_id__qa_batch_review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QABatchReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    batch_expire_qa_api_knowledge_bases__dataset_id__qa_batch_expire_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QABatchLifecycleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    batch_restore_qa_api_knowledge_bases__dataset_id__qa_batch_restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QABatchLifecycleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_qa_api_knowledge_bases__dataset_id__qa_export_get: {
+        parameters: {
+            query?: {
+                review_status?: components["schemas"]["ReviewStatus"] | null;
+                lifecycle_state?: components["schemas"]["QALifecycle"] | null;
+                origin?: components["schemas"]["QAOrigin"] | null;
+                format?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_qa_api_knowledge_bases__dataset_id__qa__qa_id__patch: {
         parameters: {
             query?: never;
@@ -15030,6 +15696,77 @@ export interface operations {
             };
         };
     };
+    add_negative_question_api_knowledge_bases__dataset_id__qa__qa_id__negative_questions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+                qa_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QAAlternativeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_negative_question_api_knowledge_bases__dataset_id__qa__qa_id__negative_questions__negative_id__delete: {
+        parameters: {
+            query: {
+                expected_revision: string;
+            };
+            header?: never;
+            path: {
+                dataset_id: string;
+                qa_id: string;
+                negative_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_chunks_api_knowledge_bases__dataset_id__documents__doc_id__chunks_get: {
         parameters: {
             query?: {
@@ -15155,6 +15892,80 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ChunkPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_chunk_revisions_api_knowledge_bases__dataset_id__documents__doc_id__chunks__chunk_id__revisions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+                doc_id: string;
+                chunk_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revert_chunk_api_knowledge_bases__dataset_id__documents__doc_id__chunks__chunk_id__revert_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+                doc_id: string;
+                chunk_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChunkRevertRequest"];
             };
         };
         responses: {
@@ -17302,6 +18113,425 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_types_api_storage_backends_types_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    list_backends_api_storage_backends_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    create_backend_api_storage_backends_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_backend_api_storage_backends__backend_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                backend_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_backend_api_storage_backends__backend_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                backend_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_backend_api_storage_backends__backend_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                backend_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_unsaved_api_storage_backends_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_saved_api_storage_backends__backend_id__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                backend_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_default_api_storage_backends__backend_id__default_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                backend_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bind_dataset_api_storage_backends_bind_dataset_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatasetBindRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_answer_facts_api_knowledge_bases__dataset_id__answer_facts_get: {
+        parameters: {
+            query?: {
+                outcome?: string | null;
+                run_id?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_by_run_api_knowledge_bases__dataset_id__answer_facts_by_run__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_answer_fact_api_knowledge_bases__dataset_id__answer_facts__fact_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fact_id: string;
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

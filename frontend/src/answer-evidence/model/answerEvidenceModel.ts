@@ -1,4 +1,5 @@
 import { ApiError } from "../../api/client";
+import { chunkWorkbenchDeepLink as appChunkWorkbenchDeepLink } from "../../run/appRoute";
 
 /** outcome_code — answered | abstained | cancelled | failed | cached（开放字符串） */
 export type AnswerOutcomeCode =
@@ -89,6 +90,22 @@ export function documentDeepLink(
   const dataset = datasetId?.trim();
   if (dataset) params.set("dataset", dataset);
   return `#/documents?${params.toString()}`;
+}
+
+/**
+ * 切片级深链：直达解析干预工作区并选中那个 chunk（`…?doc=<id>&chunk=<id>`）。
+ * QA 权威条目不是 ChunkHead，返回 null 而不是给出一个打不开的工作区链接。
+ */
+export function chunkWorkbenchDeepLink(
+  documentId: string | null | undefined,
+  chunkId: string | null | undefined,
+  datasetId?: string | null,
+): string | null {
+  const doc = documentId?.trim();
+  const chunk = chunkId?.trim();
+  if (!doc || !chunk) return null;
+  if (parseQaChunkId(doc) || parseQaChunkId(chunk)) return null;
+  return appChunkWorkbenchDeepLink(doc, chunk, datasetId);
 }
 
 export function countQaEvidence(refs: readonly AnswerEvidenceRef[]): number {

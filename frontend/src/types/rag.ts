@@ -692,6 +692,31 @@ export interface DocumentChunkItem {
   projection_semantics?: string;
   created_at?: string | null;
   updated_at?: string | null;
+  /** 解析器原始产出；只在单切片读取里返回，列表响应刻意不带 */
+  source_content?: string;
+  /** 最后一次人工写入的作者标识（当前由服务端固定为系统操作员） */
+  editor_id?: string;
+  /** 最后一次人工写入的来源：user | restore | revert | delete … */
+  edit_source?: string;
+  /** 最后一次人工写入的原因；记在 ChunkHead 元数据上，不随 Revision 逐版保存 */
+  edit_reason?: string;
+  edit_reason_at?: string | null;
+}
+
+/** 一条不可变的切片 Revision 快照（`GET …/chunks/{chunk_id}/revisions`） */
+export interface DocumentChunkRevisionItem {
+  revision: number;
+  content: string;
+  content_hash: string;
+  enabled: boolean;
+  editor_id: string;
+  edit_source: string;
+  edited_at: string | null;
+}
+
+export interface DocumentChunkRevisionList {
+  chunk_id: string;
+  items: DocumentChunkRevisionItem[];
 }
 
 export interface DocumentChunkList {

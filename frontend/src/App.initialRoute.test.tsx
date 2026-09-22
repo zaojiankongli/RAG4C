@@ -37,6 +37,13 @@ vi.mock("./pages/DocumentsPage", () => ({
   ),
 }));
 vi.mock("./pages/VisualizePage", () => ({ default: () => <section /> }));
+vi.mock("./pages/ChunkWorkbenchPage", () => ({
+  default: ({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) => (
+    <section aria-label="解析干预页面">
+      <button onClick={() => onDirtyChange?.(true)}>模拟未提交草稿</button>
+    </section>
+  ),
+}));
 vi.mock("./pages/MonitorPage", () => ({ default: () => <section aria-label="运行监控页面" /> }));
 vi.mock("./pages/EvalPage", () => ({ default: () => <section /> }));
 vi.mock("./pages/ConfigPage", () => ({ default: () => <section /> }));
@@ -255,6 +262,31 @@ describe("App direct route mounting", () => {
     fireEvent.click(screen.getByText("运行监控"));
     expect(await screen.findByRole("region", { name: "运行监控页面" })).toBeTruthy();
   });
+  it("mounts the chunk workbench from a history deep link", async () => {
+    window.history.replaceState(null, "", "/parse-intervention?doc=doc-1&chunk=chunk-9");
+    render(<App themeMode="light" onToggleTheme={vi.fn()} />);
+
+    expect(await screen.findByRole("region", { name: "解析干预页面" }, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "文档管理页面" })).toBeNull();
+  });
+
+  it("resolves the same route from a #hash deployment and keeps the dirty-draft guard", async () => {
+    window.history.replaceState(null, "", "/#/parse-intervention?doc=doc-1&chunk=chunk-9");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<App themeMode="light" onToggleTheme={vi.fn()} />);
+
+    expect(await screen.findByRole("region", { name: "解析干预页面" }, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "模拟未提交草稿" }));
+    fireEvent.click(screen.getByText("运行监控"));
+    expect(confirm).toHaveBeenCalled();
+    expect(screen.getByRole("region", { name: "解析干预页面" })).toBeTruthy();
+
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByText("运行监控"));
+    expect(await screen.findByRole("region", { name: "运行监控页面" })).toBeTruthy();
+    confirm.mockRestore();
+  });
+
   it("keeps the enterprise page mounted for an invitation accept deep link", async () => {
     window.history.replaceState(null, "", "/enterprise/invitations/accept?token=route-token");
     render(<App themeMode="light" onToggleTheme={vi.fn()} />);

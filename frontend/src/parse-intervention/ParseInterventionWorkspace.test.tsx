@@ -89,7 +89,7 @@ function controller(overrides: Partial<UseParseInterventionResult> = {}): UsePar
     selected: baseChunk,
     selectedId: "chunk-1",
     query: "",
-    filters: { lifecycle: "all", projection: "all", relation: "all", warningsOnly: false },
+    filters: { lifecycle: "all", projection: "all", relation: "all", warningsOnly: false, showTombstones: false },
     draft: "Current policy body",
     reason: "",
     expectedRevision: 4,
@@ -97,6 +97,16 @@ function controller(overrides: Partial<UseParseInterventionResult> = {}): UsePar
     error: "",
     conflict: null,
     receipt: null,
+    revisions: [],
+    revisionsLoading: false,
+    revisionsError: "",
+    revisionsReady: false,
+    detailLoading: false,
+    refreshSelectedDetail: vi.fn(async () => false),
+    loadRevisions: vi.fn(async () => true),
+    ensureRevisions: vi.fn(async () => true),
+    setEnabled: vi.fn(async () => true),
+    revertTo: vi.fn(async () => true),
     mutating: false,
     setQuery: vi.fn(),
     setFilters: vi.fn(),
@@ -159,14 +169,83 @@ describe("ParseInterventionWorkspace", () => {
     expect(screen.getByText("决策依据")).toBeTruthy();
     expect(screen.getByText(/类型 pdf · 480 字 · 8 版面块 · 阈值 4000/)).toBeTruthy();
     expect(screen.getByText("当前没有原始文档预览能力")).toBeTruthy();
-    expect(screen.getByText("当前没有切片 Revision 历史接口")).toBeTruthy();
-    expect(screen.getByText("当前 API 不持久化修改原因")).toBeTruthy();
+    expect(screen.getByText("原因记在 ChunkHead，不逐版保存")).toBeTruthy();
+    expect(screen.queryByText("当前没有切片 Revision 历史接口")).toBeNull();
+    expect(screen.queryByText("当前 API 不持久化修改原因")).toBeNull();
+    expect(screen.getByRole("button", { name: "停用此切片" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Revision 历史" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "原始 vs 当前" })).toBeTruthy();
     expect((screen.getByRole("button", { name: "提交修改" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByRole("region", { name: "修改差异预览" }).tabIndex).toBe(0);
     expect(container.textContent).not.toContain("C:/secret");
     expect(container.textContent).not.toContain("never-render");
     expect(container.textContent).not.toContain("token=abc");
     expect(container.textContent).toContain("https://example.com/private");
+  });
+
+  it("offers un-tombstoning on a read-only 墓碑 instead of a dead editor", () => {
+    hook.useParseIntervention.mockReturnValue(
+      controller({
+        selected: { ...baseChunk, enabled: false },
+        chunks: [{ ...baseChunk, enabled: false }, { ...baseChunk, chunk_id: "chunk-2", seq: 1, enabled: false }],
+      }),
+    );
+    render(
+      <ParseInterventionWorkspace
+        scope={{ tenantId: "tenant-a", datasetId: "dataset-a", actorToken: "token-a", docId: "doc-1" }}
+        online
+        onReturn={vi.fn()}
+        onNavigateOperator={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("墓碑 · 只读")).toBeTruthy();
+    expect((screen.getByLabelText("切片正文") as HTMLTextAreaElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "停用此切片" })).toBeNull();
+    expect(screen.getByRole("button", { name: "启用此切片" })).toBeTruthy();
+    const enable = screen.getByRole("button", { name: "启用此切片" }) as HTMLButtonElement;
+    expect(enable.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Revision 历史" }));
+    expect(screen.getByText("切片 Revision 历史 · chunk-1")).toBeTruthy();
+  });
+
+  it("keeps the lifecycle toggle a named real button with an icon in both states and confirms before writing", () => {
+    const scope = { tenantId: "tenant-a", datasetId: "dataset-a", actorToken: "token-a", docId: "doc-1" };
+    const enabled = controller({ reason: "修正 OCR" });
+    hook.useParseIntervention.mockReturnValue(enabled);
+    render(
+      <ParseInterventionWorkspace scope={scope} online onReturn={vi.fn()} onNavigateOperator={vi.fn()} />,
+    );
+    const disable = screen.getByRole("button", { name: "停用此切片" }) as HTMLButtonElement;
+    expect(disable.tagName).toBe("BUTTON");
+    expect(disable.disabled).toBe(false);
+    expect(disable.querySelector("svg")).not.toBeNull();
+    expect(disable.querySelector(".t-button__text")?.textContent).toBe("停用此切片");
+    fireEvent.click(disable);
+    expect(screen.getByText(/停用会写入只读墓碑并新建一条 Revision/)).toBeTruthy();
+    const confirmDisable = screen.getAllByRole("button", { name: "停用此切片" });
+    fireEvent.click(confirmDisable[confirmDisable.length - 1] as HTMLButtonElement);
+    expect(enabled.setEnabled).toHaveBeenCalledWith(false);
+    cleanup();
+
+    const tomb = controller({
+      reason: "误删恢复",
+      selected: { ...baseChunk, enabled: false },
+      chunks: [{ ...baseChunk, enabled: false }],
+    });
+    hook.useParseIntervention.mockReturnValue(tomb);
+    render(
+      <ParseInterventionWorkspace scope={scope} online onReturn={vi.fn()} onNavigateOperator={vi.fn()} />,
+    );
+    const restore = screen.getByRole("button", { name: "启用此切片" }) as HTMLButtonElement;
+    expect(restore.tagName).toBe("BUTTON");
+    expect(restore.querySelector("svg")).not.toBeNull();
+    expect(restore.querySelector(".t-button__text")?.textContent).toBe("启用此切片");
+    fireEvent.click(restore);
+    expect(screen.getByText(/启用会从墓碑恢复该切片/)).toBeTruthy();
+    const confirmEnable = screen.getAllByRole("button", { name: "启用此切片" });
+    fireEvent.click(confirmEnable[confirmEnable.length - 1] as HTMLButtonElement);
+    expect(tomb.setEnabled).toHaveBeenCalledWith(true);
   });
 
   it("uses honest one-pane tabs on a 375px viewport", () => {
