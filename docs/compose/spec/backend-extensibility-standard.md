@@ -3,7 +3,7 @@ feature: backend-extensibility-standard
 status: delivered
 updated: 2026-09-22
 branch: main
-commits: —
+commits: 9213c72, 4d842e0（§3.1 增补"字节不变不等于生效"这条判据）
 ---
 
 # 后端扩展轴改造规范（"每个部分都可扩展"到底指什么）

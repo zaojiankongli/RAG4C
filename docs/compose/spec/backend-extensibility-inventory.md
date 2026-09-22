@@ -3,7 +3,7 @@ feature: backend-extensibility-inventory
 status: delivered
 updated: 2026-09-22
 branch: main
-commits: —
+commits: 1d2e2e6, a50c697, b93e50d, fa32684, b532304, 4cdd051, 4d842e0
 ---
 
 # 后端扩展轴清单（"每个部分"的可核对版本）

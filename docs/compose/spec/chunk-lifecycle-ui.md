@@ -1,9 +1,9 @@
 ---
 feature: chunk-lifecycle-ui
-status: planned
+status: delivered
 updated: 2026-09-22
 branch: main
-commits: —
+commits: 546531b, ca9fdab, 78ab9ed（U1–U6 全部由这三条承担；Report 段读数为 2026-09-22 实跑）
 ---
 
 # 切片 S-CL-UI：把切片生命周期露出来，并把答案接回切片
@@ -92,12 +92,36 @@ Document Revision / Projection Fence）、墓碑只读、orphan draft 冲突恢�
 
 ## Tasks
 
-- [ ] U1: API 客户端四个函数 + `types/rag.ts` 字段 —— acceptance: 定向 vitest 断言 URL、method、body 形状与鉴权头（covers: S2.1）
-- [ ] U2: hook 状态层 setEnabled / revisions / revertTo —— acceptance: 竞态与 409 路径沿用既有测试语义；墓碑→启用后 `readOnly` 转假（covers: S2.2; depends: U1）
-- [ ] U3: 三个面板改造 + 两条过期 Alert 删除 —— acceptance: 源级守卫断言工作区不再出现「没有切片 Revision 历史接口」；a11y/44px 契约测试绿（covers: S2.3; depends: U2）
-- [ ] U4: `PageKey` + 侧栏入口 + 老深链别名 —— acceptance: hash/history 双模式解析与前进后退测试（covers: S2.4; depends: U2）
-- [ ] U5: 答案→切片深链（证据面板 + `stale` 徽标）—— acceptance: 点击后工作区选中该 chunk（covers: S2.4; depends: U4）
-- [ ] U6: 门禁 —— acceptance: `tsc --noEmit`、`npm run check:contract`、`eslint`、定向 vitest（parse-intervention / answer-evidence / run 路由 / theme 契约）实跑读数写入 Report（depends: U3; U5）
+- [x] U1: API 客户端四个函数 + `types/rag.ts` 字段 —— acceptance: 定向 vitest 断言 URL、method、body 形状与鉴权头（covers: S2.1）
+- [x] U2: hook 状态层 setEnabled / revisions / revertTo —— acceptance: 竞态与 409 路径沿用既有测试语义；墓碑→启用后 `readOnly` 转假（covers: S2.2; depends: U1）
+- [x] U3: 三个面板改造 + 两条过期 Alert 删除 —— acceptance: 源级守卫断言工作区不再出现「没有切片 Revision 历史接口」；a11y/44px 契约测试绿（covers: S2.3; depends: U2）
+- [x] U4: `PageKey` + 侧栏入口 + 老深链别名 —— acceptance: hash/history 双模式解析与前进后退测试（covers: S2.4; depends: U2）
+- [x] U5: 答案→切片深链（证据面板 + `stale` 徽标）—— acceptance: 点击后工作区选中该 chunk（covers: S2.4; depends: U4）
+- [x] U6: 门禁 —— acceptance: `tsc --noEmit`、`npm run check:contract`、`eslint`、定向 vitest（parse-intervention / answer-evidence / run 路由 / theme 契约）实跑读数写入 Report（depends: U3; U5）
+
+## Report（2026-09-22 实跑读数，逐条对应上面的 acceptance）
+
+| 项 | 承担它的测试 | 实跑 |
+|----|--------------|------|
+| U1 | `src/parse-intervention/api/parseInterventionApi.test.ts`（6 条：Bearer+租户头、分页/搜索参数、CAS PATCH 带 reason、无 text 的 enabled 切换、scoped revisions、按目标版本 revert 的 POST） | 定向套件内通过 |
+| U2 | `hooks/useParseIntervention.test.tsx`（13 条，含 409→orphan draft、missing 冲突与选择无关、tombstone 冲突只许复制/丢弃）、`ParseInterventionWorkspace.test.tsx`「墓碑上提供恢复启用而不是死编辑器」 | 通过 |
+| U3 | `chunkLifecycle.guards.test.ts`（`OBSOLETE` 含「当前 API 不持久化修改原因」「当前没有切片 Revision 历史接口」两条过期文案不得再出现）、`parseIntervention.css.test.ts`（三主题/44px/reduced-motion 契约） | 通过 |
+| U4 | `src/run/appRoute.chunkWorkbench.test.ts` + `appRoute.test.ts`（hash/history 双模式、前进后退形状）、`src/documents/documentParseRoute.scope.test.ts`（老别名只由文档页认领，避免第二个工作区） | 通过 |
+| U5 | `src/answer-evidence/components/AnswerEvidencePanel.test.tsx`、`hooks/deepLinkSelection.test.tsx`（5 条：深链切片落在首页之外时经详情接口选中，不再静默选第一个） | 通过 |
+| U6 | 见下 | 全绿 |
+
+U6 门禁实跑（2026-09-22，cwd=`frontend/`）：
+
+- `npx tsc --noEmit` → exit 0，0 error
+- `npx eslint .` → exit 0，**0 error / 95 warning**（warning 全是 `react-hooks/exhaustive-deps`
+  与 `react-refresh/only-export-components`，非本轮引入，未处理）
+- `npm run check:contract` → exit 0（重生成 `openapi.ts` 后 `git diff --exit-code` 干净）
+- `npx vitest run src/parse-intervention src/run src/documents src/theme` →
+  **38 test files / 235 tests passed**，46.7s
+
+本轮在这套 UI 之上另修两处评审查出的缺陷（详见 `docs/compose/智能体交接审查.md` §9）：
+作用域切换后写权限被永久锁死（`mutating` 未随 scope 重置）、深链选中把页外 head 前插导致
+`loadMore` 偏移错位。两条都有常驻测试。
 
 ## Workspace
 
