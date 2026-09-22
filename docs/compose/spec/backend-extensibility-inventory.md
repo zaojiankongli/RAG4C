@@ -28,6 +28,7 @@ retrieval 12/4606、models 3/9344、config 2/1473；字面量等值分派点 247
 | **文档类型 ↔ 能力（本轮新增）** | 声明式规格表 `DocTypeSpec`，五个消费点实时查表 | `tests/test_doc_type_registry.py`（18 条，含 5 路反向验证 + 宿主逐字节不变） |
 | **provider 三家族（本轮新增守卫）** | 已是 `ProviderRegistry`，本轮补判据 | `tests/test_provider_registry_extensibility.py`（33 条，15 个宿主文件逐字节不变） |
 | **来源连接器 kind（本轮新增）** | 注册表持有 `config_model` + `preflight`，HTTP 层按 kind 派发 | `tests/test_source_kind_registry.py`（10 条，含 4 路反向验证） |
+| **运行事件类型分区（本轮新增）** | 声明式规格表 `RunEventTypeSpec`，两个 reducer 查表派发 | `tests/test_run_event_taxonomy_registry.py`（45 条，含 5 路反向验证 + import 期一致性栅栏） |
 
 `core/embedding.py` / `core/llm.py` / `core/reranker.py` 经核实**本就已经到位**：
 全部经 `ProviderRegistry`，`server/` 与 `config/` 里没有任何残留 `if provider ==`；
@@ -40,7 +41,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 | # | 轴 | 站点（VERIFIED file:line 摘要） | 加一个实现要改几处 N | 迁移? | 契约? | 建议模式 |
 |---|-----|--------------------------------|--------------------|-------|-------|----------|
 | 1 | ~~文档类型 ↔ 能力~~ **本轮已完成**，见 A 表与 §D 2/3 | — | 0（注册即全认） | 否 | `doc_type?: string`，非枚举 | 已落 `indexing/doc_types.py` |
-| 2 | 运行事件 `event_type` 的行为分区 | `run_events.py:50-61`、`run_registry.py:1172,1184-1201,1203,1216-1236,1238,1247,1258-1262`、`run_ops.py:1163,1173,1185-1189,1213,1224-1228,1253` | 8（同一套 terminal 集合被手写 3 遍） | 否 | `frontend/src/types/rag.ts:47-62` 手工镜像 `Literal` | 声明式规格表（family/phase/effect） |
+| 2 | ~~运行事件 `event_type` 的行为分区~~ **本轮已完成**，见 A 表与 §F | — | 0（一行声明 family/phase/rollup/effects） | 否 | `frontend/src/types/rag.ts:47-62` 手工镜像 `Literal` | 已落 `core/run_event_taxonomy.py` |
 | 3 | 投影目标 × 操作（`target_store` × `operation`） | `projection_handlers.py:36-40,125-132,208,460`、`index_worker.py:110-121,153,161,184,228-231,253,257`、`state_machine.py:531-542`、`document_deletion.py:43,1068,1392,1474,1491-1750,1728`、`knowledge_consistency_api.py:60-77` | 7–9（新目标）/ 4–5（新操作） | 否（无 CHECK） | 一致性响应里出现，前端仅当展示串 | Strategy+Registry，键 `store:operation`；**碰投影栅栏，风险最高** |
 | 4 | ~~来源连接器 `SourceKind`~~ **本轮已完成**，见 A 表与 §D 6 | — | 0（注册 + 挂契约两处声明） | 否 | `openapi.ts:7103,7142,7166` | 已落 `SourcePlugin.config_model/preflight` + `attach_source_contract` |
 | 5 | 审批 `action_type`（控制面校验） | `enterprise_approval_control.py:236,246,269-286,316-355,2742` | 5 + 2 处 ORM CHECK + 1 迁移 | **是**（CHECK 阶梯 `catalog_schema.py:2740-2787` 记录了 6 次加宽） | openapi 5 hits | 声明式字段要求表；**必须保留独立 `if`（publish/rollback ∪ waiver 有重叠）** |
@@ -182,3 +183,32 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 
 同轮还订正两处文字：provider 守卫的宿主数是 **15** 不是 14（提交信息里的数字是错的，
 代码与测试都对）；`FOLDER_IMPORT_EXTENSIONS` 里 `.html` 缺席是**正确**的，不是漏洞。
+
+## G. 轴 #2 落地时评审查出的两件事（以及一条测量教训）
+
+1. **注册表内核不适合放在每事件路径上**（实现 agent 自己没发现，评审量出来的）。
+   复用 `ProviderRegistry` 让一次 `event_type` 查表要走 `names()`（排一次序）+
+   `create()`（strip/lower 后再排一次序）。我隔离量的查表单价：
+   改造前 frozenset **0.057µs** → 走内核 **1.400µs（24.4×）** → 现在 taxonomy 自持一份
+   精确拼写索引 **0.090µs（1.56×）**。`ProviderRegistry.create` 也顺手改成只在拒绝时
+   才构造 available 清单。教训写进标准：**"统一扩展点内核"不是免费的方向**，热路径
+   要按形状查表，内核为人体工程学费的归一化在每事件路径上就是税。
+2. **源码扫描只拦"已声明的名字"= 假守卫**。一条
+   `if event_type == "node.timed_out":`（用一个还没声明的拼写）能完全躲过原扫描。
+   现在按形状拦：reducer 源码里 `family.name` 字面量一律不许出现（变异验：加进去 6 条用例红）。
+3. **性能预算用例在并发负载下会撒谎**。`test_registry_sink_production_offer_hot_path_budget`
+   阈值 1.0ms，我同时跑三个子 agent 时读到 **3.008ms（红）**，隔离重跑 3 次
+   **1.47 / 1.98 / 1.59s 全过**。所以这类用例的读数只在机器空闲时可信 —— 报红之前
+   先确认没有别的进程在跑，别按一次污染读数去改代码。
+
+**仍未收的同型镜像副本**（评审点名，本轮刻意不做）：`server/app.py:1430-1446` 的
+`_SseRunEventSink` 又写了一遍 node-terminal / retry-terminal 两个集合（它是第三个 reducer，
+转过去是对的）；`_TOPOLOGY_GROUPS` / `_TOPOLOGY_EDGE_KINDS` 与 `TopologyGroup` /
+`TopologyEdgeKind` 是同一 defect class 的另一组值。
+
+**TS 侧的契约边界要说清**：`frontend/src/api/runEventValidation.ts:3-18` 抄了全部 15 个
+事件类型，`frontend/src/api/runs.ts:40-45` 抄了 4 个 executor，
+`frontend/src/run/serverRunProjection.ts:97-98,279-280` 与 `runProjection.ts:366-368` 也各有
+一份。但 `BackendRunEventType` 是从 OpenAPI 生成的，TS 只校验**子集**合法性 ——
+也就是说 Python 侧加一种事件类型，前端不会变红，只会静默不认它。这条决定了
+"加事件类型"这件事的跨栈成本仍然不是 0，只是从 8 处分支降到 2 处声明。
