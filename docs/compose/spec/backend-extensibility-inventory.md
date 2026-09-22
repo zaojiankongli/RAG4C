@@ -106,7 +106,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 > | 4 approver_kind 两套策略 | **真实但降级**：两条 CHECK 把 `approver_kind` 与 `approver_ref=account_id/group_id` 钉死，所以"一行坏数据让人没资格"不可触达；剩纵深防御 + 一致性债务（详见行内，含我本轮一个被证伪的假设） |
 > | 5 `RagExecutor` 漏值 | **已修**：`Literal[tuple(RAG_EXECUTORS)]` 从单一声明集派生 |
 > | 6 `_ALLOWED_KINDS` + SourceKind else fail-open | **已修**（`4cdd051`，行内已记） |
-> | 7 `info` 严重度是死的 | **仍在**：`core/enterprise_notification_center.py:24` 仍收 `{info,warning,critical}` |
+> | 7 `info` 严重度是死的 | **普查这条是错的，照它动手会删掉一个在用的功能**（本轮读到源码）：`core/enterprise_notification_materializer.py:52` 是 `_SEVERITY_RANK = {"info": 0, "warning": 1, "critical": 2}`，`info` 是**最弱档 = 订阅一切**；两条 CHECK（`ck_tenant_notifications_severity`、`ck_notification_subscriptions_severity`，`orm.py:4101,4191` + 迁移 `0032:223,290`）都把 `info` 存进库。生产者侧确实只铸 `warning`/`critical`（`alerts.py:79` `_ALERT_SEVERITIES`；审批在 `materializer.py:751` 硬编码 `"warning"`），但那是**刻意的真子集**而不是死值。真正缺的两样：① 同一份词表散在 5 处无人对账；② `materializer.py:264` 裸取 `_SEVERITY_RANK[severity]`（只有 :262 守 `minimum_severity`），词表一漂移就是 KeyError 而不是可操作错误。→ 已补对账栅栏，见 §AA |
 > | 8 mineru 两个分派器 | **定位到了，而且已修**（见 §Z）。我先前写「路径不存在、不要按这条排活」**是我自己搜错了目录**：普查记的是短文件名，实际在 `indexing/parsers/` 下。同一批里 §D-12 那条也是这样找回来的 |
 > | 9 `gate_state` 别名 | **仍在，且普查低估**：是 5 处不是 2 处（3 处转换含筛选入参那一处，2 处并列两种拼写），详见行内 |
 > | 10 `state_mode` | **词表那一半已收口（§W）**：实际是 2 处词表 + **五**处成员判断，不止普查记的那几处；`server/source_dispatcher.py:238` 的硬编码仍是**行为变更**，留在片外等裁定 |
@@ -1035,4 +1035,48 @@ MM3 smoke 工厂退回不传 mode → mode 那条红；MM4 新加一个模块级
 **覆盖面的诚实边界**：`tests/` 里原本**没有任何**测试引用 `create_vision_engine` /
 `_mineru_factory` / `register_builtin_plugins`（grep 零命中），所以生产装配路径在本次之前是
 零覆盖的，这比"两个分派器形状不好"更值得记。新用例是第一次钉住它。
+
+## AA. §D-7 落地：通知严重度词表的对账栅栏（本轮，无迁移）
+
+**先记结论修正**：普查原话「`info` 严重度是死的」**不成立**，细节与证据在 §D-7 行内。
+这一条是本轮唯一一处「照清单动手会造成生产事故」的候选 —— 删 `info` 会让所有把订阅档
+设在"只收警告以上"之外的用户突然少收一类通知，而这功能一直好用。
+
+**词表实际散在 5 处**（普查只记了 1 处）：
+
+| 处 | 位置 | 内容 |
+|---|---|---|
+| 消费端接受集 | `core/enterprise_notification_center.py:24` | `_ALLOWED_SEVERITIES = {info, warning, critical}` |
+| 排序表 | `core/enterprise_notification_materializer.py:52` | `_SEVERITY_RANK = {info:0, warning:1, critical:2}` |
+| 生产端（质量告警） | `core/enterprise_release_quality_alerts.py:79` | `_ALERT_SEVERITIES = {warning, critical}` |
+| 存储 CHECK ×2 | `models/orm.py:4101,4191` / 迁移 `0032:223,290` | `ck_tenant_notifications_severity`、`ck_notification_subscriptions_severity` |
+
+栅栏文件 `tests/test_notification_severity_vocabulary.py`（5 个用例）钉四件事：接受集 ==
+排序表的键；CHECK 的两份 IN 列表与声明逐字相同（ORM 与迁移各查一遍，用约束名锚定而不是
+形状锚定 —— 第一版按 `severity IN (` 匹配抓到的是质量观测表那套 `{healthy,…}` 词汇，
+假绿）；生产端是**刻意真子集**（`<` 而非 `<=`）；`info` 是最弱档且严格低于 `warning`。
+
+**反向验证 5/5 转红**（预检基线 `5 passed in 2.38s`，跑完 `RESTORE-CHECK` 仍 `5 passed`）：
+
+| 变异 | 红在哪 |
+|---|---|
+| BM-1 接受集单加 `notice` | `test_the_accepted_set_is_the_ranked_set` + 两条 CHECK 用例（3 failed）|
+| BM-2 生产端铸 `notice` | `test_the_producer_side_is_a_deliberate_subset_not_an_accidental_one` |
+| BM-3 按旧 §D-7 删 `info` | `test_the_accepted_set_is_the_ranked_set` + `test_info_is_a_live_tier_rather_than_a_dead_value` |
+| BM-4 档位排序打乱 | `test_info_is_a_live_tier_rather_than_a_dead_value` |
+| BM-5 生产端补上 `info`（真子集退化成相等） | `test_the_producer_side_is_a_deliberate_subset_not_an_accidental_one` |
+
+**刻意没改的一处，以及为什么**：`materializer.py:264` 裸取 `_SEVERITY_RANK[severity]`，
+只有 :262 守了 `row.minimum_severity`。这个不对称**是有道理的**，不是漏：订阅档位是**用户
+数据**，认不出就"这一条别推"（:262 return False）；事件严重度是**我们自己铸的**，认不出
+说明库与声明已经矛盾，`return False` 会把一次完整性故障压成静默丢投递。而补一个
+`raise NotificationMaterializationUnavailable` 的运行时守卫，守的正是上面那条栅栏禁止进
+主干的状态 —— 与本仓 gate_state 一节的处理一致：漂移在评审期由栅栏拦，不在生产路径上
+为不可能状态加分支。要加也就是一行，留给后续独立裁定（交接 §9 已另立条目）。
+
+**我踩到又自己捡回来的**：第一版变异脚本给子进程塞了自造的 `env`（`SYSTEMROOT` 拼错），
+每个 pytest 都在 `_overlapped` 导入处 `OSError 10106` 崩掉 —— 退出码非零，于是 5 个变异
+"全部守住"，读数码起来完全漂亮，其实一条断言都没跑到。**教训：反向验证的 `caught N/N`
+必须配一次绿基线预检，且要报出红的**用例名**；只有退出码的绿/红不叫证据。** 第二版改成
+继承 `os.environ` + 预检不绿就作废本轮读数，才有了上面那张表。
 
