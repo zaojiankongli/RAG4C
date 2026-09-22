@@ -53,7 +53,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 | 10 | 身份 provider `oidc/saml` | `enterprise_identity_control.py:972-1008`，消费 `:1030,1040,1086,1269` | 3 | **是**（`orm.py:1220` + 字段组合 CHECK `0021:171`） | openapi 2 hits | Adapter（每 provider 一份字段形状）；**登录凭据信任形状，须 fail closed** |
 | 11 | ~~身份吊销 `kind`~~ **本轮已完成**，见 §J | — | 0（注册即全认；栅栏由注册期拒绝而非约定） | 否 | 否 | 已落 `core/identity_revocations.py` |
 | 12 | 自动化 trigger/condition/action 码 | `enterprise_automation_workflows_api.py:225,233,241,556-563,568-598`；`service.py:68,2107-2291,2322,2307` | 3–4 | **是**（`orm.py:5588`） | openapi `:6371,6415` | `TRIGGER_ADAPTER_ORDER` 改为从注册表推导 |
-| 13 | 文档排序 `sort` / 游标耦合 | `core/catalog.py:1304-1312,1486,1628-1639` | 3 | 否 | openapi 枚举 `:8327,8330` + 前端字面量 | `SortSpec(sql_columns, keyset_capable)`，消掉 `:1639` 特例 |
+| 13 | ~~文档排序 `sort` / 游标耦合~~ **本轮已完成**，见 §L | — | 0（新增一个排序一行声明；**第二个 keyset 排序被注册期拒绝**） | 否 | openapi 枚举未动（加排序仍需同步枚举，见 §L 的诚实边界） | 已落 `core/document_sorts.py` |
 | 14 | ~~PDF 分类 → 引擎路由 `pdf_type`~~ **本轮已完成**，见 §K | — | 0（加一类分类结果一行声明） | 否 | `parser_meta` 自由串（新增 `route_reason`） | 已落 `indexing/pdf_type_routing.py` |
 | 15 | ~~就绪探测的方言证明~~ **本轮已完成**，见 §I | — | 0（注册即全认） | 否 | 否 | 已落 `core/read_only_dialects.py`；`knowledge_consistency_api.py:1180` 经核是**写事务栅栏**不是只读证明，刻意没并进来 |
 | 16 | 审计导出格式 | `enterprise_compliance_api.py:78`；`compliance.py:1087,1166,1225,1376-1379` | 4 | 否 | 否 | Strategy+Registry（可能性低，排最后） |
@@ -339,7 +339,42 @@ ag4c-verify`）：8 个变异各自 turn 红 ——
   = **28 passed in 246.91s**；`ruff check .` 全仓通过。
 - 反向验证 5 个变异全部转红：宿主退回分支梯（3 红）、未声明分类改成走便宜引擎（2 红）、
   注册期不校验（6 红）、允许拼错的引擎标签（2 红）、去掉"不认识的引擎标签要报错"（1 红）。
-  脚本与输出在仓外 `%TEMP%ag4c-verify`。
+  脚本与输出在仓外 `%TEMP%
+ag4c-verify`。
 
 **没假装做到的部分**：加一个**引擎**仍然要动两处（`ENGINE_NAMES` 一项 + `parse` 里的分发），
 因为引擎是真解析器对象而不是标签；这条轴免改的是"新增一类分类结果"。
+
+## L. 轴 #13（文档目录排序）落地记录，含一次"探针选错方向"的自纠
+
+原先关于排序的事实散在**四处**，必须彼此一致：一个接受名字的 frozenset、一张建 ORDER BY
+表达式的梯、一张挑方向的梯（两个 `asc` 加一个"其余按 desc"的 `else`）、以及游标路径里两处
+写死的 `"updated_at_desc"`。真正会**静默出错**的是挑方向那张梯：新加一个*升序*排序若忘了改它，
+它会掉进 `else` 反着翻页 —— 返回的还是一页看着完全正常的文档，只是 next_cursor 与翻页语义
+已经坏了，没有任何地方报错。
+
+`core/document_sorts.py` 的 `DocumentSortSpec(sort, direction, expression, keyset_cursor)`
+把这四处收成一行声明。**keyset 游标刻意保持单一实现者**：谓词写的是 `<`（降序），编码值取自
+`updated_at or created_at` 的 coalesce，所以第二个 `keyset_cursor=True` 不是"暂时没做"而是
+**会翻错页**，于是注册期直接拒绝，并说明要加第二个得同时改谓词与取值两处。这跟轴 #11 的
+栅栏同源：**能把"做不到的事"变成报错，就不要让它变成看起来成功的错答案。**
+
+门禁读数（本机 `.venv`，`PYTHONPATH=.`）：
+
+- 新守卫 `tests/test_document_sort_registry.py` **12 条 / 5.18s**。判据是行为性的：注册
+  **两个新名字**共用同一表达式、只有声明的 direction 不同，翻页结果必须相反；
+  同时 `core/catalog.py` **逐字节不变**。另有真游标往返（limit=1 拿 next_cursor 再取下一页，
+  断言第二页不同）与"格式正确但排序没声明游标能力 → 照样拒"。
+- 行为等价（未改任何既有断言）：`list_documents_page` 的全部六个消费方套件
+  `test_document_catalog_api`(19) + `test_document_delete_api_v2` + `test_document_management_settings`
+  + `test_document_source_identity` + `test_documents_folder_ingest` + `test_phase7_usage_accounting`
+  = **44 passed / 30.98s** 与 **34 passed / 125.91s**；`ruff check .` 全仓通过。
+- 反向验证 5 个变异全部转红：方向退回按名字硬编码（2 红）、允许第二个 keyset 排序（2 红）、
+  游标解码退回比字面量（1 红，宿主守卫）、表达式梯退回硬编码（2 红）、去掉游标能力闸门（1 红）。
+- **第一版探针选错了方向**：我原本注册的是 `created_at_desc`（降序），而旧写法"其余按 desc"
+  恰好也对，于是"方向退回硬编码"这个变异**全绿**。换成"一个新升序 + 一个新降序共用表达式、
+  断言两者相反"才把它抓住。与 §J 同一条教训：**探针要挑那个只有被改机制能答对的取值**。
+
+**没做到的部分（诚实边界）**：对外可见的排序枚举仍在 OpenAPI 契约与前端字面量里
+（`openapi.ts:8327,8330` 一类），所以"新增一个排序"仍然是**后端 0 处宿主分支 + 契约 1 处枚举**。
+这条轴消掉的是会静默翻错页的那部分，不是跨栈成本为 0。

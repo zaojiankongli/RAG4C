@@ -45,6 +45,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+from core.document_sorts import (
+    DocumentSortSpec,
+    register_document_sort,
+    resolve_document_sort,
+)
 from core.observability import get_logger
 
 _logger = get_logger(__name__)
@@ -1056,7 +1061,6 @@ def reset_document(doc_id: str, detail: str = "重置（重索引）") -> dict[s
 
 
 _DOCUMENT_PROCESSING_STATUSES = ("waiting", "parsing", "splitting", "indexing")
-_DOCUMENT_SORTS = frozenset({"updated_at_desc", "created_at_asc", "name_asc"})
 _DOCUMENT_CATALOG_MAX_OFFSET = 1_000_000
 _DOCUMENT_CATALOG_TAG_FACET_SCAN_LIMIT = 1_000
 _DOCUMENT_CURSOR_PREFIX = "dc1_"
@@ -1294,22 +1298,48 @@ def _document_catalog_updated_sort_expression(table: Any, available: set[str]) -
     raise DocumentCatalogCapabilityError("updated_at_desc requires updated_at or created_at")
 
 
+def _sort_updated_at(table: Any, available: set[str]) -> Any:
+    return _document_catalog_updated_sort_expression(table, available)
+
+
+def _sort_created_at(table: Any, available: set[str]) -> Any:
+    _document_catalog_require_columns(available, "created_at")
+    return table.c.created_at
+
+
+def _sort_name(table: Any, available: set[str]) -> Any:
+    from sqlalchemy import func
+
+    _document_catalog_require_columns(available, "name")
+    return func.lower(table.c.name)
+
+
 def _document_catalog_sort_expression(
     table: Any,
     available: set[str],
     sort: str,
 ) -> Any:
-    from sqlalchemy import func
+    spec = resolve_document_sort(sort)
+    if spec is None:
+        raise ValueError("unsupported document sort")
+    return spec.expression(table, available)
 
-    if sort == "updated_at_desc":
-        return _document_catalog_updated_sort_expression(table, available)
-    if sort == "created_at_asc":
-        _document_catalog_require_columns(available, "created_at")
-        return table.c.created_at
-    if sort == "name_asc":
-        _document_catalog_require_columns(available, "name")
-        return func.lower(table.c.name)
-    raise ValueError("unsupported document sort")
+
+# 三个内建排序各一行声明：名字、方向、表达式，以及"谁能用 keyset 游标"。
+register_document_sort(
+    DocumentSortSpec(
+        sort="updated_at_desc",
+        direction="desc",
+        expression=_sort_updated_at,
+        keyset_cursor=True,
+    )
+)
+register_document_sort(
+    DocumentSortSpec(sort="created_at_asc", direction="asc", expression=_sort_created_at)
+)
+register_document_sort(
+    DocumentSortSpec(sort="name_asc", direction="asc", expression=_sort_name)
+)
 
 
 def _document_catalog_filter_criteria(
@@ -1483,7 +1513,8 @@ def _decode_document_cursor(cursor: str) -> dict[str, Any]:
         raise ValueError("cursor is invalid")
     if payload.get("v") != _DOCUMENT_CURSOR_VERSION:
         raise ValueError("cursor version is unsupported")
-    if payload.get("s") != "updated_at_desc":
+    cursor_spec = resolve_document_sort(payload.get("s"))
+    if cursor_spec is None or not cursor_spec.keyset_cursor:
         raise ValueError("cursor sort is unsupported")
     document_id = payload.get("i")
     query_hash = payload.get("c")
@@ -1554,9 +1585,10 @@ def list_documents_page(
     normalized_sort = _normalized_catalog_value(sort, default="updated_at_desc").casefold()
     if normalized_folder_mode not in {"exact", "subtree"}:
         raise ValueError("folder_mode must be exact or subtree")
-    if normalized_sort not in _DOCUMENT_SORTS:
+    sort_spec = resolve_document_sort(normalized_sort)
+    if sort_spec is None:
         raise ValueError("unsupported document sort")
-    if cursor and normalized_sort != "updated_at_desc":
+    if cursor and not sort_spec.keyset_cursor:
         raise ValueError("cursor is supported only for updated_at_desc")
 
     from sqlalchemy.orm import Session
@@ -1625,9 +1657,8 @@ def list_documents_page(
             .select_from(table)
             .where(*page_criteria)
         )
-        if normalized_sort == "created_at_asc":
-            statement = statement.order_by(sort_expression.asc(), table.c.id.asc())
-        elif normalized_sort == "name_asc":
+        # 方向来自声明，不是分支顺序：新增加序排序若忘了改这里，旧写法会静默按降序翻页。
+        if sort_spec.direction == "asc":
             statement = statement.order_by(sort_expression.asc(), table.c.id.asc())
         else:
             statement = statement.order_by(sort_expression.desc(), table.c.id.desc())
@@ -1636,7 +1667,7 @@ def list_documents_page(
     has_next = len(raw_rows) > limit
     rows = raw_rows[:limit]
     next_cursor = None
-    if has_next and normalized_sort == "updated_at_desc" and rows:
+    if has_next and sort_spec.keyset_cursor and rows:
         next_cursor = _encode_document_cursor(
             normalized_sort,
             _document_cursor_timestamp(rows[-1]),
