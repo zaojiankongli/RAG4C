@@ -41,16 +41,57 @@ describe("答案↔切片深链落在首页之外", () => {
     expect(api.fetchParseChunkDetail).not.toHaveBeenCalled();
   });
 
-  it("同一切片只补取一次，切换 scope 后允许重新解析", async () => {
-    api.fetchParseChunkDetail.mockResolvedValue(chunk("chunk-173", 4));
-    const { rerender, result } = renderHook(({ docId, chunkId }) => useParseIntervention(
-      { ...scopeA, docId, actorToken: "token-a", tenantId: "tenant-a", datasetId: "dataset-a" },
-      true,
-      document,
-      chunkId,
-    ), { initialProps: { docId: "doc-a", chunkId: "chunk-173" } });
-    await waitFor(() => expect(result.current.selected?.chunk_id).toBe("chunk-173"));
-    act(() => rerender({ docId: "doc-a", chunkId: "chunk-173" }));
+  it("钉住的头部不污染分页 offset，加载更多不会永久跳过一条", async () => {
+    // chunks.length 曾被当作服务端 offset 用：把页外头部塞进数组会让 offset 多 1，
+    // 下一条头部从此不被载入，且 hasMore 永远为真。
+    const seen: number[] = [];
+    api.fetchParseChunkPage.mockImplementation((_scope: unknown, args: { offset: number }) => {
+      seen.push(args.offset);
+      const start = args.offset;
+      return Promise.resolve(
+        page(Array.from({ length: 100 }, (_, i) => chunk(`chunk-${start + i}`)), 250),
+      );
+    });
+    api.fetchParseChunkDetail.mockResolvedValue(chunk("chunk-200", 3));
+    const { result } = renderHook(() => useParseIntervention(scopeA, true, document, "chunk-200"));
+    await waitFor(() => expect(result.current.selected?.chunk_id).toBe("chunk-200"));
+    expect(result.current.chunks).toHaveLength(100);
+
+    await act(async () => { await result.current.loadMore(); });
+    expect(seen).toEqual([0, 100]);
+    expect(result.current.chunks).toHaveLength(200);
+    // 钉住只补取一次，不随分页重复请求
     expect(api.fetchParseChunkDetail).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("冲突恢复不会串到另一个文档", () => {
+  const docScope = (docId: string): ParseScope => ({ ...scopeA, docId });
+
+  it("409 详情在途时换文档：不留跨文档孤稿，也不把写入闸永久卡住", async () => {
+    const pending: { release: ((value: DocumentChunkItem) => void) | null } = { release: null };
+    api.patchParseChunk.mockRejectedValue(Object.assign(new Error("conflict"), { status: 409 }));
+    api.fetchParseChunkDetail.mockReturnValue(
+      new Promise<DocumentChunkItem>((resolve) => { pending.release = resolve; }),
+    );
+    const { rerender, result } = renderHook(
+      ({ docId }: { docId: string }) => useParseIntervention(docScope(docId), true, document),
+      { initialProps: { docId: "doc-a" } },
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => { result.current.setDraft("A 的草稿"); result.current.setReason("要改"); });
+    const inflight = result.current.submit();
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.mutating).toBe(true);
+
+    api.fetchParseChunkPage.mockResolvedValue(page([chunk("b-0", 9)], 1));
+    act(() => rerender({ docId: "doc-b" }));
+    await waitFor(() => expect(result.current.selected?.chunk_id).toBe("b-0"));
+    pending.release?.(chunk("chunk-0", 5));
+    await act(async () => { await inflight; });
+
+    expect(result.current.orphanDraft).toBeNull();
+    expect(result.current.mutating).toBe(false);
+    expect(result.current.draft).toBe("body b-0");
   });
 });

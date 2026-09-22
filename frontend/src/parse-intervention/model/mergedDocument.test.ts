@@ -24,14 +24,25 @@ function head(id: string, overrides: Partial<DocumentChunkItem> = {}): DocumentC
 }
 
 describe("整篇合并视图模型", () => {
-  it("按服务端给定的次序拼接，不按 seq 重排", () => {
+  it("按 (seq, chunkId) 排，排序键与服务端 order_by(chunk_index, id) 同源", () => {
     // 服务端 SQL 已是 order_by(chunk_index, id)；前端再排一次是漂移源
     const merged = buildMergedDocument(
       [head("b", { seq: 5 }), head("a", { seq: 1 }), head("c", { seq: 9 })],
       3,
     );
-    expect(merged.segments.map((s) => s.chunkId)).toEqual(["b", "a", "c"]);
-    expect(merged.bodyText).toBe("text of b\n\ntext of a\n\ntext of c");
+    // 排序键与服务端 order_by(chunk_index, id) 同源：seq 就是 chunk_index。在客户端再排
+    // 一次不是"另起一套次序"，而是因为已载集合可能被钉进一条深链取回的头部（逻辑上在中
+    // 间、物理上在末尾），信任数组顺序会把整篇读序打乱 —— 评审实测到过。
+    expect(merged.segments.map((s) => s.chunkId)).toEqual(["a", "b", "c"]);
+    expect(merged.bodyText).toBe("text of a\n\ntext of b\n\ntext of c");
+  });
+
+  it("seq 相同时按 chunkId 定序，与 SQL 的 tie-break 一致", () => {
+    const merged = buildMergedDocument(
+      [head("chunk-z", { seq: 4 }), head("chunk-a", { seq: 4 })],
+      2,
+    );
+    expect(merged.segments.map((s) => s.chunkId)).toEqual(["chunk-a", "chunk-z"]);
   });
 
   it("父块一律排除，父子同拼会重复正文", () => {

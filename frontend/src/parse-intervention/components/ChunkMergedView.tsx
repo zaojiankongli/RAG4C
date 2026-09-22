@@ -13,7 +13,9 @@ import { buildMergedDocument } from "../model/mergedDocument";
  */
 export default function ChunkMergedView(p: {
   chunks: DocumentChunkItem[];
-  total: number;
+  /** 服务端报的总数。带搜索词时它是"命中数"而不是文档切片总数，调用方须传 null。 */
+  total: number | null;
+  query?: string;
   selectedId: string;
   hasMore: boolean;
   loadingMore: boolean;
@@ -48,7 +50,9 @@ export default function ChunkMergedView(p: {
           </Button>
         </div>
       ) : null}
-      <div className="parse-chunk-scroll">
+      {/* 可滚动区域必须能被键盘聚焦到，否则只用键盘的操作员根本滚不动这篇长文
+          （CSS 给了 overflow:auto，鼠标能滚、Tab 进不来）。 */}
+      <div className="parse-chunk-scroll" tabIndex={0} role="region" aria-label="合并正文，可用方向键滚动">
         {merged.segments.length ? (
           merged.segments.map((segment) =>
             segment.kind === "tombstone" ? (
@@ -90,11 +94,15 @@ export default function ChunkMergedView(p: {
             ),
           )
         ) : (
-          <Alert theme="warning" title="这篇文档还没有可合并的切片" message="完成解析或调整筛选条件后再看。" />
+          <Alert
+            theme="warning"
+            title="这篇文档还没有可合并的切片"
+            message="服务端没有返回任何非父块头部；先确认文档已完成解析，或清空搜索词后再看。"
+          />
         )}
       </div>
-      {merged.excludedParentCount ? (
-        <div className="parse-chunk-row-facts">{`已排除 ${merged.excludedParentCount} 个父块：父子同拼会重复正文。`}</div>
+      {p.query ? (
+        <div className="parse-chunk-row-facts">{`当前处在服务端搜索「${p.query}」的命中结果里：列表给出的总数是命中数而不是全篇切片数，所以合并视图不宣称整篇。要看整篇请先清空搜索。`}</div>
       ) : null}
     </section>
   );

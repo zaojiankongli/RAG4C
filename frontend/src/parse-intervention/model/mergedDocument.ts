@@ -67,7 +67,12 @@ export function buildMergedDocument(
   const parents = items.filter((item) => item.chunk_role === PARENT_ROLE).length;
   const segments = items
     .filter((item) => item.chunk_role !== PARENT_ROLE)
-    .map(toSegment);
+    .map(toSegment)
+    // 按 (seq, chunkId) 重排不是"另起一套次序"：seq 就是服务端的 chunk_index，
+    // 排序键与 SQL 的 order_by(chunk_index, id) 同源。之所以要在客户端再排一次，
+    // 是因为已载集合可能被钉进一条深链取回的头部（它逻辑上在中间，物理上在末尾）——
+    // 直接信任数组顺序会把整篇读序打乱。
+    .sort((a, b) => a.seq - b.seq || (a.chunkId < b.chunkId ? -1 : a.chunkId > b.chunkId ? 1 : 0));
   const bodies = segments.filter((segment) => segment.kind === "body");
   const bodyText = bodies.map((segment) => segment.text).join("\n\n");
   const reportedTotal = total === null || !Number.isFinite(total) ? null : Math.max(0, Number(total));

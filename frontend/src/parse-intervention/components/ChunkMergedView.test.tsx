@@ -81,7 +81,7 @@ describe("切片列表与整篇合并视图的切换", () => {
     const region = await waitFor(() => screen.getByRole("region", { name: "整篇合并视图" }));
     expect(region.textContent).toContain("此处已被人工停用");
     expect(region.textContent).not.toContain("正文 p9");
-    expect(region.textContent).toContain("已排除 1 个父块");
+    expect(region.textContent).toContain("2 段");
     expect(region.textContent).toContain("其中 1 处已停用");
   });
 
@@ -110,5 +110,33 @@ describe("切片列表与整篇合并视图的切换", () => {
     const region = await waitFor(() => screen.getByRole("region", { name: "整篇合并视图" }));
     expect(region.textContent).toContain("整篇 2 个切片已全部载入");
     expect(region.textContent).not.toContain("仅包含");
+  });
+
+  it("合并正文这块可滚动区域键盘可达", async () => {
+    const user = userEvent.setup();
+    renderPane();
+    await user.click(screen.getByRole("button", { name: "整篇合并" }));
+    const body = await waitFor(() =>
+      screen.getByRole("region", { name: "合并正文，可用方向键滚动" }),
+    );
+    expect(body).toHaveProperty("tabIndex", 0);
+    // 真按 Tab 走一遍：只在 DOM 上写 tabIndex 不算键盘可达
+    for (let i = 0; i < 12; i += 1) {
+      await user.tab();
+      if (document.activeElement === body) break;
+    }
+    expect(document.activeElement).toBe(body);
+  });
+
+  it("处在服务端搜索结果里时，合并视图不拿命中数当全篇总数", async () => {
+    const user = userEvent.setup();
+    // 带搜索词时后端返回的 total 是"命中数"（count 也带 where 条件），
+    // 若拿它跟已载条数比，2 条命中就会谎称 250 条的文档已经载入完整。
+    renderPane({ query: "policy" });
+    await user.click(screen.getByRole("button", { name: "整篇合并" }));
+    const region = await waitFor(() => screen.getByRole("region", { name: "整篇合并视图" }));
+    expect(region.textContent).not.toContain("已全部载入");
+    expect(region.textContent).toContain("总数未知");
+    expect(region.textContent).toContain("命中数而不是全篇切片数");
   });
 });
