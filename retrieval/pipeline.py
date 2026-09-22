@@ -1,7 +1,14 @@
 """检索管线：门控 -> 改写 -> 路由 -> 嵌入 -> 混合检索 -> [查询端增强] ->
 来源多样性 -> [图谱分支] -> 重排序 -> [检索端增强] -> 裁剪。
 
-编排顺序（任务书 5.x）：
+**编排的真相在 `retrieval/stages.py` 的注册表里，不在下面这份编号里。**
+`RetrievalPipeline.run()` 只做 `StageRunner(retrieval_stage_order()).run(...)`；
+新增一个阶段是往 `RETRIEVAL_STAGES` 注册，不是改本文件的分支。下面的编号保留的是
+**各阶段的语义与为什么在那个位置**（仍然成立且有用），但阶段清单与实际次序请以
+`retrieval_stage_order()` 为准（当前 19 项，其中 5 项是不单独出 trace 节点的
+次序守卫与预取：`enhancers.prefetch`、`search.filter_expr`、三道 `serving_fence.*`）。
+
+各阶段语义（编号沿用迁移前的流程叙述）：
 1. **复杂度门控**：查询已具体明确时跳过改写与路由（零 LLM 成本），
    直接走 hybrid 默认路由（置信度 1.0）。
 2. **查询改写**：复杂查询先 LLM 改写（失败静默降级为原文）。
