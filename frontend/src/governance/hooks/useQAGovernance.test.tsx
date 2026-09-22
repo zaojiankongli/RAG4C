@@ -214,6 +214,31 @@ describe("useQAGovernance 一致性/QA 权威深链定位", () => {
     expect(result.current.page).toBe(1);
   });
 
+  it("定位成功后那条 QA 从结果里消失时如实退回未命中，不留第三种状态", async () => {
+    const items = Array.from({ length: 21 }, (_, index) => qa(index));
+    vi.mocked(api.fetchQAList).mockResolvedValue({ items, count: 21 });
+    const { result } = renderHook(() => useQAGovernance(scope, true, "active", "qa-15"));
+
+    await waitFor(() => expect(result.current.focusedQaId).toBe("qa-15"));
+    // 操作员停在第 2 页时，别人把那条过期掉了（或它不再满足当前筛选）：刷新后既没有
+    // 定位标记也没有任何提示，页面看上去"什么都没发生"——这是最坏的一种沉默。
+    const gone = items.filter((item) => item.id !== "qa-15");
+    vi.mocked(api.fetchQAList).mockResolvedValue({ items: gone, count: gone.length });
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.focusedQaId).toBeNull();
+    expect(result.current.deepLinkNotice).toContain("qa-15");
+
+    // 它回来时（撤销那次过期）要重新被标记，说明未命中不是把深链一次性作废。
+    vi.mocked(api.fetchQAList).mockResolvedValue({ items, count: 21 });
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.focusedQaId).toBe("qa-15");
+    expect(result.current.deepLinkNotice).toBeNull();
+  });
+
   it("无深链参数时不定位、不提示，列表行为与既有一致", async () => {
     const items = Array.from({ length: 21 }, (_, index) => qa(index));
     vi.mocked(api.fetchQAList).mockResolvedValue({ items, count: 21 });

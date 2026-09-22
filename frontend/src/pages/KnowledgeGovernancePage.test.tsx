@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DatasetProfile, DocumentVersion, QAKnowledge } from "../governance/model/governanceModel";
 
@@ -115,6 +115,57 @@ describe("KnowledgeGovernancePage", () => {
       "active",
       "qa-faq-9",
     );
+  });
+
+  it("页面已挂着时 hashchange 会重新读深链", () => {
+    const previousHash = window.location.hash;
+    window.location.hash = "#/governance?qa=qa-first&dataset=dataset-a";
+    qaHookSpy.mockClear();
+    try {
+      render(<KnowledgeGovernancePage />);
+      expect(qaHookSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ datasetId: "dataset-a" }),
+        true,
+        "active",
+        "qa-first",
+      );
+      // 证据面板跳进来时页面往往已经挂着（同一 SPA 内的 hash 链接）。
+      window.location.hash = "#/governance?qa=qa-second&dataset=dataset-a";
+      act(() => {
+        window.dispatchEvent(new Event("hashchange"));
+      });
+      expect(qaHookSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ datasetId: "dataset-a" }),
+        true,
+        "active",
+        "qa-second",
+      );
+    } finally {
+      window.location.hash = previousHash;
+    }
+  });
+
+  it("页面已挂着时 popstate 也会重新读深链（后退按钮那条路）", () => {
+    const previousHash = window.location.hash;
+    window.location.hash = "#/governance?qa=qa-one&dataset=dataset-a";
+    qaHookSpy.mockClear();
+    try {
+      render(<KnowledgeGovernancePage />);
+      // 只挂 hashchange 不够：走 history.pushState 的那条路改完地址不会发 hashchange，
+      // 后退时深链停在旧目标上，操作员以为定位坏了。
+      window.location.hash = "#/governance?qa=qa-two&dataset=dataset-a";
+      act(() => {
+        window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+      });
+      expect(qaHookSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ datasetId: "dataset-a" }),
+        true,
+        "active",
+        "qa-two",
+      );
+    } finally {
+      window.location.hash = previousHash;
+    }
   });
 
 });
