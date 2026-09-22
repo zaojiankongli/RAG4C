@@ -8,7 +8,7 @@ protocol instead of hard-coding constructor call sites. Adding a future backend
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional, Protocol, Sequence
+from typing import Any, Literal, Protocol, Sequence
 
 from core.graph_store import RagGraphStore, RagGraphStoreError
 from core.observability import get_logger

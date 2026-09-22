@@ -45,7 +45,6 @@ def test_decide_matches_explain_mode():
 
 
 def test_ingest_meta_carries_chunking_reason(monkeypatch):
-    from indexing.chunking_router import ChunkingRouter
     from indexing.ingest import IngestPipeline
 
     class _FakeEmbedder:

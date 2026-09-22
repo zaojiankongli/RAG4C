@@ -10,9 +10,9 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterable, Literal, Sequence
+from typing import Any, Literal, Sequence
 
 from models.schemas import Chunk, RetrievedChunk
 

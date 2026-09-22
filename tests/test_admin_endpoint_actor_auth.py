@@ -109,7 +109,6 @@ def test_enforce_dataset_write_uses_body_dataset(monkeypatch) -> None:
 def test_reindex_empty_document_tenant_is_rejected(monkeypatch) -> None:
     """fail-closed：tenant_id 为空的文档不得被任意 actor 重索引。"""
     from server import documents as documents_mod
-    from types import SimpleNamespace
 
     class _Actor:
         tenant_id = "tenant-a"
