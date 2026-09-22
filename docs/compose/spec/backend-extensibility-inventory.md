@@ -49,7 +49,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 | 3 | 投影目标 × 操作（`target_store` × `operation`） | `projection_handlers.py:36-40,125-132,208,460`、`index_worker.py:110-121,153,161,184,228-231,253,257`、`state_machine.py:531-542`、`document_deletion.py:43,1068,1392,1474,1491-1750,1728`、`knowledge_consistency_api.py:60-77` | 7–9（新目标）/ 4–5（新操作） | 否（无 CHECK） | 一致性响应里出现，前端仅当展示串 | Strategy+Registry，键 `store:operation`；**碰投影栅栏，风险最高** |
 | 4 | ~~来源连接器 `SourceKind`~~ **本轮已完成**，见 A 表与 §D 6 | — | 0（注册 + 挂契约两处声明） | 否 | `openapi.ts:7103,7142,7166` | 已落 `SourcePlugin.config_model/preflight` + `attach_source_contract` |
 | 5 | 审批 `action_type`（控制面校验） | `enterprise_approval_control.py:236,246,269-286,316-355,2742` | 5 + 2 处 ORM CHECK + 1 迁移 | **是**（CHECK 阶梯 `catalog_schema.py:2740-2787` 记录了 6 次加宽） | openapi 5 hits | 声明式字段要求表；**必须保留独立 `if`（publish/rollback ∪ waiver 有重叠）** |
-| 6 | 任务 `source_kind` | API `enterprise_task_operations_api.py:26,39,64,77,81`；核心 `enterprise_task_operations{,_service}.py:20,65,138,143,1480,1489,1506-1522,335,996-1007`；ORM CHECK `orm.py:4980` | 8（含两处 `max_length=7`，第 9 个值会被 422 静默挡掉） | **是** | openapi `:6144,6961` | 三份 dict 合成一张 `TaskSourceKindSpec` |
+| 6 | 任务 `source_kind` | API `enterprise_task_operations_api.py:26,39,64,77,81`；核心 `enterprise_task_operations{,_service}.py:20,65,138,143,1480,1489,1506-1522,335,996-1007`；ORM CHECK `orm.py:4980` | 8（~~含两处 `max_length=7`，第 9 个值会被 422 静默挡掉~~ **这句话把形状读错了**：那两个 7 是**列表长度上限**不是字符串宽度。病是真的但机制不同 —— 见 §AD，请求层已收成派生） | **是** | openapi `:6144,6961` | 三份 dict 合成一张 `TaskSourceKindSpec`；**请求层那一半已做（§AD）**，剩下的 8 个行为站点仍在 |
 | 7 | ~~告警操作 acknowledge/suppress/resolve~~ **本轮已完成**，见 §M | — | 0（注册即全认；两条槽位栅栏 + 列名核对齐模型） | 否 | 否 | 已落 `core/quality_alert_operations.py` |
 | 8 | 通知 `source_kind` | `notification_center.py:465,480,489-496,615,678-695`、`receipts.py:258-324,519`、`materializer.py:572,746` | ~13 | **是**（`orm.py:4183,4203-4210`） | **不在 OpenAPI 里**（`approval_pending_for_me` 命中 0 次）→ 前端契约抓不到 | 声明式规格表 + 每 kind 两个 callable |
 | 9 | `gate_reason → alert_type` 派生 | `alerts.py:1102-1133`（7 条顺序 if），`_ALERT_TYPES:71-80`，CHECK `orm.py:3799` | 3 | **是** | 否 | 有序 matcher 表，保末尾两条启发式的位置 |
@@ -1136,4 +1136,42 @@ CHECK 迁移**；栅栏保证的是"忘了迁就当场红"，不是"不需要迁
    删掉"，而 `?? key` 一直留在 `DocumentsPage.tsx:302`。本轮把它删了 —— 类型是完整 `Record` 且
    `noUncheckedIndexedAccess` 关着，那半句是可证死代码；"少登记一个键就是类型错误"这半句成立
    （是 `Record` 在守，不是 `??`）。
+
+## AD. 扩展轴 #6 的请求层那一半：词表与上限从单一声明派生（本轮，无迁移）
+
+清单原来记的是「两处 `max_length=7`，第 9 个值会被 422 静默挡掉」。**形状读错了**：
+`Field(max_length=7)` 挂在 `list[SourceKind]` 上，是**列表长度上限**，不是字符串宽度。但病是真的，
+而且更难看见：`SourceKind`/`TaskStatus` 各 7 个成员、两个上限也写死 7，两边**碰巧相等**。加第 8 种
+来源时，一个合法的"把所有来源都勾上"的 reconcile 请求会在请求校验层 422，而核心层
+（`catalog_schema.py:5516`）本来就按 `len(词表)` 判 —— 两层各执一词，报错点还离根因很远。
+
+现在 `server/enterprise_task_operations_api.py` 的这两个字面量类型与三处上限都从
+`core.catalog_schema` 那一份声明派生（`Literal[tuple(...)]`，沿用 `core/run_events.py:69`
+`RagExecutor` 的既有写法）。栅栏在
+`tests/test_task_api_vocabulary_derivation.py`（5 passed）。
+
+**派生发生在导入期，所以零改分支用例必须 `importlib.reload`**：运行时改
+`catalog_schema.ENTERPRISE_TASK_SOURCE_KINDS` 是**不会**传导到已导入模块的 —— 第一版我差点就
+断言"改元组即生效"，那样这条判据是假的。用例的做法：塞一个假的第 8 种来源 → reload → 断言
+字面量类型跟着变、两处上限变成 8、**且宿主文件字节不变** → finally 还原并再 reload。
+
+反向验证 3/3（预检 `5 passed`，还原后复检 `5 passed`）：TM1 把一处上限写回 `7` → 字面量检查 +
+reload 用例红；TM2 字面量类型退回手抄（少一员）→ 词表对齐 + reload 用例红；TM3 把 categories 的
+上限从 5 "统一"成 7 → 不对称保护红。
+
+**另一条我自己差点写错的栅栏**：`test_no_list_cap_is_a_copied_number` 第一版按
+`^\s*(?:source_kinds|statuses):.*max_length=(\d+)`（MULTILINE）扫，而派生后的字段声明是跨行的，
+`.*` 到不了下一行 —— 也就是 TM1 只会红在别的用例上，这条"字面量不该回来"的断言其实扫不到东西。
+改成 `(?:source_kinds|statuses):[^)]*max_length=(\d+)` + `re.S`，`[^)]*` 停在字段右括号，单行/跨行
+都覆盖。这是本仓第三次栽在"栅栏只守得住它真看得见的形状"（前两次：`"dual"` 词形、`str(...)` 打穿
+形状匹配）。
+
+**刻意没统一的一处，别当债务清掉**：`SavedViewFilters.categories` 的字面量有 7 个成员，上限却是 5
+（`len(ENTERPRISE_TASK_CATEGORIES)`）。多出来的 `content` / `source` 是**兼容别名**，已存的用户视图
+里就有它们；只派生上限、不派生字面量是有意的。照本轴其余两栏的写法把它也收成 5，会让老视图 422。
+这条不对称已经单独钉了一个用例，改动会红。
+
+诚实边界：CHECK `orm.py:4980` 没动，**新增来源仍要一次 CHECK 迁移**；本轴剩下的行为站点
+（`enterprise_task_operations{,_service}.py` 里那 8 处成员判断与路由 dict）也还没合成
+`TaskSourceKindSpec`，派生只解决了"词表与上限不必抄第二遍"。
 

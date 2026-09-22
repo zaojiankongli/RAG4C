@@ -5,11 +5,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
 import importlib
 import re
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeAlias
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from core.catalog_schema import ENTERPRISE_TASK_SOURCE_KINDS, ENTERPRISE_TASK_STATUSES
 from core.knowledge_permissions import KNOWLEDGE_READ
 from server.knowledge_auth import KnowledgeActor, require_knowledge_permission
 
@@ -36,18 +37,8 @@ _STATUSES = ("queued", "running", "succeeded", "failed", "cancelled", "blocked",
 TaskId = Annotated[str, Path(min_length=1, max_length=128, pattern=_SAFE_ID.pattern)]
 ViewId = Annotated[str, Path(min_length=1, max_length=128, pattern=_SAFE_ID.pattern)]
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)]
-SourceKind = Literal[
-    "document_ingest",
-    "index_operation",
-    "source_sync",
-    "document_delete",
-    "audit_export",
-    "release_quality_scan",
-    "release_recertification",
-]
-TaskStatus = Literal[
-    "queued", "running", "succeeded", "failed", "cancelled", "blocked", "unavailable"
-]
+SourceKind: TypeAlias = Literal[tuple(ENTERPRISE_TASK_SOURCE_KINDS)]
+TaskStatus: TypeAlias = Literal[tuple(ENTERPRISE_TASK_STATUSES)]
 
 
 class StrictModel(BaseModel):
@@ -61,7 +52,9 @@ class TaskActionRequest(StrictModel):
 
 
 class ReconcileRequest(StrictModel):
-    source_kinds: list[SourceKind] = Field(min_length=1, max_length=7)
+    source_kinds: list[SourceKind] = Field(
+        min_length=1, max_length=len(ENTERPRISE_TASK_SOURCE_KINDS)
+    )
     dry_run: bool = Field(strict=True)
     reason: str = Field(min_length=1, max_length=512)
 
@@ -74,8 +67,14 @@ class ReconcileRequest(StrictModel):
 
 
 class SavedViewFilters(StrictModel):
-    source_kinds: list[SourceKind] | None = Field(default=None, max_length=7)
-    statuses: list[TaskStatus] | None = Field(default=None, max_length=7)
+    # 上限跟着词表走：写死的数字在加一种来源时会把「全选」这种合法请求 422 掉，
+    # 而核心侧的校验本来就是按 len(词表) 判的（catalog_schema.py:5516）。
+    source_kinds: list[SourceKind] | None = Field(
+        default=None, max_length=len(ENTERPRISE_TASK_SOURCE_KINDS)
+    )
+    statuses: list[TaskStatus] | None = Field(
+        default=None, max_length=len(ENTERPRISE_TASK_STATUSES)
+    )
     categories: (
         list[
             Literal[
