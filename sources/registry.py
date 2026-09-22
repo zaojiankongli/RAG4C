@@ -9,7 +9,8 @@
   「按名字创建，参数由调用方给」。
 
 沿用同一套注册形态的好处仍在：新增一种源（比如 Context7、S3、Confluence）
-只需要写一个类 + 一行注册，本模块与调用方零改动。
+只需要写一个类 + 一行注册 + 一行 API 契约（配置模型与它自己的白名单安检），
+本模块与各调用点零改动。
 """
 from __future__ import annotations
 
@@ -33,12 +34,22 @@ class SourcePlugin:
         describe: 无参 -> 能力说明。
         required_params: 必填参数名。工厂调用前统一校验，好处是缺参数时
             报的是「源 X 缺少参数 repo」而不是各源自己抛出的 KeyError。
+        config_model / preflight: HTTP 面的契约（配置形状 + 该源自己的白名单
+            安检）。它们天然住在 API 层（要读 ``credential_ref`` 引用规则与
+            ``local_allowed_roots`` 之类的设置），所以由各源在 API 模块 import
+            时通过 :func:`attach_source_contract` 挂上来，注册表只负责保管与
+            派发。**两者任一为空时 :func:`source_contract` 直接抛错**，不猜默认
+            形状——过去 API 层写的是 ``if kind == "local_dir": ... else: 按
+            github 校验``，于是一个未知/新增/DB 里残留的 kind 会被默默按
+            GitHub 的形状与白名单放过（fail-open）。
     """
 
     name: str
     factory: Callable[[dict[str, Any], Any], DocumentSource]
     describe: Callable[[], str]
     required_params: tuple[str, ...] = ()
+    config_model: Any = None
+    preflight: Callable[[dict[str, Any], Any], dict[str, Any]] | None = None
 
 
 _lock = threading.Lock()
@@ -55,6 +66,55 @@ def unregister_source_plugin(name: str) -> None:
     """卸载插件（测试用）。"""
     with _lock:
         _plugins.pop(name, None)
+
+
+def source_kind_names() -> tuple[str, ...]:
+    """已注册源类型名（HTTP 面用它派生"有哪些 kind"，不再手抄第二份集合）。"""
+    with _lock:
+        return tuple(sorted(_plugins))
+
+
+def attach_source_contract(
+    name: str,
+    *,
+    config_model: Any,
+    preflight: Callable[[dict[str, Any], Any], dict[str, Any]],
+) -> None:
+    """给已注册的源挂上 API 侧契约（配置模型 + 白名单安检）。
+
+    Raises:
+        SourceError: 该名字没有注册过，或参数不完整。宁可在 import 期就炸，
+            也不要留一个"看起来注册了但 preflight 会静默跳过"的源。
+    """
+    if config_model is None or preflight is None:
+        raise SourceError(f"源 {name!r} 的契约不完整：config_model 与 preflight 都必须给")
+    with _lock:
+        plugin = _plugins.get(name)
+        if plugin is None:
+            known = ", ".join(sorted(_plugins)) or "（无）"
+            raise SourceError(f"契约要挂到未注册的源 {name!r}；已注册: {known}")
+        plugin.config_model = config_model
+        plugin.preflight = preflight
+
+
+def source_contract(name: str) -> SourcePlugin:
+    """取出一个源的完整契约；缺任何一块都拒绝，绝不回退到别的源的形状。
+
+    Raises:
+        SourceError: 未注册，或注册了但契约没挂。
+    """
+    with _lock:
+        plugin = _plugins.get(name)
+    if plugin is None:
+        with _lock:
+            known = ", ".join(sorted(_plugins)) or "（无）"
+        raise SourceError(f"未知的文档源类型 {name!r}；已注册: {known}")
+    if plugin.config_model is None or plugin.preflight is None:
+        raise SourceError(
+            f"文档源 {name!r} 没有挂载 API 契约（config_model / preflight），"
+            "拒绝按其它源的形状校验或放行"
+        )
+    return plugin
 
 
 def list_source_plugins() -> list[dict[str, Any]]:
@@ -111,6 +171,9 @@ __all__ = [
     "SourcePlugin",
     "register_source_plugin",
     "unregister_source_plugin",
+    "attach_source_contract",
+    "source_contract",
+    "source_kind_names",
     "list_source_plugins",
     "create_source",
 ]

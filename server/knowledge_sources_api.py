@@ -35,7 +35,12 @@ from models.orm import DataSourceRecord, SourceSchedule, SourceSyncItem, SourceS
 from server.knowledge_auth import KnowledgeActor, require_knowledge_permission, resolve_path_dataset
 from server.source_dispatcher import request_source_dispatch
 from sources.base import SourceError
-from sources.registry import create_source as create_connector
+from sources.registry import (
+    SourcePlugin,
+    attach_source_contract,
+    create_source as create_connector,
+    source_contract,
+)
 
 _OPENAPI_BEARER = HTTPBearer(
     auto_error=False,
@@ -77,7 +82,6 @@ ItemResult: TypeAlias = Literal[
     "completed", "failed", "skipped", "suppressed", "dry_run", "queued"
 ]
 
-_ALLOWED_KINDS = frozenset({"local_dir", "github_repo"})
 _SECRET_KEY = re.compile(
     r"(?:access[_-]?key|api[_-]?key|authorization|bearer|cookie|credential|password|passwd|"
     r"private[_-]?key|refresh[_-]?token|secret|session[_-]?key|token)",
@@ -453,14 +457,80 @@ def _is_within(path: Path, root: Path) -> bool:
     return True
 
 
-def _validate_connector_model(kind: SourceKind, config: dict[str, JsonValue]) -> StrictModel:
+def _connector_contract(kind: str) -> SourcePlugin:
+    """取这个 kind 自己的契约；未知或没挂契约的一律拒绝。
+
+    过去这里写的是 ``if kind == "local_dir": 按 LocalDirConfig else: 按
+    GitHubRepoConfig``。而 ``_update_source`` 的 kind 有一个来源是**数据库里的
+    ``source_type``**（不受请求模型的 Literal 约束，列上也没有 CHECK），于是任何
+    第四种值都会被默默按 GitHub 的形状与白名单放过 —— 典型的 else 分支 fail-open。
+    """
     try:
-        if kind == "local_dir":
-            return LocalDirConfig.model_validate(config)
-        return GitHubRepoConfig.model_validate(config)
+        return source_contract(kind)
+    except SourceError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def _validate_connector_model(kind: SourceKind, config: dict[str, JsonValue]) -> StrictModel:
+    model = _connector_contract(kind).config_model
+    try:
+        return model.model_validate(config)
     except ValidationError as exc:
         locations = [".".join(str(part) for part in item["loc"]) for item in exc.errors()[:5]]
         raise ValueError(f"{kind} 配置字段无效: {', '.join(locations)}") from exc
+
+
+def _local_dir_preflight(
+    normalized: dict[str, Any], settings: Any
+) -> dict[str, Any]:
+    roots = [
+        _resolve_root(value)
+        for value in list(getattr(settings, "local_allowed_roots", []) or [])
+    ]
+    extensions = list(getattr(settings, "local_allowed_extensions", []) or [])
+    if not roots or not extensions:
+        raise ValueError("local_dir allowlist 未配置，已拒绝")
+    path = _resolve_root(str(normalized["path"]))
+    if not path.is_dir() or not any(_is_within(path, root) for root in roots):
+        raise ValueError("local_dir path 不存在或不在允许目录内")
+    requested = list(normalized.get("extensions") or extensions)
+    allowed = {str(value).casefold() for value in extensions}
+    if not requested or any(str(value).casefold() not in allowed for value in requested):
+        raise ValueError("local_dir extensions 超出允许范围")
+    normalized["path"] = str(path)
+    normalized["extensions"] = requested
+    return normalized
+
+
+def _github_repo_preflight(
+    normalized: dict[str, Any], settings: Any
+) -> dict[str, Any]:
+    repositories = {
+        str(value).casefold()
+        for value in list(getattr(settings, "github_allowed_repositories", []) or [])
+    }
+    organizations = {
+        str(value).casefold()
+        for value in list(getattr(settings, "github_allowed_organizations", []) or [])
+    }
+    if not repositories and not organizations:
+        raise ValueError("github_repo allowlist 未配置，已拒绝")
+    repo = str(normalized["repo"]).casefold()
+    organization = repo.split("/", 1)[0]
+    if repo not in repositories and organization not in organizations:
+        raise ValueError("github_repo 不在 repository/organization allowlist 内")
+    normalized["repo"] = repo
+    return normalized
+
+
+# 每个源把自己的「配置形状 + 白名单安检」挂到注册表上。加一种源 = 注册工厂 +
+# 在这里加一行声明，本模块没有任何按 kind 的分支。
+attach_source_contract(
+    "local_dir", config_model=LocalDirConfig, preflight=_local_dir_preflight
+)
+attach_source_contract(
+    "github_repo", config_model=GitHubRepoConfig, preflight=_github_repo_preflight
+)
 
 
 def _default_preflight(
@@ -470,41 +540,7 @@ def _default_preflight(
 ) -> dict[str, JsonValue]:
     model = _validate_connector_model(kind, config)
     normalized = model.model_dump(exclude_none=True)
-    settings = _source_settings(request)
-    if kind == "local_dir":
-        roots = [
-            _resolve_root(value)
-            for value in list(getattr(settings, "local_allowed_roots", []) or [])
-        ]
-        extensions = list(getattr(settings, "local_allowed_extensions", []) or [])
-        if not roots or not extensions:
-            raise ValueError("local_dir allowlist 未配置，已拒绝")
-        path = _resolve_root(str(normalized["path"]))
-        if not path.is_dir() or not any(_is_within(path, root) for root in roots):
-            raise ValueError("local_dir path 不存在或不在允许目录内")
-        requested = list(normalized.get("extensions") or extensions)
-        allowed = {str(value).casefold() for value in extensions}
-        if not requested or any(str(value).casefold() not in allowed for value in requested):
-            raise ValueError("local_dir extensions 超出允许范围")
-        normalized["path"] = str(path)
-        normalized["extensions"] = requested
-    else:
-        repositories = {
-            str(value).casefold()
-            for value in list(getattr(settings, "github_allowed_repositories", []) or [])
-        }
-        organizations = {
-            str(value).casefold()
-            for value in list(getattr(settings, "github_allowed_organizations", []) or [])
-        }
-        if not repositories and not organizations:
-            raise ValueError("github_repo allowlist 未配置，已拒绝")
-        repo = str(normalized["repo"]).casefold()
-        organization = repo.split("/", 1)[0]
-        if repo not in repositories and organization not in organizations:
-            raise ValueError("github_repo 不在 repository/organization allowlist 内")
-        normalized["repo"] = repo
-
+    normalized = _connector_contract(kind).preflight(normalized, _source_settings(request))
     create_connector(kind, dict(normalized), _settings(request))
     return normalized
 

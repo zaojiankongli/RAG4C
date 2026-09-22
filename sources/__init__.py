@@ -3,7 +3,7 @@
 三层结构，各自职责单一：
 
 - :mod:`sources.base`     契约（``DocumentSource`` / ``FetchedDocument``）
-- :mod:`sources.registry` 插件注册表（新增一种源 = 一个类 + 一行注册）
+- :mod:`sources.registry` 插件注册表（新增一种源 = 一个类 + 一行注册 + 一行 API 契约）
 - :mod:`sources.runner`   执行器（清单解析、增量判定、批量入库、删除清理）
 
 导入本包即完成内置源注册（``github_repo`` / ``local_dir``），与
