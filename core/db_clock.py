@@ -5,22 +5,21 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, func, literal_column, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from core.dialects import dialect_utc_clock
+
 
 def db_utc_expression(dialect_name: str) -> ColumnElement[Any]:
-    dialect = str(dialect_name or "").casefold()
-    if dialect in {"mysql", "mariadb"}:
-        return func.utc_timestamp(6)
-    if dialect == "postgresql":
-        return literal_column(
-            "(clock_timestamp() AT TIME ZONE 'UTC')", type_=DateTime()
-        )
-    if dialect == "sqlite":
-        return func.strftime("%Y-%m-%d %H:%M:%f", "now")
-    return func.current_timestamp()
+    """Resolve the engine's UTC clock from the dialect spec table.
+
+    An undeclared engine raises rather than falling back to ``CURRENT_TIMESTAMP``.
+    This expression is the wall-clock authority for lease expiry, so a silently
+    different clock is exactly how a lease goes wrong in production.
+    """
+    return dialect_utc_clock(dialect_name)
 
 
 def read_db_utc(session: Session) -> datetime:
@@ -31,6 +30,3 @@ def read_db_utc(session: Session) -> datetime:
     if isinstance(value, str):
         return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
     raise RuntimeError("database UTC clock authority is unavailable")
-
-
-__all__ = ["db_utc_expression", "read_db_utc"]
