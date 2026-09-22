@@ -101,6 +101,9 @@ def test_a_new_scalar_field_reaches_the_db_without_editing_ingest(tmp_path: Path
     assert pipeline.parse_and_chunk(str(probe), doc_id="doc-note")
     meta = pipeline.ingest_meta(None)
     assert meta["producer_added_scalar"] == "page-level tables"
+    # 生产方**独占**的键（管线自己不写）必须照样进来 —— 改成"先写者胜"时别把它一起挡掉。
+    assert meta["file_name"] == "note.md"
+    assert meta["provider"] == "markdown-inspector"
 
     stored = json.dumps(meta, ensure_ascii=False)
     assert _coerce_document_parser_meta(stored)["producer_added_scalar"] == "page-level tables"

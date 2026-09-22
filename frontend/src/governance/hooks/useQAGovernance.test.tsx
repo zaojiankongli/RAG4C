@@ -231,12 +231,16 @@ describe("useQAGovernance 一致性/QA 权威深链定位", () => {
     expect(result.current.deepLinkNotice).toContain("qa-15");
 
     // 它回来时（撤销那次过期）要重新被标记，说明未命中不是把深链一次性作废。
+    // 但只重新标记，不重新翻页：一次改动引起的重载里该行可能只是一闪而过，
+    // 操作员已经自己翻到第 1 页了，把它拽回第 2 页是第二次打扰。
+    act(() => result.current.setPage(1));
     vi.mocked(api.fetchQAList).mockResolvedValue({ items, count: 21 });
     await act(async () => {
       await result.current.refresh();
     });
     expect(result.current.focusedQaId).toBe("qa-15");
     expect(result.current.deepLinkNotice).toBeNull();
+    expect(result.current.page).toBe(1);
   });
 
   it("无深链参数时不定位、不提示，列表行为与既有一致", async () => {
