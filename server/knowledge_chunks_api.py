@@ -8,7 +8,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.security import HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,7 +17,12 @@ from core.chunk_catalog import ChunkCatalog, ChunkHeadNotFound, ChunkRevisionCon
 from core.knowledge_permissions import KNOWLEDGE_DELETE, KNOWLEDGE_READ, KNOWLEDGE_WRITE
 from models.orm import Document
 from server import documents
-from server.chunk_operations import ChunkAuthorityIncomplete, delete_document_chunk_artifacts, update_document_chunk_artifacts
+from server.chunk_operations import (
+    ChunkAuthorityIncomplete,
+    delete_document_chunk_artifacts,
+    revert_document_chunk_artifacts,
+    update_document_chunk_artifacts,
+)
 from server.knowledge_auth import KnowledgeActor, require_knowledge_permission, resolve_path_dataset
 
 _OPENAPI_BEARER = HTTPBearer(auto_error=False, scheme_name="KnowledgeBearerAuth", description="Actor-bound signed KnowledgeOps bearer token.")
@@ -38,6 +43,7 @@ WriteActor = Annotated[KnowledgeActor, Depends(_WRITE)]
 DeleteActor = Annotated[KnowledgeActor, Depends(_DELETE_PERMISSION)]
 _update = update_document_chunk_artifacts
 _delete = delete_document_chunk_artifacts
+_revert = revert_document_chunk_artifacts
 _reserve = documents._reserve_chunk_mutation
 _release = documents._release_document_operation
 _TOKEN_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]|[A-Za-z0-9]+(?:[._/-][A-Za-z0-9]+)*")
@@ -48,8 +54,30 @@ class StrictModel(BaseModel):
 
 
 class ChunkPatch(StrictModel):
-    text: str = Field(min_length=1, max_length=200_000)
+    """Edit a chunk's text and/or flip its enabled flag, under optimistic concurrency.
+
+    ``reason`` is recorded on the chunk head for operator audit; it is not carried on
+    historical revision rows (see ``docs/compose/spec/chunk-lifecycle-writers.md`` S2.4).
+    """
+
+    text: str | None = Field(default=None, min_length=1, max_length=200_000)
+    enabled: bool | None = Field(default=None)
+    reason: str | None = Field(default=None, max_length=500)
     expected_revision: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _requires_a_change(self) -> "ChunkPatch":
+        if self.text is None and self.enabled is None:
+            raise ValueError("text 与 enabled 至少给出一个")
+        return self
+
+
+class ChunkRevertRequest(StrictModel):
+    """Roll a chunk head back to one of its recorded revisions."""
+
+    target_revision: int = Field(ge=0)
+    expected_revision: int = Field(ge=0)
+    reason: str | None = Field(default=None, max_length=500)
 
 
 def _not_found() -> HTTPException:
@@ -141,7 +169,13 @@ def _token_estimate(text: str) -> int:
     return len(_TOKEN_RE.findall(text))
 
 
-def _projection(head: Any, *, child_count: int = 0, parent_relation: str = "none") -> dict[str, Any]:
+def _projection(
+    head: Any,
+    *,
+    child_count: int = 0,
+    parent_relation: str = "none",
+    include_source_content: bool = False,
+) -> dict[str, Any]:
     metadata = dict(head.chunk_metadata or {})
     text = str(head.content or "")
     desired = int(head.desired_index_revision or 0)
@@ -160,9 +194,21 @@ def _projection(head: Any, *, child_count: int = 0, parent_relation: str = "none
         "token_estimate": _token_estimate(text), "desired_index_revision": desired,
         "indexed_revision": indexed, "index_status": status,
         "projection_pending": indexed < desired or status != "ready",
+        "editor_id": str(head.editor_id or ""), "edit_source": str(head.edit_source or ""),
         "created_at": head.created_at.isoformat() if head.created_at else None,
         "updated_at": head.updated_at.isoformat() if head.updated_at else None,
     }
+    reason = _bounded_string(metadata.get("edit_reason"), max_length=500)
+    if reason is not None:
+        payload["edit_reason"] = reason
+        payload["edit_reason_at"] = _bounded_string(
+            metadata.get("edit_reason_at"), max_length=64
+        )
+    if include_source_content:
+        # Parser output for this chunk, kept separate from the (possibly hand-edited)
+        # head content so the workbench can show what a human changed.  Single-chunk
+        # reads only: doubling every list row with it would bloat the list response.
+        payload["source_content"] = str(head.source_content or "")
     page = _bounded_page(metadata.get("page") if metadata.get("page") is not None else metadata.get("page_number"))
     heading = _first_bounded_string(metadata, ("heading", "title", "section"), max_length=512)
     language = _bounded_string(metadata.get("language"), max_length=64)
@@ -237,9 +283,86 @@ def get_chunk(request: Request, dataset_id: DatasetId, doc_id: DocumentId, chunk
     except ChunkHeadNotFound as exc:
         raise _not_found() from exc
     relation, child_count = _relation_projection(chunks, actor, dataset_id, doc_id, int(document.content_revision or 0), head)
-    payload = _projection(head, parent_relation=relation, child_count=child_count)
+    payload = _projection(head, parent_relation=relation, child_count=child_count, include_source_content=True)
     payload["authority_mode"] = mode
     return payload
+
+
+@router.get("/{chunk_id}/revisions")
+def list_chunk_revisions(
+    request: Request,
+    dataset_id: DatasetId,
+    doc_id: DocumentId,
+    chunk_id: ChunkId,
+    actor: ReadActor,
+) -> dict[str, Any]:
+    """Immutable content snapshots this head has superseded, newest revision last.
+
+    The head is resolved through the tenant/dataset/document scope first, so an
+    unscoped ``chunk_id`` cannot reach another tenant's revision content.
+    """
+    _mode, chunks, document = _catalog_and_document(request, actor, dataset_id, doc_id)
+    try:
+        chunks.get_head_scoped(actor.tenant_id, dataset_id, doc_id, chunk_id, document_revision=int(document.content_revision or 0))
+    except ChunkHeadNotFound as exc:
+        raise _not_found() from exc
+    revisions = chunks.list_revisions(actor.tenant_id, dataset_id, doc_id, chunk_id)
+    return {
+        "chunk_id": chunk_id,
+        "items": [
+            {
+                "revision": int(item.revision),
+                "content": str(item.content or ""),
+                "content_hash": str(item.content_hash or ""),
+                "enabled": bool(item.enabled),
+                "editor_id": str(item.editor_id or ""),
+                "edit_source": str(item.edit_source or ""),
+                "edited_at": item.edited_at.isoformat() if item.edited_at else None,
+            }
+            for item in revisions
+        ],
+    }
+
+
+@router.post("/{chunk_id}/revert")
+def revert_chunk(
+    request: Request,
+    dataset_id: DatasetId,
+    doc_id: DocumentId,
+    chunk_id: ChunkId,
+    body: ChunkRevertRequest,
+    actor: WriteActor,
+) -> dict[str, Any]:
+    """Roll a chunk back to ``target_revision`` as a new head revision (never rewinding)."""
+    mode, chunks, document = _catalog_and_document(request, actor, dataset_id, doc_id)
+    reserved = False
+    try:
+        current = chunks.get_head_scoped(actor.tenant_id, dataset_id, doc_id, chunk_id, document_revision=int(document.content_revision or 0))
+        if not current.enabled:
+            raise _conflict("墓碑切片为只读状态，请先启用后再回滚")
+        _reserve(doc_id)
+        reserved = True
+        result = _revert(
+            doc_id,
+            chunk_id,
+            target_revision=body.target_revision,
+            expected_revision=body.expected_revision,
+            reason=body.reason,
+            authority_mode=mode,
+            pipeline=documents._get_ingest_pipeline(),
+        )
+        return _mutated_payload(request, actor, dataset_id, doc_id, chunk_id, list(result.operation_ids))
+    except HTTPException:
+        raise
+    except (ChunkRevisionConflict, ChunkAuthorityIncomplete) as exc:
+        raise _conflict(str(exc)) from exc
+    except (KeyError, ChunkHeadNotFound) as exc:
+        raise _not_found() from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "knowledge_chunk_invalid", "message": str(exc)}) from exc
+    finally:
+        if reserved:
+            _release(doc_id)
 
 
 def _mutated_payload(request: Request, actor: KnowledgeActor, dataset_id: str, doc_id: str, chunk_id: str, operation_ids: list[str]) -> dict[str, Any]:
@@ -249,22 +372,32 @@ def _mutated_payload(request: Request, actor: KnowledgeActor, dataset_id: str, d
     except ChunkHeadNotFound as exc:
         raise _not_found() from exc
     relation, child_count = _relation_projection(chunks, actor, dataset_id, doc_id, int(document.content_revision or 0), head)
-    payload = _projection(head, parent_relation=relation, child_count=child_count)
+    payload = _projection(head, parent_relation=relation, child_count=child_count, include_source_content=True)
     payload.update({"authority_mode": mode, "operation_ids": operation_ids, "projection_semantics": "active_async_durable" if mode == "active" else "shadow_authority_plus_legacy_sync"})
     return payload
 
 
 @router.patch("/{chunk_id}")
 def patch_chunk(request: Request, dataset_id: DatasetId, doc_id: DocumentId, chunk_id: ChunkId, body: ChunkPatch, actor: WriteActor) -> dict[str, Any]:
+    """Edit text, tombstone (``enabled: false``) or restore (``enabled: true``) one chunk."""
     mode, chunks, document = _catalog_and_document(request, actor, dataset_id, doc_id)
     reserved = False
     try:
         current = chunks.get_head_scoped(actor.tenant_id, dataset_id, doc_id, chunk_id, document_revision=int(document.content_revision or 0))
-        if not current.enabled:
-            raise _conflict("墓碑切片为只读状态")
+        if not current.enabled and body.enabled is not True:
+            raise _conflict("墓碑切片为只读状态，请先启用")
         _reserve(doc_id)
         reserved = True
-        result = _update(doc_id, chunk_id, body.text, expected_revision=body.expected_revision, authority_mode=mode, pipeline=documents._get_ingest_pipeline())
+        result = _update(
+            doc_id,
+            chunk_id,
+            body.text or "",
+            expected_revision=body.expected_revision,
+            authority_mode=mode,
+            pipeline=documents._get_ingest_pipeline(),
+            reason=body.reason,
+            enabled=body.enabled,
+        )
         return _mutated_payload(request, actor, dataset_id, doc_id, chunk_id, list(result.operation_ids))
     except HTTPException:
         raise

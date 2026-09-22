@@ -80,7 +80,7 @@ def test_chunk_edit_is_optimistic_and_preserves_superseded_revision(tmp_path: Pa
 
     assert edited.content_revision == 1
     assert edited.content == "edited text"
-    revisions = catalog.list_revisions("chunk-1")
+    revisions = catalog.list_revisions("tenant-1", "dataset-1", "doc-1", "chunk-1")
     assert [(item.revision, item.content) for item in revisions] == [(0, "original text")]
     with pytest.raises(chunk_module().ChunkRevisionConflict, match="revision conflict"):
         catalog.edit_chunk(
@@ -108,10 +108,96 @@ def test_revert_creates_a_new_head_revision_instead_of_rewinding(tmp_path: Path)
 
     assert reverted.content_revision == 2
     assert reverted.content == "original text"
-    assert [(item.revision, item.content) for item in catalog.list_revisions("chunk-1")] == [
+    assert [(item.revision, item.content) for item in catalog.list_revisions("tenant-1", "dataset-1", "doc-1", "chunk-1")] == [
         (0, "original text"),
         (1, "edited text"),
     ]
+    engine.dispose()
+
+
+def test_list_revisions_is_scoped_to_its_tenant_dataset_and_document(
+    tmp_path: Path,
+) -> None:
+    """Chunk ids are caller-supplied, so revision reads must not be keyed by id alone.
+
+    Removing any one of the three scope columns from the lookup turns this red: the
+    negative assertions each isolate one column (other tenant / other dataset / other
+    document) while the chunk_id still matches.
+    """
+    engine, catalog = create_catalog(tmp_path)
+    with Session(engine) as session:
+        session.add(Tenant(id="tenant-2", name="Other"))
+        session.add(Dataset(id="dataset-2", tenant_id="tenant-2", name="Other KB"))
+        session.add(
+            Document(
+                id="doc-2",
+                tenant_id="tenant-2",
+                dataset_id="dataset-2",
+                name="Other Document",
+                content_revision=1,
+                desired_index_revision=1,
+            )
+        )
+        session.add(
+            Document(
+                id="doc-1b",
+                tenant_id="tenant-1",
+                dataset_id="dataset-1",
+                name="Sibling Document",
+                content_revision=1,
+                desired_index_revision=1,
+            )
+        )
+        session.commit()
+
+    def head(chunk_id: str, *, tenant: str, dataset: str, document: str, text: str):
+        return catalog.upsert_head(
+            chunk_id=chunk_id,
+            tenant_id=tenant,
+            dataset_id=dataset,
+            document_id=document,
+            parent_chunk_id=None,
+            chunk_index=0,
+            chunk_role="flat",
+            document_revision=1,
+            source_content=text,
+            content=text,
+            content_hash=f"hash-{chunk_id}",
+            enabled=True,
+        )
+
+    head("shared-id", tenant="tenant-1", dataset="dataset-1", document="doc-1", text="mine")
+    head("other-id", tenant="tenant-2", dataset="dataset-2", document="doc-2", text="theirs")
+    for owner in ("shared-id", "other-id"):
+        catalog.edit_chunk(
+            owner, expected_revision=0, content=f"{owner} edited", editor_id="user-1"
+        )
+
+    mine = catalog.list_revisions("tenant-1", "dataset-1", "doc-1", "shared-id")
+    assert [(item.revision, item.content) for item in mine] == [(0, "mine")]
+
+    # Same chunk_id, foreign scope on exactly one column each.
+    assert catalog.list_revisions("tenant-2", "dataset-1", "doc-1", "shared-id") == []
+    assert catalog.list_revisions("tenant-1", "dataset-2", "doc-1", "shared-id") == []
+    assert catalog.list_revisions("tenant-1", "dataset-1", "doc-1b", "shared-id") == []
+    # An attacker knowing only a chunk id learns nothing about another tenant's content.
+    assert catalog.list_revisions("tenant-2", "dataset-2", "doc-2", "shared-id") == []
+    engine.dispose()
+
+
+def test_revert_rejects_a_target_revision_outside_the_heads_scope(
+    tmp_path: Path,
+) -> None:
+    engine, catalog = create_catalog(tmp_path)
+    create_head(catalog, "chunk-1")
+    catalog.edit_chunk(
+        "chunk-1", expected_revision=0, content="edited text", editor_id="user-1"
+    )
+
+    with pytest.raises(chunk_module().ChunkRevisionConflict, match="does not exist"):
+        catalog.revert_chunk(
+            "chunk-1", target_revision=99, expected_revision=1, editor_id="user-2"
+        )
     engine.dispose()
 
 

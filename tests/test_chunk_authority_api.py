@@ -171,7 +171,7 @@ def test_active_edit_writes_immutable_authority_and_queues_projection_operations
     assert head.content == "edited body"
     assert head.content_revision == 1
     assert head.enabled is True
-    assert [(item.revision, item.content) for item in chunk_catalog.list_revisions("chunk-1")] == [
+    assert [(item.revision, item.content) for item in chunk_catalog.list_revisions("tenant-1", "dataset-1", "doc-1", "chunk-1")] == [
         (0, "original body")
     ]
     operations = queue.list_operations()
@@ -226,7 +226,7 @@ def test_active_delete_tombstones_head_and_queues_delete_operations(
     head = chunk_catalog.get_head("chunk-1")
     assert head.enabled is False
     assert head.content_revision == 1
-    assert [(item.revision, item.enabled) for item in chunk_catalog.list_revisions("chunk-1")] == [
+    assert [(item.revision, item.enabled) for item in chunk_catalog.list_revisions("tenant-1", "dataset-1", "doc-1", "chunk-1")] == [
         (0, True)
     ]
     operations = queue.list_operations()
@@ -355,7 +355,7 @@ def test_operation_enqueue_failure_rolls_back_head_revision_attempt_and_outbox(
 
     assert chunk_catalog.get_head("chunk-1").content_revision == 0
     assert chunk_catalog.get_head("chunk-1").content == "original body"
-    assert chunk_catalog.list_revisions("chunk-1") == []
+    assert chunk_catalog.list_revisions("tenant-1", "dataset-1", "doc-1", "chunk-1") == []
     with Session(engine) as session:
         assert session.scalar(select(func.count(DocumentIngestAttempt.id))) == 0
     assert IndexOperationQueue(engine).count_operations() == 0
@@ -419,7 +419,7 @@ def test_repeated_tombstone_is_conflict_then_idempotent(
     )
     assert repeated["projection_pending"] is False
     assert repeated["operation_ids"] == []
-    assert len(chunk_catalog.list_revisions("chunk-1")) == 1
+    assert len(chunk_catalog.list_revisions("tenant-1", "dataset-1", "doc-1", "chunk-1")) == 1
     assert queue.count_operations() == 2
     engine.dispose()
 

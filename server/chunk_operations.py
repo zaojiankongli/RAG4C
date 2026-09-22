@@ -14,12 +14,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable, Literal, Protocol
 
 from core import cache_epoch, catalog
 from core.chunk_catalog import ChunkCatalog, ChunkRevisionConflict
 from core.index_operations import IndexOperationQueue
 from core.ingest_ledger import IngestLedger
+from core.providers import ProviderRegistry
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from indexing.hashing import text_hash
 from indexing.projection_handlers import ProjectionHandlers
@@ -29,9 +31,9 @@ from indexing.state_machine import (
     assert_document_write_permit,
     read_document_write_permit,
 )
+from models.orm import ChunkRevision
 from models.schemas import Chunk
 
-_AUTHORITY_MODES = frozenset({"off", "shadow", "active"})
 _MANUAL_ACTOR = "system:document-workbench"
 
 
@@ -190,19 +192,39 @@ class _AuthorityMutation:
     changed: bool
 
 
+def _durable_operation(head: Any) -> str:
+    """Projection work a changed head requires, derived from the head -- not the verb.
+
+    A revert that lands on a disabled revision must delete the projection, and a
+    restore must re-upsert it; keying either off the verb name would get both wrong.
+    """
+    return _DELETE_OPERATION if not head.enabled else _UPSERT_OPERATION
+
+
 def _mutate_authority_with_outbox(
     *,
     doc: dict[str, Any],
-    chunk_id: str,
-    expected_revision: int,
-    content: str,
-    mutation: str,
-    authority_mode: str,
+    m: "ChunkMutation",
+    verb: ChunkVerb,
     include_graph: bool,
     chunk_catalog: ChunkCatalog,
     operation_queue: IndexOperationQueue,
     permit: DocumentWritePermit,
+    strict_missing_head: bool = False,
+    verify_completeness: bool = False,
+    initial_status: str = "pending",
 ) -> _AuthorityMutation:
+    """Shared ChunkHead transaction + outbox ceremony; the verb lives in ``verb``.
+
+    Everything below is identical for every authority mode (write fences, attempt
+    record, durable operations, generation stamping).  What differs per mode arrives
+    as data from the writer (``strict_missing_head`` / ``verify_completeness`` /
+    ``initial_status``) and what differs per verb arrives as the ``verb`` policy, so
+    neither axis can grow an ``if`` back in here.  The verdict is taken before the
+    completeness fence on purpose: that fence compares enabled-head counts against the
+    pre-write document state, so it must not see the head this verb is about to flip.
+    """
+    chunk_id = m.chunk_id
     target_revision = int(doc.get("desired_index_revision") or doc.get("content_revision") or 0)
     with Session(chunk_catalog.engine, expire_on_commit=False) as session:
         with session.begin():
@@ -210,7 +232,7 @@ def _mutate_authority_with_outbox(
             try:
                 current = chunk_catalog.get_head(chunk_id, session=session, for_update=True)
             except ChunkRevisionConflict as exc:
-                if authority_mode == "active":
+                if strict_missing_head:
                     raise ChunkAuthorityIncomplete(
                         "document chunk authority is not complete for active mutation"
                     ) from exc
@@ -223,15 +245,10 @@ def _mutate_authority_with_outbox(
                 raise ChunkAuthorityIncomplete(
                     "document chunk authority is not complete for active mutation"
                 )
-            if mutation == "delete" and not current.enabled:
-                tombstone = chunk_catalog.tombstone_chunk(
-                    chunk_id,
-                    expected_revision=expected_revision,
-                    editor_id=_MANUAL_ACTOR,
-                    session=session,
-                )
-                return _AuthorityMutation(tombstone, (), False)
-            if authority_mode == "active":
+            verdict = verb.decide(current, m)
+            if verdict == "noop":
+                return _AuthorityMutation(current, (), False)
+            if verify_completeness:
                 actual_count = chunk_catalog.count_document_heads(
                     str(doc["id"]),
                     document_revision=target_revision,
@@ -242,25 +259,9 @@ def _mutate_authority_with_outbox(
                     raise ChunkAuthorityIncomplete(
                         "document chunk authority is not complete for active mutation"
                     )
-            if not current.enabled:
+            if verdict == "reject":
                 raise ChunkRevisionConflict("chunk is tombstoned")
-            if mutation == "edit":
-                head = chunk_catalog.edit_chunk(
-                    chunk_id,
-                    expected_revision=expected_revision,
-                    content=content,
-                    editor_id=_MANUAL_ACTOR,
-                    edit_source="user",
-                    session=session,
-                )
-            else:
-                head = chunk_catalog.tombstone_chunk(
-                    chunk_id,
-                    expected_revision=expected_revision,
-                    editor_id=_MANUAL_ACTOR,
-                    session=session,
-                )
-            initial_status = "shadow" if authority_mode == "shadow" else "pending"
+            head = verb.write(session, current, m, chunk_catalog)
             attempt = operation_queue.start_chunk_mutation_attempt(
                 tenant_id=str(head.tenant_id),
                 dataset_id=str(head.dataset_id),
@@ -279,7 +280,7 @@ def _mutate_authority_with_outbox(
                 target_revision=target_revision,
                 chunk_id=str(head.id),
                 expected_content_revision=int(head.content_revision),
-                mutation=mutation,
+                mutation=_durable_operation(head),
                 include_graph=include_graph,
                 initial_status=initial_status,
                 session=session,
@@ -423,6 +424,522 @@ def _legacy_update(
         raise ChunkAuthorityIncomplete(str(exc)) from exc
 
 
+ChunkOp = Literal["edit", "tombstone", "restore", "revert"]
+
+#: Durable-operation vocabulary understood by ``IndexOperationQueue``.  Kept as the two
+#: legacy strings so projection workers, the reconciler and the operation dedup key are
+#: unaffected by the verbs added here.
+_UPSERT_OPERATION = "edit"
+_DELETE_OPERATION = "delete"
+
+_REASON_MAX_CHARS = 500
+
+
+@dataclass(frozen=True)
+class ChunkMutation:
+    """One operator request against a single ChunkHead.
+
+    Argument validation lives here so a verb/argument mismatch (revert with no target
+    revision, edit with blank text) is rejected before any authority mode is consulted.
+
+    Raises:
+        ValueError: the verb's required arguments are missing or malformed.
+    """
+
+    op: ChunkOp
+    doc_id: str
+    chunk_id: str
+    expected_revision: int
+    text: str | None = None
+    target_revision: int | None = None
+    reason: str | None = None
+    editor_id: str = _MANUAL_ACTOR
+
+    def __post_init__(self) -> None:
+        if self.op not in ("edit", "tombstone", "restore", "revert"):
+            raise ValueError(f"未知切片动作: {self.op!r}")
+        if int(self.expected_revision) < 0:
+            raise ValueError("expected_revision 不能为负数")
+        if self.op == "edit":
+            normalized = str(self.text or "").strip()
+            if not normalized:
+                raise ValueError("切片正文不能为空")
+            object.__setattr__(self, "text", normalized)
+        elif self.op == "revert":
+            if self.target_revision is None or int(self.target_revision) < 0:
+                raise ValueError("回滚切片必须给出 target_revision")
+            object.__setattr__(self, "target_revision", int(self.target_revision))
+        elif self.text is not None or self.target_revision is not None:
+            raise ValueError(f"动作 {self.op} 不接受 text / target_revision")
+
+    @property
+    def metadata_patch(self) -> dict[str, Any] | None:
+        """Audit note carried on the head; the revision rows keep no reason (S-CL S2.4)."""
+        if not self.reason:
+            return None
+        stamp = datetime.now(timezone.utc).isoformat()
+        return {
+            "edit_reason": self.reason,
+            "edit_reason_at": stamp,
+            "edit_reason_by": self.editor_id,
+        }
+
+
+@dataclass(frozen=True)
+class WriterContext:
+    """Everything a writer needs, resolved once by :func:`apply_chunk_mutation`."""
+
+    doc: dict[str, Any]
+    pipeline: Any
+    catalog_api: Any
+    chunk_catalog: ChunkCatalog | None
+    operation_queue: IndexOperationQueue | None
+    include_graph: bool
+
+
+@dataclass(frozen=True)
+class ChunkWriteOutcome:
+    """Result of one applied :class:`ChunkMutation`, neutral to verb and to mode."""
+
+    head: Any = None
+    chunk: Any = None
+    authority_changed: bool = True
+    operation_ids: tuple[str, ...] = ()
+    projection_pending: bool = False
+    #: Enabled-head count in the modes that treat the authority as the chunk-count truth.
+    remaining_chunks: int | None = None
+    removed_chunks: int = 0
+    removed_relations: int = 0
+    removed_entities: int = 0
+    graph_entities: int = 0
+    graph_relations: int = 0
+
+
+# --------------------------------------------------------------------------- #
+# Verbs -- one entry in AUTHORITY_STEPS per ChunkOp.  ``decide`` is pure so the
+# idempotent / reject verdicts are testable without a database, and so the shared
+# transaction can keep the original order: verdict -> completeness fence -> guard -> write.
+# --------------------------------------------------------------------------- #
+VerbVerdict = Literal["noop", "proceed", "reject"]
+
+
+@dataclass(frozen=True)
+class ChunkVerb:
+    decide: Callable[[Any, ChunkMutation], VerbVerdict]
+    write: Callable[[Session, Any, ChunkMutation, ChunkCatalog], Any]
+
+
+def _decide_requires_enabled(current: Any, m: ChunkMutation) -> VerbVerdict:
+    return "proceed" if current.enabled else "reject"
+
+
+def _decide_tombstone(current: Any, m: ChunkMutation) -> VerbVerdict:
+    if current.content_revision != m.expected_revision:
+        raise ChunkRevisionConflict("chunk revision conflict")
+    return "noop" if not current.enabled else "proceed"
+
+
+def _decide_restore(current: Any, m: ChunkMutation) -> VerbVerdict:
+    if current.content_revision != m.expected_revision:
+        raise ChunkRevisionConflict("chunk revision conflict")
+    return "noop" if current.enabled else "proceed"
+
+
+def _write_edit(
+    session: Session, current: Any, m: ChunkMutation, chunks: ChunkCatalog
+) -> Any:
+    return chunks.edit_chunk(
+        m.chunk_id,
+        expected_revision=m.expected_revision,
+        content=str(m.text),
+        editor_id=m.editor_id,
+        edit_source="user",
+        metadata_patch=m.metadata_patch,
+        session=session,
+    )
+
+
+def _write_tombstone(
+    session: Session, current: Any, m: ChunkMutation, chunks: ChunkCatalog
+) -> Any:
+    return chunks.tombstone_chunk(
+        m.chunk_id,
+        expected_revision=m.expected_revision,
+        editor_id=m.editor_id,
+        session=session,
+    )
+
+
+def _write_restore(
+    session: Session, current: Any, m: ChunkMutation, chunks: ChunkCatalog
+) -> Any:
+    return chunks.edit_chunk(
+        m.chunk_id,
+        expected_revision=m.expected_revision,
+        content=current.content,
+        editor_id=m.editor_id,
+        edit_source="restore",
+        enabled=True,
+        metadata_patch=m.metadata_patch,
+        session=session,
+    )
+
+
+def _write_revert(
+    session: Session, current: Any, m: ChunkMutation, chunks: ChunkCatalog
+) -> Any:
+    revision = session.scalar(
+        select(ChunkRevision).where(
+            ChunkRevision.chunk_id == m.chunk_id,
+            ChunkRevision.tenant_id == current.tenant_id,
+            ChunkRevision.dataset_id == current.dataset_id,
+            ChunkRevision.document_id == current.document_id,
+            ChunkRevision.revision == int(m.target_revision or 0),
+        )
+    )
+    if revision is None:
+        raise ChunkRevisionConflict("target revision does not exist")
+    return chunks.edit_chunk(
+        m.chunk_id,
+        expected_revision=m.expected_revision,
+        content=revision.content,
+        editor_id=m.editor_id,
+        edit_source="revert",
+        enabled=revision.enabled,
+        metadata_patch=m.metadata_patch,
+        session=session,
+    )
+
+
+AUTHORITY_STEPS: dict[str, ChunkVerb] = {
+    "edit": ChunkVerb(_decide_requires_enabled, _write_edit),
+    "tombstone": ChunkVerb(_decide_tombstone, _write_tombstone),
+    "restore": ChunkVerb(_decide_restore, _write_restore),
+    "revert": ChunkVerb(_decide_requires_enabled, _write_revert),
+}
+
+
+# --------------------------------------------------------------------------- #
+# Authority-mode writers -- the only place rollout semantics differ, expressed
+# as declared data so the shared code never tests which mode it is in.
+# --------------------------------------------------------------------------- #
+class ChunkProjectionWriter(Protocol):
+    """Applies one :class:`ChunkMutation` under a single chunk authority rollout mode.
+
+    Adding a mode is one :func:`register_chunk_writer` call; no code in this module
+    branches on a mode name.
+    """
+
+    mode: str
+    #: A missing ChunkHead means incomplete authority, not a plain 404.
+    strict_missing_head: bool
+    #: Enabled-head count must equal the recorded chunk_count before writing.
+    verify_completeness: bool
+    #: Initial status stamped on the durable projection operations.
+    initial_status: str
+    #: Whether the legacy synchronous projection still serves reads in this mode.
+    mirrors_legacy: bool
+    #: Whether a changed write leaves the projection awaiting an async worker.
+    async_projection: bool
+    #: Whether enabled ChunkHead count is the truth for the document's chunk_count.
+    counts_heads_as_remaining: bool
+
+    def apply(self, m: ChunkMutation, ctx: WriterContext) -> ChunkWriteOutcome: ...
+
+
+class _AuthorityWriter:
+    """Body shared by the two modes that have a ChunkHead authority."""
+
+    def __init__(self, spec: ChunkProjectionWriter) -> None:
+        self.spec = spec
+
+    def apply(self, m: ChunkMutation, ctx: WriterContext) -> ChunkWriteOutcome:
+        doc = ctx.doc
+        authority, queue = _authority_dependencies(
+            catalog_api=ctx.catalog_api,
+            chunk_catalog=ctx.chunk_catalog,
+            operation_queue=ctx.operation_queue,
+        )
+        try:
+            permit = read_document_write_permit(
+                m.doc_id,
+                dataset_id=str(doc.get("dataset_id") or ""),
+                engine=authority.engine,
+            )
+        except DocumentWriteSuperseded as exc:
+            raise ChunkAuthorityIncomplete(str(exc)) from exc
+        if self.spec.mirrors_legacy:
+            _bootstrap_authority_head(
+                doc=doc, chunk_id=m.chunk_id, pipeline=ctx.pipeline, chunk_catalog=authority
+            )
+        mutation = _mutate_authority_with_outbox(
+            doc=doc,
+            m=m,
+            verb=AUTHORITY_STEPS[m.op],
+            include_graph=ctx.include_graph,
+            chunk_catalog=authority,
+            operation_queue=queue,
+            permit=permit,
+            strict_missing_head=self.spec.strict_missing_head,
+            verify_completeness=self.spec.verify_completeness,
+            initial_status=self.spec.initial_status,
+        )
+        head = mutation.head
+        outcome = ChunkWriteOutcome(
+            head=head,
+            chunk=_head_to_chunk(head),
+            authority_changed=mutation.changed,
+            operation_ids=mutation.operation_ids,
+            projection_pending=self.spec.async_projection and mutation.changed,
+            remaining_chunks=self._remaining_chunks(authority, m, head),
+        )
+        if not self.spec.mirrors_legacy or not mutation.changed:
+            return outcome
+        return self._mirror_legacy(m, ctx, authority, permit, outcome)
+
+    def _remaining_chunks(
+        self, authority: ChunkCatalog, m: ChunkMutation, head: Any
+    ) -> int | None:
+        if not self.spec.counts_heads_as_remaining:
+            return None
+        return authority.count_document_heads(
+            m.doc_id,
+            document_revision=int(head.document_revision),
+            enabled_only=True,
+        )
+
+    def _mirror_legacy(
+        self,
+        m: ChunkMutation,
+        ctx: WriterContext,
+        authority: ChunkCatalog,
+        permit: DocumentWritePermit,
+        outcome: ChunkWriteOutcome,
+    ) -> ChunkWriteOutcome:
+        """Run the legacy synchronous projection under the worker's own lock namespace."""
+        assert_document_write_permit(permit, engine=authority.engine)
+        base = {
+            "head": outcome.head,
+            "chunk": outcome.chunk,
+            "authority_changed": outcome.authority_changed,
+            "operation_ids": outcome.operation_ids,
+            "projection_pending": False,
+        }
+        if m.op == "tombstone":
+            removed_chunks, removed_relations, removed_entities = _legacy_delete(
+                doc=ctx.doc,
+                chunk_id=m.chunk_id,
+                pipeline=ctx.pipeline,
+                permit=permit,
+                authority=authority,
+            )
+            return ChunkWriteOutcome(
+                **{
+                    **base,
+                    "removed_chunks": removed_chunks,
+                    "removed_relations": removed_relations,
+                    "removed_entities": removed_entities,
+                }
+            )
+        legacy_chunk = _legacy_chunk(m.doc_id, m.chunk_id, doc=ctx.doc, pipeline=ctx.pipeline)
+        result = _legacy_update(
+            doc=ctx.doc,
+            chunk=legacy_chunk,
+            chunk_id=m.chunk_id,
+            normalized=str(outcome.head.content),
+            pipeline=ctx.pipeline,
+            permit=permit,
+            authority=authority,
+        )
+        return ChunkWriteOutcome(
+            **{
+                **base,
+                "removed_relations": result.removed_relations,
+                "removed_entities": result.removed_entities,
+                "graph_entities": result.graph_entities,
+                "graph_relations": result.graph_relations,
+            }
+        )
+
+
+class LegacyWriter:
+    """``off`` -- no ChunkHead authority; the legacy synchronous projection is the truth."""
+
+    mode = "off"
+    strict_missing_head = False
+    verify_completeness = False
+    initial_status = "pending"
+    mirrors_legacy = True
+    async_projection = False
+    counts_heads_as_remaining = False
+
+    def apply(self, m: ChunkMutation, ctx: WriterContext) -> ChunkWriteOutcome:
+        if m.op in ("restore", "revert"):
+            raise ChunkAuthorityIncomplete(
+                f"动作 {m.op} 需要 ChunkHead 权威（catalog.chunk_authority_mode=shadow 或 active）"
+            )
+        doc = ctx.doc
+        permit = _legacy_writer_permit(m.doc_id, doc=doc, catalog_api=ctx.catalog_api)
+        if permit is not None:
+            assert_document_write_permit(permit)
+        legacy_chunk = _legacy_chunk(m.doc_id, m.chunk_id, doc=doc, pipeline=ctx.pipeline)
+        authority = ctx.chunk_catalog
+        if authority is None and callable(getattr(ctx.catalog_api, "get_engine", None)):
+            authority = ChunkCatalog(ctx.catalog_api.get_engine())
+        if m.op == "tombstone":
+            removed_chunks, removed_relations, removed_entities = _legacy_delete(
+                doc=doc,
+                chunk_id=m.chunk_id,
+                pipeline=ctx.pipeline,
+                permit=permit,
+                authority=authority,
+            )
+            return ChunkWriteOutcome(
+                chunk=legacy_chunk,
+                removed_chunks=removed_chunks,
+                removed_relations=removed_relations,
+                removed_entities=removed_entities,
+            )
+        result = _legacy_update(
+            doc=doc,
+            chunk=legacy_chunk,
+            chunk_id=m.chunk_id,
+            normalized=str(m.text),
+            pipeline=ctx.pipeline,
+            permit=permit,
+            authority=authority,
+        )
+        return ChunkWriteOutcome(
+            chunk=result.chunk,
+            removed_relations=result.removed_relations,
+            removed_entities=result.removed_entities,
+            graph_entities=result.graph_entities,
+            graph_relations=result.graph_relations,
+        )
+
+
+class ShadowWriter(_AuthorityWriter):
+    """``shadow`` -- record authoritative revisions, then run the legacy path for real."""
+
+    mode = "shadow"
+    strict_missing_head = False
+    verify_completeness = False
+    initial_status = "shadow"
+    mirrors_legacy = True
+    async_projection = False
+    counts_heads_as_remaining = False
+
+    def __init__(self) -> None:
+        super().__init__(self)
+
+
+class ActiveWriter(_AuthorityWriter):
+    """``active`` -- change only the MySQL authority; workers project asynchronously."""
+
+    mode = "active"
+    strict_missing_head = True
+    verify_completeness = True
+    initial_status = "pending"
+    mirrors_legacy = False
+    async_projection = True
+    counts_heads_as_remaining = True
+
+    def __init__(self) -> None:
+        super().__init__(self)
+
+
+CHUNK_WRITERS: ProviderRegistry[None, ChunkProjectionWriter] = ProviderRegistry("chunk writer")
+
+
+def register_chunk_writer(writer: ChunkProjectionWriter, *, replace: bool = False) -> None:
+    """Register a chunk authority-mode writer under its own ``mode`` key."""
+    CHUNK_WRITERS.register(writer.mode, lambda _config, _w=writer: _w, replace=replace)
+
+
+def register_builtin_chunk_writers() -> None:
+    """(Re)register the three built-in rollout modes; safe to call more than once."""
+    for writer in (LegacyWriter(), ShadowWriter(), ActiveWriter()):
+        register_chunk_writer(writer, replace=True)
+
+
+register_builtin_chunk_writers()
+
+
+def apply_chunk_mutation(
+    m: ChunkMutation,
+    *,
+    authority_mode: str = "off",
+    catalog_api: Any = catalog,
+    pipeline: Any,
+    chunk_catalog: ChunkCatalog | None = None,
+    operation_queue: IndexOperationQueue | None = None,
+) -> ChunkWriteOutcome:
+    """Single entry point for every operator chunk mutation.
+
+    An unknown mode raises with the registered names listed, so a mistyped
+    ``RAG4C_CATALOG_CHUNK_AUTHORITY_MODE`` fails visibly instead of silently
+    falling back to the legacy projection path.
+
+    Raises:
+        ValueError: unknown mode, or a verb/argument mismatch on ``m``.
+        ChunkAuthorityIncomplete: authority is absent, stale or incomplete.
+        ChunkRevisionConflict: ``expected_revision`` no longer matches the head.
+    """
+    writer = CHUNK_WRITERS.create(authority_mode, None)
+    doc = _document(m.doc_id, catalog_api=catalog_api)
+    return writer.apply(
+        m,
+        WriterContext(
+            doc=doc,
+            pipeline=pipeline,
+            catalog_api=catalog_api,
+            chunk_catalog=chunk_catalog,
+            operation_queue=operation_queue,
+            include_graph=getattr(pipeline, "graph_builder", None) is not None,
+        ),
+    )
+
+
+def _bounded_reason(reason: str | None) -> str | None:
+    cleaned = str(reason or "").strip()
+    if not cleaned:
+        return None
+    return cleaned[:_REASON_MAX_CHARS]
+
+
+def _apply_operator_mutation(
+    m: ChunkMutation,
+    *,
+    authority_mode: str,
+    catalog_api: Any,
+    pipeline: Any,
+    chunk_catalog: ChunkCatalog | None,
+    operation_queue: IndexOperationQueue | None,
+    epoch_reason: str,
+) -> ChunkUpdateResult:
+    outcome = apply_chunk_mutation(
+        m,
+        authority_mode=authority_mode,
+        catalog_api=catalog_api,
+        pipeline=pipeline,
+        chunk_catalog=chunk_catalog,
+        operation_queue=operation_queue,
+    )
+    tenant_id = str(_document(m.doc_id, catalog_api=catalog_api).get("tenant_id") or "")
+    if tenant_id:
+        cache_epoch.bump(tenant_id, reason=f"{epoch_reason} {m.chunk_id}")
+    return ChunkUpdateResult(
+        chunk=outcome.chunk,
+        removed_relations=outcome.removed_relations,
+        removed_entities=outcome.removed_entities,
+        graph_entities=outcome.graph_entities,
+        graph_relations=outcome.graph_relations,
+        authority_mode=authority_mode,
+        projection_pending=outcome.projection_pending,
+        operation_ids=outcome.operation_ids,
+    )
+
+
 def update_document_chunk_artifacts(
     doc_id: str,
     chunk_id: str,
@@ -436,102 +953,66 @@ def update_document_chunk_artifacts(
     chunk_catalog: ChunkCatalog | None = None,
     operation_queue: IndexOperationQueue | None = None,
     ledger: IngestLedger | None = None,
+    reason: str | None = None,
+    enabled: bool | None = None,
 ) -> ChunkUpdateResult:
-    normalized = text.strip()
-    if not normalized:
-        raise ValueError("切片正文不能为空")
-    if authority_mode not in _AUTHORITY_MODES:
-        raise ValueError("chunk authority mode 必须是 off / shadow / active")
-    doc = _document(doc_id, catalog_api=catalog_api)
+    """Edit or enable/disable one chunk; a compatible shell over the writer registry.
 
-    if authority_mode == "off":
-        permit = _legacy_writer_permit(doc_id, doc=doc, catalog_api=catalog_api)
-        if permit is not None:
-            assert_document_write_permit(permit)
-        legacy_chunk = _legacy_chunk(doc_id, chunk_id, doc=doc, pipeline=pipeline)
-        legacy_authority = (
-            chunk_catalog
-            or (
-                ChunkCatalog(catalog_api.get_engine())
-                if callable(getattr(catalog_api, "get_engine", None))
-                else None
-            )
-        )
-        result = _legacy_update(
-            doc=doc,
-            chunk=legacy_chunk,
-            chunk_id=chunk_id,
-            normalized=normalized,
-            pipeline=pipeline,
-            permit=permit,
-            authority=legacy_authority,
-        )
-    else:
-        del editor_id, ledger  # client identity is not trusted until governance middleware exists
-        authority, queue = _authority_dependencies(
-            catalog_api=catalog_api,
-            chunk_catalog=chunk_catalog,
-            operation_queue=operation_queue,
-        )
-        try:
-            permit = read_document_write_permit(
-                doc_id,
-                dataset_id=str(doc.get("dataset_id") or ""),
-                engine=authority.engine,
-            )
-        except DocumentWriteSuperseded as exc:
-            raise ChunkAuthorityIncomplete(str(exc)) from exc
-        if authority_mode == "shadow":
-            _bootstrap_authority_head(
-                doc=doc, chunk_id=chunk_id, pipeline=pipeline, chunk_catalog=authority
-            )
-        mutation = _mutate_authority_with_outbox(
-            doc=doc,
+    ``enabled`` selects the verb when given (True -> restore, False -> tombstone);
+    otherwise a non-empty ``text`` is an edit.
+    """
+    del editor_id, ledger  # client identity is not trusted until governance middleware exists
+    op: ChunkOp = "edit" if enabled is None else ("restore" if enabled else "tombstone")
+    return _apply_operator_mutation(
+        ChunkMutation(
+            op=op,
+            doc_id=doc_id,
             chunk_id=chunk_id,
             expected_revision=int(expected_revision),
-            content=normalized,
-            mutation="edit",
-            authority_mode=authority_mode,
-            include_graph=getattr(pipeline, "graph_builder", None) is not None,
-            chunk_catalog=authority,
-            operation_queue=queue,
-            permit=permit,
-        )
-        edited = mutation.head
-        operation_ids = mutation.operation_ids
-        if authority_mode == "shadow":
-            assert_document_write_permit(permit, engine=authority.engine)
-            legacy_chunk = _legacy_chunk(doc_id, chunk_id, doc=doc, pipeline=pipeline)
-            legacy_result = _legacy_update(
-                doc=doc,
-                chunk=legacy_chunk,
-                chunk_id=chunk_id,
-                normalized=normalized,
-                pipeline=pipeline,
-                permit=permit,
-                authority=authority,
-            )
-            result = ChunkUpdateResult(
-                chunk=_head_to_chunk(edited),
-                removed_relations=legacy_result.removed_relations,
-                removed_entities=legacy_result.removed_entities,
-                graph_entities=legacy_result.graph_entities,
-                graph_relations=legacy_result.graph_relations,
-                authority_mode=authority_mode,
-                operation_ids=operation_ids,
-            )
-        else:
-            result = ChunkUpdateResult(
-                chunk=_head_to_chunk(edited),
-                authority_mode=authority_mode,
-                projection_pending=True,
-                operation_ids=operation_ids,
-            )
+            text=None if enabled is not None else str(text),
+            reason=_bounded_reason(reason),
+        ),
+        authority_mode=authority_mode,
+        catalog_api=catalog_api,
+        pipeline=pipeline,
+        chunk_catalog=chunk_catalog,
+        operation_queue=operation_queue,
+        epoch_reason="编辑切片",
+    )
 
-    tenant_id = str(doc.get("tenant_id") or "")
-    if tenant_id:
-        cache_epoch.bump(tenant_id, reason=f"编辑切片 {chunk_id}")
-    return result
+
+def revert_document_chunk_artifacts(
+    doc_id: str,
+    chunk_id: str,
+    *,
+    target_revision: int,
+    expected_revision: int = 0,
+    editor_id: str = _MANUAL_ACTOR,
+    authority_mode: str = "off",
+    catalog_api: Any = catalog,
+    pipeline: Any,
+    chunk_catalog: ChunkCatalog | None = None,
+    operation_queue: IndexOperationQueue | None = None,
+    reason: str | None = None,
+) -> ChunkUpdateResult:
+    """Roll one chunk head back to a recorded revision as a new revision."""
+    del editor_id  # client identity is not trusted until governance middleware exists
+    return _apply_operator_mutation(
+        ChunkMutation(
+            op="revert",
+            doc_id=doc_id,
+            chunk_id=chunk_id,
+            expected_revision=int(expected_revision),
+            target_revision=int(target_revision),
+            reason=_bounded_reason(reason),
+        ),
+        authority_mode=authority_mode,
+        catalog_api=catalog_api,
+        pipeline=pipeline,
+        chunk_catalog=chunk_catalog,
+        operation_queue=operation_queue,
+        epoch_reason="回滚切片",
+    )
 
 
 def _update_document_after_delete(*, doc_id: str, doc: dict[str, Any], catalog_api: Any) -> int:
@@ -603,115 +1084,66 @@ def delete_document_chunk_artifacts(
     operation_queue: IndexOperationQueue | None = None,
     ledger: IngestLedger | None = None,
 ) -> dict[str, Any]:
-    if authority_mode not in _AUTHORITY_MODES:
-        raise ValueError("chunk authority mode 必须是 off / shadow / active")
+    """Tombstone one chunk: the durable delete of its projection plus count/epoch upkeep.
+
+    Kept as a compatible shell so ``documents.delete_document_chunk`` and the tests that
+    monkeypatch it by name keep working.
+    """
+    del editor_id, ledger  # client identity is not trusted until governance middleware exists
     doc = _document(doc_id, catalog_api=catalog_api)
     tenant_id = str(doc.get("tenant_id") or "")
-    operation_ids: tuple[str, ...] = ()
-    content_revision = int(expected_revision)
-    projection_pending = False
-    authority_changed = True
-
-    if authority_mode == "off":
-        permit = _legacy_writer_permit(doc_id, doc=doc, catalog_api=catalog_api)
-        if permit is not None:
-            assert_document_write_permit(permit)
-        _legacy_chunk(doc_id, chunk_id, doc=doc, pipeline=pipeline)
-        legacy_authority = (
-            chunk_catalog
-            or (
-                ChunkCatalog(catalog_api.get_engine())
-                if callable(getattr(catalog_api, "get_engine", None))
-                else None
-            )
-        )
-        removed_chunks, removed_relations, removed_entities = _legacy_delete(
-            doc=doc,
-            chunk_id=chunk_id,
-            pipeline=pipeline,
-            permit=permit,
-            authority=legacy_authority,
-        )
-    else:
-        del editor_id, ledger  # client identity is not trusted until governance middleware exists
-        authority, queue = _authority_dependencies(
-            catalog_api=catalog_api,
-            chunk_catalog=chunk_catalog,
-            operation_queue=operation_queue,
-        )
-        try:
-            permit = read_document_write_permit(
-                doc_id,
-                dataset_id=str(doc.get("dataset_id") or ""),
-                engine=authority.engine,
-            )
-        except DocumentWriteSuperseded as exc:
-            raise ChunkAuthorityIncomplete(str(exc)) from exc
-        if authority_mode == "shadow":
-            _bootstrap_authority_head(
-                doc=doc, chunk_id=chunk_id, pipeline=pipeline, chunk_catalog=authority
-            )
-        mutation = _mutate_authority_with_outbox(
-            doc=doc,
+    outcome = apply_chunk_mutation(
+        ChunkMutation(
+            op="tombstone",
+            doc_id=doc_id,
             chunk_id=chunk_id,
             expected_revision=int(expected_revision),
-            content="",
-            mutation="delete",
-            authority_mode=authority_mode,
-            include_graph=getattr(pipeline, "graph_builder", None) is not None,
-            chunk_catalog=authority,
-            operation_queue=queue,
-            permit=permit,
-        )
-        tombstone = mutation.head
-        authority_changed = mutation.changed
-        content_revision = int(tombstone.content_revision)
-        operation_ids = mutation.operation_ids
-        if authority_mode == "shadow" and authority_changed:
-            assert_document_write_permit(permit, engine=authority.engine)
-            removed_chunks, removed_relations, removed_entities = _legacy_delete(
-                doc=doc,
-                chunk_id=chunk_id,
-                pipeline=pipeline,
-                permit=permit,
-                authority=authority,
-            )
-        else:
-            removed_chunks = removed_relations = removed_entities = 0
-            projection_pending = authority_changed
-
-    if authority_mode == "active":
-        next_count = authority.count_document_heads(
-            doc_id,
-            document_revision=int(tombstone.document_revision),
-            enabled_only=True,
-        )
+        ),
+        authority_mode=authority_mode,
+        catalog_api=catalog_api,
+        pipeline=pipeline,
+        chunk_catalog=chunk_catalog,
+        operation_queue=operation_queue,
+    )
+    if outcome.remaining_chunks is not None:
+        next_count = int(outcome.remaining_chunks)
     else:
         next_count = int(doc.get("chunk_count") or 0)
-        if authority_changed:
+        if outcome.authority_changed:
             next_count = max(0, next_count - 1)
             next_count = _update_document_after_delete(
                 doc_id=doc_id, doc=doc, catalog_api=catalog_api
             )
-    if tenant_id and authority_changed:
+    if tenant_id and outcome.authority_changed:
         cache_epoch.bump(tenant_id, reason=f"删除切片 {chunk_id}")
+    head = outcome.head
     return {
         "document_id": doc_id,
         "chunk_id": chunk_id,
-        "removed_chunks": removed_chunks,
-        "removed_relations": removed_relations,
-        "removed_entities": removed_entities,
+        "removed_chunks": outcome.removed_chunks,
+        "removed_relations": outcome.removed_relations,
+        "removed_entities": outcome.removed_entities,
         "remaining_chunks": next_count,
-        "content_revision": content_revision,
+        "content_revision": int(head.content_revision) if head is not None else int(expected_revision),
         "authority_mode": authority_mode,
-        "projection_pending": projection_pending,
-        "operation_ids": list(operation_ids),
+        "projection_pending": outcome.projection_pending,
+        "operation_ids": list(outcome.operation_ids),
     }
 
 
 __all__ = [
+    "AUTHORITY_STEPS",
+    "ActiveWriter",
+    "CHUNK_WRITERS",
     "ChunkAuthorityIncomplete",
+    "ChunkMutation",
     "ChunkUpdateResult",
-    "update_document_chunk_artifacts",
+    "ChunkWriteOutcome",
+    "LegacyWriter",
+    "ShadowWriter",
+    "apply_chunk_mutation",
     "delete_document_chunk_artifacts",
+    "register_chunk_writer",
+    "revert_document_chunk_artifacts",
+    "update_document_chunk_artifacts",
 ]

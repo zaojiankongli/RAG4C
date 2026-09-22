@@ -199,12 +199,24 @@ class ChunkCatalog:
             )) or 0)
             return relation, child_count
 
-    def list_revisions(self, chunk_id: str) -> list[ChunkRevision]:
+    def list_revisions(
+        self, tenant_id: str, dataset_id: str, document_id: str, chunk_id: str
+    ) -> list[ChunkRevision]:
+        """Immutable snapshots of one chunk, scoped to its owning tenant and document.
+
+        The scope columns are required, not optional filters: chunk ids are caller
+        supplied, so an unscoped lookup would read another tenant's revision content.
+        """
         with Session(self.engine, expire_on_commit=False) as session:
             return list(
                 session.scalars(
                     select(ChunkRevision)
-                    .where(ChunkRevision.chunk_id == chunk_id)
+                    .where(
+                        ChunkRevision.chunk_id == chunk_id,
+                        ChunkRevision.tenant_id == tenant_id,
+                        ChunkRevision.dataset_id == dataset_id,
+                        ChunkRevision.document_id == document_id,
+                    )
                     .order_by(ChunkRevision.revision)
                 )
             )
@@ -291,6 +303,7 @@ class ChunkCatalog:
         editor_id: str,
         edit_source: str = "user",
         enabled: bool | None = None,
+        metadata_patch: dict[str, Any] | None = None,
         session: Session | None = None,
     ) -> ChunkHead:
         def apply(target: Session) -> ChunkHead:
@@ -321,6 +334,12 @@ class ChunkCatalog:
             head.edit_source = edit_source
             if enabled is not None:
                 head.enabled = bool(enabled)
+            if metadata_patch:
+                # Assign a new dict, not an in-place update: JSON columns are only
+                # tracked by SQLAlchemy when the attribute itself is rebound.
+                merged = dict(head.chunk_metadata or {})
+                merged.update(metadata_patch)
+                head.chunk_metadata = merged
             target.flush()
             return head
 
@@ -372,11 +391,22 @@ class ChunkCatalog:
         target_revision: int,
         expected_revision: int,
         editor_id: str,
+        metadata_patch: dict[str, Any] | None = None,
     ) -> ChunkHead:
+        """Roll a head back to an earlier snapshot, including that snapshot's enabled flag.
+
+        The snapshot is looked up under the head's own tenant / dataset / document scope,
+        so a caller that only knows a ``chunk_id`` cannot substitute another scope's
+        revision content.
+        """
         with Session(self.engine, expire_on_commit=False) as session:
+            head = self.get_head(chunk_id, session=session, for_update=True)
             revision = session.scalar(
                 select(ChunkRevision).where(
                     ChunkRevision.chunk_id == chunk_id,
+                    ChunkRevision.tenant_id == head.tenant_id,
+                    ChunkRevision.dataset_id == head.dataset_id,
+                    ChunkRevision.document_id == head.document_id,
                     ChunkRevision.revision == target_revision,
                 )
             )
@@ -391,6 +421,7 @@ class ChunkCatalog:
             editor_id=editor_id,
             edit_source="revert",
             enabled=enabled,
+            metadata_patch=metadata_patch,
         )
 
     def list_projection_candidates(
