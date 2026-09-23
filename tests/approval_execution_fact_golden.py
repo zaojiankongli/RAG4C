@@ -338,6 +338,88 @@ CASES = [
    "quality_gate_reason": ""
   },
   "msg": "quality_gate_reason is invalid"
+ },
+ {
+  "case": "prec-dswt-missing-id-and-alias",
+  "action": "dataset_workspace_transfer",
+  "over": {
+   "source_workspace_id": None,
+   "profile_revision": 5
+  },
+  "msg": "Dataset profile revision aliases must agree"
+ },
+ {
+  "case": "prec-dswt-two-aliases",
+  "action": "dataset_workspace_transfer",
+  "over": {
+   "profile_revision": 5,
+   "ownership_revision": 4
+  },
+  "msg": "Dataset profile revision aliases must agree"
+ },
+ {
+  "case": "prec-dswt-same-target-and-ws-alias",
+  "action": "dataset_workspace_transfer",
+  "over": {
+   "target_workspace_id": "w1",
+   "source_workspace_revision": 99
+  },
+  "msg": "source and target Workspace must differ"
+ },
+ {
+  "case": "prec-waiver-two-digests",
+  "action": "knowledge_base_release_quality_waiver",
+  "over": {
+   "policy_digest": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+   "quality_gate_digest": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  },
+  "msg": "policy_digest must be a lowercase SHA-256 digest"
+ },
+ {
+  "case": "prec-waiver-gate-rev-and-evidence",
+  "action": "knowledge_base_release_quality_waiver",
+  "over": {
+   "quality_gate_revision": 14,
+   "evidence_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "msg": "quality_gate_revision must match channel_revision"
+ },
+ {
+  "case": "prec-waiver-noncanonical-and-state",
+  "action": "knowledge_base_release_quality_waiver",
+  "over": {
+   "waiver_expires_at": "2030-01-01T00:00:00+00:00",
+   "requested_expires_at": "2030-01-01T00:00:00+00:00",
+   "quality_gate_state": "passing"
+  },
+  "msg": "waiver_expires_at must be canonical"
+ },
+ {
+  "case": "prec-kbrel-missing-int-and-upper-digest",
+  "action": "knowledge_base_release_publish",
+  "over": {
+   "release_number": None,
+   "manifest_digest": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  },
+  "msg": "release_number is required for Knowledge Base Release fact"
+ },
+ {
+  "case": "prec-wsauth-missing-int-and-str",
+  "action": "workspace_authorization_mode_change",
+  "over": {
+   "workspace_revision": None,
+   "from_mode": None
+  },
+  "msg": "workspace_revision is required for Workspace authorization fact"
+ },
+ {
+  "case": "prec-common-blank-reason-and-bad-rev",
+  "action": "document_purge",
+  "over": {
+   "reason": "",
+   "request_revision": 0
+  },
+  "msg": "reason is required for ApprovalExecutionFact"
  }
 ]
 
