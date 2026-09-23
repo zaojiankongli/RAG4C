@@ -1313,3 +1313,24 @@ Fetch 白名单这 7 个名字与成员都核对无误，发出侧全扫 + 真�
 （兜底只在存储 CHECK），把"未知即拒"塞进等价重构是**行为变更**，要单独裁定；
 而 `knowledge_base_release_quality_waiver` 的要求集实测是 publish 那组的严格超集（25 ⊃ 20，
 差 5 条），这就是 §AI 说 dict-per-type 装不下的量化证据。
+
+## AK. 轴 #5 落地：审批事实校验换成有序规则表（本轮，无迁移）
+
+`core/approval_fact_rules.py`（新）。`ApprovalExecutionFact.__post_init__` 从 145 行顺序 `if`
+变成一行 `validate_execution_fact(self)`，规则变成数据：`FactRule(name, action_types, steps)`，
+步骤是 `RequireInt / RequireStr / Check` 三种，**列表次序即行为次序**。waiver 命中两条规则、
+要求叠加，正是 §AI 说 dict-per-action-type 装不下的那一层。
+
+新增一种审批事实 = `register_fact_rule(FactRule(...))` 一条，不改任何既有分支，也不改宿主文件
+（用例断言宿主字节不变）。注册期拒重名、拒空步骤、拒未知锚点。
+
+等价性不是声称的，是 §AJ 那张网扛住的：**58 passed**（55 条特征化 + 3 条扩展性/形状），
+另跑 4 个审批套件 **104 passed**，`ruff check` 干净，宿主仍纯 CRLF（CR=LF=3996）。
+
+**最有价值的一条不是"通过"，是它肯红**：把 `dataset_workspace_transfer` 的两个别名 `Check`
+与那个 `RequireStr` 按"int→str→交叉检查"的整齐模板重排（就是 §AI 预言的错法），
+`prec-dswt-missing-id-and-alias` 立刻红。这条用例连同其余 8 条 precedence 用例是重构**之前**
+先在原实现上观测得到并提交的（`4c444c6`）—— 顺序基线先落地，才谈得上搬。
+
+原样保留的一处死分支：`waiver_expires_at is required`（被前面的别名检查抢跑）。注释写明它到不了，
+金表 `UNREACHABLE` 钉住；没顺手"修好"，因为那属行为变更。

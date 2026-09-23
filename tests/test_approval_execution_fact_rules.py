@@ -100,3 +100,82 @@ def test_the_declared_unreachable_rule_is_still_shadowed() -> None:
         == "waiver expiry aliases must agree"
     )
     assert list(UNREACHABLE) == ["waiver_expires_at is required for Quality Waiver fact"]
+
+
+# ---------------------------------------------------------------------------
+# 扩展性判据：新增一种审批事实，不许改任何既有分支，也不许改宿主文件。
+# ---------------------------------------------------------------------------
+
+HOST_FILE = Path("core/enterprise_approval_control.py")
+
+
+def test_a_new_fact_type_needs_no_edit_to_existing_rules_or_the_host() -> None:
+    from core.approval_fact_rules import (
+        FACT_RULES,
+        Check,
+        FactRule,
+        RequireInt,
+        RequireStr,
+        register_fact_rule,
+        rule_names,
+        validate_execution_fact,
+    )
+
+    before = HOST_FILE.read_bytes()
+    names_before = rule_names()
+    rule = FactRule(
+        name="index_shrink_approval",
+        action_types=frozenset({"index_shrink"}),
+        steps=(
+            RequireInt(("mutation_generation",), "{field} is required for Index Shrink fact"),
+            RequireStr(("channel_id",), "{field} is required for Index Shrink fact"),
+            Check("shrink-reason", lambda fact: None),
+        ),
+    )
+    register_fact_rule(rule)
+    try:
+        assert rule_names() == (*names_before, "index_shrink_approval")
+        assert len(FACT_RULES) == len(names_before) + 1
+        # 新类型的要求当场生效……
+        with pytest.raises(ValueError, match="is required for Index Shrink fact"):
+            validate_execution_fact(
+                ApprovalExecutionFact(**{**BASE, "action_type": "index_shrink", "mutation_generation": None})
+            )
+        # ……而既有类型完全不受影响（common 之后没有别的规则命中 index_shrink）。
+        validate_execution_fact(ApprovalExecutionFact(**{**BASE, "action_type": "index_shrink"}))
+    finally:
+        FACT_RULES.remove(rule)
+    assert HOST_FILE.read_bytes() == before, "注册一条规则却要求改宿主文件，等于没收回注册表"
+    assert rule_names() == names_before
+
+
+def test_the_rule_table_refuses_duplicate_names_and_unknown_anchors() -> None:
+    from core.approval_fact_rules import FACT_RULES, FactRule, RequireInt, register_fact_rule
+
+    probe = FactRule("probe", None, (RequireInt(("policy_revision"), "x"),))
+    with pytest.raises(ValueError, match="not a registered rule"):
+        register_fact_rule(probe, after="no_such_rule")
+    with pytest.raises(ValueError, match="at least one step"):
+        register_fact_rule(FactRule("empty", None, ()), after="common")
+    with pytest.raises(ValueError, match="non-empty"):
+        register_fact_rule(FactRule("  ", None, (RequireInt(("policy_revision"), "x"),)), after="common")
+    register_fact_rule(probe, after="common")
+    try:
+        duplicate = FactRule("probe", None, (RequireInt(("policy_revision"), "x"),))
+        with pytest.raises(ValueError, match="already registered"):
+            register_fact_rule(duplicate, after="common")
+    finally:
+        FACT_RULES.remove(probe)
+
+
+def test_step_order_is_declared_data_not_python_control_flow() -> None:
+    """这张表要能被结构化查：步骤次序必须是数据，否则 §AI 的"一重组就翻"又回来了。"""
+    from core.approval_fact_rules import FACT_RULES, rule_names
+
+    dswt = next(rule for rule in FACT_RULES if rule.name == "dataset_workspace_transfer")
+    waiver = next(rule for rule in FACT_RULES if rule.name == "knowledge_base_release_quality_waiver")
+    kinds = [type(step).__name__ for step in dswt.steps]
+    assert kinds == ["RequireInt", "Check", "Check", "RequireStr", "Check", "Check"], kinds
+    assert len(waiver.steps) == 9
+    registered = [name for name in rule_names() if name != "common"]
+    assert "dataset_workspace_transfer" in registered
