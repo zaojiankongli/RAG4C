@@ -1410,8 +1410,9 @@ Fetch 白名单这 7 个名字与成员都核对无误，发出侧全扫 + 真�
 
 - 把 `_source_kind` 改回闭集 `{"quality_alert", "approval_pending_for_me"}`：exit 1，
   `FAILED tests/test_notification_source_kinds.py::test_registering_a_kind_projects_it_without_editing_the_host`。
-  栈是 `project_notification_source` :464 → `_source_kind` :359，
-  `NotificationAuthorityInvalid: source_kind is not allowed`。
+  栈是在被改短了一行的宿主上读到的：`project_notification_source` :464 →
+  `_source_kind` :359，`NotificationAuthorityInvalid: source_kind is not allowed`。
+  还原后的文件里，调用在 :465，拒绝在 :360。
 - 只在 ORM 的 IN 列表加 `'billing_notice'`，迁移不动：exit 1，
   `FAILED tests/test_notification_source_kinds.py::test_builtin_declarations_match_stored_checks[orm]`，
   同一次输出是 `1 failed, 1 passed`。FAILED 行点名的是 `[orm]`。
