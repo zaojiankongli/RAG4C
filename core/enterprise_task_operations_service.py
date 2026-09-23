@@ -62,15 +62,9 @@ from models.orm import (
 )
 
 UTC = timezone.utc
-SOURCE_ADAPTER_ORDER: tuple[str, ...] = (
-    "document_ingest",
-    "index_operation",
-    "source_sync",
-    "document_delete",
-    "audit_export",
-    "release_quality_scan",
-    "release_recertification",
-)
+# 顺序不再是这里的一份手写 tuple。它与文件末尾的 SOURCE_ADAPTER_REGISTRY 平行维护过，
+# 而 _validate_source_kinds 既拿它当上限又拿它做过滤器 —— 加第 8 种来源时 API 层放行、
+# 服务层回 422。派生定义放在注册表之后。
 
 SourceAdapter = Callable[..., Iterable[Mapping[str, Any]]]
 ActionAdapter = Callable[..., bool]
@@ -433,17 +427,20 @@ def _validate_limit(value: Any) -> int:
 
 
 def _validate_source_kinds(value: Any) -> tuple[str, ...]:
+    # 上限与过滤都活读注册表：读那份手写顺序的快照会出现「注册了新适配器但只生效一半」，
+    # 而 F1 的实际症状更糟 —— 第 8 种来源先被上限拒掉。
+    adapters = SOURCE_ADAPTER_REGISTRY
     if value is None:
-        return SOURCE_ADAPTER_ORDER
+        return tuple(adapters)
     if isinstance(value, str) or not isinstance(value, (list, tuple)):
         raise EnterpriseTaskOperationsInvalid("source_kinds is invalid")
-    if not 1 <= len(value) <= len(SOURCE_ADAPTER_ORDER):
+    if not 1 <= len(value) <= len(adapters):
         raise EnterpriseTaskOperationsInvalid("source_kinds is invalid")
     normalized = tuple(_normalize_kind(item) for item in value)
     if len(set(normalized)) != len(normalized):
         raise EnterpriseTaskOperationsInvalid("source_kinds must not contain duplicates")
     selected = set(normalized)
-    return tuple(kind for kind in SOURCE_ADAPTER_ORDER if kind in selected)
+    return tuple(kind for kind in adapters if kind in selected)
 
 
 def _normalize_filter_category(value: Any) -> str:
@@ -908,6 +905,9 @@ SOURCE_ADAPTER_REGISTRY: dict[str, SourceAdapter] = {
     "release_quality_scan": _release_quality_scan_adapter,
     "release_recertification": _release_recertification_adapter,
 }
+
+# 顺序 = 注册表的插入序（Python 保证）。适配器函数得先存在，所以派生式只能在注册表之后。
+SOURCE_ADAPTER_ORDER: tuple[str, ...] = tuple(SOURCE_ADAPTER_REGISTRY)
 
 
 def _canonical_adapter_source(raw: Mapping[str, Any], tenant_id: str) -> dict[str, Any]:

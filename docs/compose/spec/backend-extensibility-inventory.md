@@ -1253,3 +1253,21 @@ reload 后 8/8 被 API 接住、服务层仍拒）。**这不是回退**：API �
 逐元素相同（AST diff），所以行为等价成立；reload 用例在三种排序下都不污染同进程其它套件（23/13/14 passed）；
 Fetch 白名单这 7 个名字与成员都核对无误，发出侧全扫 + 真发 405/401 探针没发现第二个需要 expose 的头
 （`expose_headers` 里那个 `Content-Type` 是唯一冗余项）；§AD 的导入期派生判断、§AF 的 12800 都被独立复算。
+
+## AH. 第十三轮 blocker F1 已修：任务服务层的顺序也收成派生（TDD）
+
+`core/enterprise_task_operations_service.py`。`SOURCE_ADAPTER_ORDER`（:65-73 手写）与
+`SOURCE_ADAPTER_REGISTRY`（:902）此前平行维护，而 `_validate_source_kinds` **两处**都读它：
+:441 拿它当上限、:447 拿它做过滤器。所以加第 8 种来源的发作点比我登记在 §AG 的还多一个 ——
+先被上限拒成 422，即便绕过也会被过滤器静默丢掉。现在派生成 `tuple(SOURCE_ADAPTER_REGISTRY)`，
+校验活读注册表，`dfeecbf` 的形状原样复用。
+
+先红后绿：新用例先跑是 3 failed / 1 passed（红得对 —— `:441` 抛 `source_kinds is invalid`，
+另两条是声明形状守卫；那条通过的是「垃圾输入照旧拒」的回归钉，不是同义反复），改完
+47 passed（新套件 + 任务 ops 的 service/api/core/orm + 派生栅栏），`ruff check` 干净。
+
+**仍留的两条尾巴**（别把这条当全清）：
+1. `tests/test_enterprise_automation_workflows_service.py:35` 那份手抄 `TRIGGERS` 副本还在（F10），
+   「仓内唯一声明」这句要到它被删才名副其实；
+2. M5 那种回潮（再造一个手写顺序 tuple 并 `X_ORDER = HAND_ORDER`）扫文本的栅栏看不见，
+   要 AST 扫模块级赋值才算封住。§AG 已记，未做。
