@@ -22,6 +22,11 @@ from core.enterprise_access_control import (
 )
 from core.enterprise_acl_idempotency import engine_serialization_lock, idempotency_key_lock
 from core.enterprise_notification_center import canonical_notification_event
+from core.notification_receipt_kinds import (
+    NotificationReceiptKindSpec,
+    notification_receipt_kind,
+    register_notification_receipt_kind,
+)
 from core.enterprise_tenant_idempotency import (
     TenantMutationIdempotencyConflict,
     TenantMutationIdempotencyInProgress,
@@ -491,6 +496,100 @@ def _approval_eligible(
     return False
 
 
+def _unavailable(reason: str, route: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "state": "unavailable",
+        "reason_code": reason,
+        "route": dict(route),
+        "business_mutation_allowed": False,
+    }
+
+
+def _stale(reason: str, route: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "state": "stale",
+        "reason_code": reason,
+        "route": dict(route),
+        "business_mutation_allowed": False,
+    }
+
+
+def _handoff_quality_alert(
+    engine: Any,
+    session: Session,
+    row: TenantNotification,
+    member: TenantMember,
+    *,
+    route: Mapping[str, Any],
+    now: datetime,
+) -> dict[str, Any]:
+    del now
+    dataset_id = str(row.source_dataset_id or "")
+    dataset = session.scalar(
+        select(Dataset).where(Dataset.tenant_id == row.tenant_id, Dataset.id == dataset_id)
+    )
+    if dataset is None or str(dataset.status) != "active":
+        return _unavailable("dataset_access_unavailable", route)
+    if not _quality_access_current(engine, session, member, dataset_id):
+        return _unavailable("dataset_access_unavailable", route)
+    alert = session.scalar(
+        select(DatasetReleaseQualityAlert).where(
+            DatasetReleaseQualityAlert.tenant_id == row.tenant_id,
+            DatasetReleaseQualityAlert.dataset_id == dataset_id,
+            DatasetReleaseQualityAlert.id == row.source_id,
+        )
+    )
+    if alert is None:
+        return _unavailable("quality_source_unavailable", route)
+    if int(alert.revision) != int(row.source_revision) or str(
+        alert.source_observation_digest
+    ) != str(row.source_digest):
+        return _stale("quality_source_stale", route)
+    return {
+        "state": "current",
+        "reason_code": None,
+        "route": dict(route),
+        "business_mutation_allowed": False,
+    }
+
+
+def _handoff_approval(
+    engine: Any,
+    session: Session,
+    row: TenantNotification,
+    member: TenantMember,
+    *,
+    route: Mapping[str, Any],
+    now: datetime,
+) -> dict[str, Any]:
+    del engine
+    request = session.scalar(
+        select(TenantApprovalRequest).where(
+            TenantApprovalRequest.tenant_id == row.tenant_id,
+            TenantApprovalRequest.id == row.source_id,
+        )
+    )
+    if request is None:
+        return _unavailable("approval_source_unavailable", route)
+    if int(request.revision) != int(row.source_revision) or str(request.payload_hash) != str(
+        row.source_digest
+    ):
+        return _stale("approval_source_stale", route)
+    expires_at = _timestamp(request.expires_at, "approval.expires_at")
+    if str(request.status) != "pending" or (expires_at is not None and expires_at <= now):
+        return _stale("approval_source_stale", route)
+    if not _approval_eligible(
+        session, tenant_id=str(row.tenant_id), policy_id=str(request.policy_id), member=member
+    ):
+        return _stale("approval_eligibility_stale", route)
+    return {
+        "state": "current",
+        "reason_code": None,
+        "route": dict(route),
+        "business_mutation_allowed": False,
+    }
+
+
 def _handoff(
     engine: Any,
     session: Session,
@@ -500,75 +599,10 @@ def _handoff(
     route: Mapping[str, Any],
     now: datetime,
 ) -> dict[str, Any]:
-    def unavailable(reason: str) -> dict[str, Any]:
-        return {
-            "state": "unavailable",
-            "reason_code": reason,
-            "route": dict(route),
-            "business_mutation_allowed": False,
-        }
-
-    def stale(reason: str) -> dict[str, Any]:
-        return {
-            "state": "stale",
-            "reason_code": reason,
-            "route": dict(route),
-            "business_mutation_allowed": False,
-        }
-
-    if row.source_kind == "quality_alert":
-        dataset_id = str(row.source_dataset_id or "")
-        dataset = session.scalar(
-            select(Dataset).where(Dataset.tenant_id == row.tenant_id, Dataset.id == dataset_id)
-        )
-        if dataset is None or str(dataset.status) != "active":
-            return unavailable("dataset_access_unavailable")
-        if not _quality_access_current(engine, session, member, dataset_id):
-            return unavailable("dataset_access_unavailable")
-        alert = session.scalar(
-            select(DatasetReleaseQualityAlert).where(
-                DatasetReleaseQualityAlert.tenant_id == row.tenant_id,
-                DatasetReleaseQualityAlert.dataset_id == dataset_id,
-                DatasetReleaseQualityAlert.id == row.source_id,
-            )
-        )
-        if alert is None:
-            return unavailable("quality_source_unavailable")
-        if int(alert.revision) != int(row.source_revision) or str(
-            alert.source_observation_digest
-        ) != str(row.source_digest):
-            return stale("quality_source_stale")
-        return {
-            "state": "current",
-            "reason_code": None,
-            "route": dict(route),
-            "business_mutation_allowed": False,
-        }
-    request = session.scalar(
-        select(TenantApprovalRequest).where(
-            TenantApprovalRequest.tenant_id == row.tenant_id,
-            TenantApprovalRequest.id == row.source_id,
-        )
-    )
-    if request is None:
-        return unavailable("approval_source_unavailable")
-    if int(request.revision) != int(row.source_revision) or str(request.payload_hash) != str(
-        row.source_digest
-    ):
-        return stale("approval_source_stale")
-    expires_at = _timestamp(request.expires_at, "approval.expires_at")
-    if str(request.status) != "pending" or (expires_at is not None and expires_at <= now):
-        return stale("approval_source_stale")
-    if not _approval_eligible(
-        session, tenant_id=str(row.tenant_id), policy_id=str(request.policy_id), member=member
-    ):
-        return stale("approval_eligibility_stale")
-    return {
-        "state": "current",
-        "reason_code": None,
-        "route": dict(route),
-        "business_mutation_allowed": False,
-    }
+    spec = notification_receipt_kind(row.source_kind)
+    if spec is None:
+        return _unavailable("notification_source_unavailable", route)
+    return spec.handoff(engine, session, row, member, route=route, now=now)
 
 
 def _item(
@@ -1434,3 +1468,20 @@ __all__ = [
     "mark_read",
     "mark_unread",
 ]
+
+
+def register_builtin_notification_receipt_kinds() -> None:
+    """Declare the built-in receipt kinds. Replace, so a second load re-seals its own."""
+    register_notification_receipt_kind(
+        NotificationReceiptKindSpec(kind="quality_alert", handoff=_handoff_quality_alert),
+        replace=True,
+    )
+    register_notification_receipt_kind(
+        NotificationReceiptKindSpec(
+            kind="approval_pending_for_me", handoff=_handoff_approval
+        ),
+        replace=True,
+    )
+
+
+register_builtin_notification_receipt_kinds()
