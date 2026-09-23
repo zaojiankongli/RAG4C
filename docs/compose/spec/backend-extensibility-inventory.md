@@ -33,6 +33,7 @@ retrieval 12/4606、models 3/9344、config 2/1473；字面量等值分派点 247
 | **运行事件类型分区（本轮新增）** | 声明式规格表 `RunEventTypeSpec`，两个 reducer 查表派发 | `tests/test_run_event_taxonomy_registry.py`（45 条，含 5 路反向验证 + import 期一致性栅栏） |
 | **`parser_meta` 字符串键筛选/分面（本轮新增）** | 共享 helper 三件套：一个键一行声明，不再一个键一条内联分支（`engine` 与 `chunking_reason_code` 走同一条路） | `tests/test_document_catalog_api.py`（新增 4 条 + 分面/游标/旧库拒绝断言），落地记录见 §R |
 | **可查看来源后缀（补登记，落地记录见 §S）** | 声明式规格表 `SourcePreviewSpec`：一个后缀一行，content type / 可否 inline / 大小上限同源；HTTP 层与取文件层都只查表 | `tests/test_source_preview_registry.py`（36 条）+ `tests/test_knowledge_source_preview_api.py`（14 条）+ `frontend/src/parse-intervention/components/SourcePreview.test.tsx`（10 条） |
+| **通知 source_kind 的投影（本轮，见 §AM）** | 声明式规格表 `NotificationSourceKindSpec`。投影三函数查表。回执与物化不在这张表里 | `tests/test_notification_source_kinds.py`（5 条：宿主字节不变 + ORM/迁移 CHECK 对账） |
 
 `core/embedding.py` / `core/llm.py` / `core/reranker.py` 经核实**本就已经到位**：
 全部经 `ProviderRegistry`，`server/` 与 `config/` 里没有任何残留 `if provider ==`；
@@ -51,7 +52,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 | 5 | 审批 `action_type`（控制面校验） | `enterprise_approval_control.py:236,246,269-286,316-355,2742` | 5 + 2 处 ORM CHECK + 1 迁移 | **是**（CHECK 阶梯 `catalog_schema.py:2740-2787` 记录了 6 次加宽） | openapi 5 hits | 声明式字段要求表；**必须保留独立 `if`（publish/rollback ∪ waiver 有重叠）** |
 | 6 | 任务 `source_kind` | API `enterprise_task_operations_api.py:26,39,64,77,81`；核心 `enterprise_task_operations{,_service}.py:20,65,138,143,1480,1489,1506-1522,335,996-1007`；ORM CHECK `orm.py:4980` | 8（~~含两处 `max_length=7`，第 9 个值会被 422 静默挡掉~~ **这句话把形状读错了**：那两个 7 是**列表长度上限**不是字符串宽度。病是真的但机制不同 —— 见 §AD，请求层已收成派生） | **是** | openapi `:6144,6961` | 三份 dict 合成一张 `TaskSourceKindSpec`；**请求层那一半已做（§AD）**，剩下的 8 个行为站点仍在 |
 | 7 | ~~告警操作 acknowledge/suppress/resolve~~ **本轮已完成**，见 §M | — | 0（注册即全认；两条槽位栅栏 + 列名核对齐模型） | 否 | 否 | 已落 `core/quality_alert_operations.py` |
-| 8 | 通知 `source_kind` | `notification_center.py:465,480,489-496,615,678-695`、`receipts.py:258-324,519`、`materializer.py:572,746` | ~13 | **是**（`orm.py:4183,4203-4210`） | **不在 OpenAPI 里**（`approval_pending_for_me` 命中 0 次）→ 前端契约抓不到 | 声明式规格表 + 每 kind 两个 callable |
+| 8 | 通知 `source_kind` | 投影层已收成 `core/notification_source_kinds.py`（§AM）。回执 `_safe_route` / `_handoff` 与两个物化函数仍是行为代码，不在这张表里 | 投影 0。回执/物化不是加一行声明 | **存储仍是**（`orm.py:4183,4203-4210`，本轮没加宽） | 本轮没重测 OpenAPI。前端通知模型里有这个词，不代表契约层认它 | 投影层声明表已落。回执与物化本轮没动 |
 | 9 | `gate_reason → alert_type` 派生 | `alerts.py:1102-1133`（7 条顺序 if），`_ALERT_TYPES:71-80`，CHECK `orm.py:3799` | 3 | **是** | 否 | 有序 matcher 表，保末尾两条启发式的位置 |
 | 10 | 身份 provider `oidc/saml` | `enterprise_identity_control.py:972-1008`，消费 `:1030,1040,1086,1269` | 3 | **是**（`orm.py:1220` + 字段组合 CHECK `0021:171`） | openapi 2 hits | Adapter（每 provider 一份字段形状）；**登录凭据信任形状，须 fail closed** |
 | 11 | ~~身份吊销 `kind`~~ **本轮已完成**，见 §J | — | 0（注册即全认；栅栏由注册期拒绝而非约定） | 否 | 否 | 已落 `core/identity_revocations.py` |
@@ -64,6 +65,8 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 
 **本轮之后仍为"待做"的原因**：5、6、8、9、10、12 六条要改数据库 CHECK → 按红线必须单独成切片；
 3 号虽无迁移但直接压在投影栅栏上，风险最高，需要独立设计与评审。 17 号是新登记的一条，不在「顺手可修」里：每次改动都要同时证明与冻结版行为等价，而收益只是少抄一处 ladder。
+
+后来的更正：#5、#6、#9、#12 的 Python 侧已经各自收口，都没有加宽 CHECK。#8 只收了投影层（§AM），CHECK、回执、物化没动。按这张表还开着的是 #8 的回执/物化、#10、#3、#17。
 
 ## C. 故意不转（这一节和上表同等重要）
 
@@ -1372,3 +1375,49 @@ Fetch 白名单这 7 个名字与成员都核对无误，发出侧全扫 + 真�
 评审还列出守卫在函数作用域、下标目标、第三个模块 re-export、整行删除四种情况下**空洞为绿**
 （E7/E8/E9/E23），以及 `Assign` 与 `AnnAssign` 处理不一致（E16 绿 / E17 红）、按名字加宽会
 撞上仓内 10 个合法词表名造成假红。
+名字门控和任务侧对账这两件后来由 `d3356b1` 改掉了，见 §AM。E7/E8/E9/E23 没有重跑，不能说封住了。
+
+## AM. 轴 #8 的投影层：一种来源一行声明（本轮，没加宽 CHECK）
+
+台账写的「~13 处」把三层加成了一件事。重数之后只有投影层是数据：来源 id 的兜底字段、
+强制的 category、`source_dataset_id` 是必填还是必须为空、缺省事件语义、route 与参数 schema、
+哪些 route 参数必须回指来源字段。回执的 `_safe_route` / `_handoff`
+（`core/enterprise_notification_receipts.py`）和两个 `materialize_*`
+（`core/enterprise_notification_materializer.py`）仍是行为代码，本轮没动。
+`_handoff` 在 `source_kind != "quality_alert"` 时落到审批查询，这个行为也没改。
+存储 CHECK 没加宽：`models/orm.py:4183` 仍是
+`source_kind IN ('quality_alert','approval_pending_for_me')`，迁移 `0032` 同一句。
+往注册表挂一种来源不会让那一行能落库。
+
+落地是 `core/notification_source_kinds.py` 的 `NotificationSourceKindSpec`。
+宿主 `core/enterprise_notification_center.py` 的 `_source_kind`（:357）、`_route_code`（:364）、
+`project_notification_source`（:457）查这张表。宿主仍是纯 CRLF（906 行，`lf_only` 0）。
+`git diff --numstat` 与 `--numstat --ignore-cr-at-eol` 都是 `41 38`，没有行尾翻转。
+
+本轮实跑：
+
+- `tests/test_notification_source_kinds.py` + `tests/test_enterprise_notification_center_core.py`
+  + `tests/test_notification_severity_vocabulary.py`：**29 passed in 2.81s**。
+- 物化 + 回执 + 迁移 `0032`（`test_enterprise_notification_materializer.py`、
+  `test_enterprise_notification_receipts.py`、`test_enterprise_notification_center_migration.py`）：
+  **33 passed, 352 warnings in 367.19s**，退出码 0。警告是既有的 `utcnow` 弃用，不是本轮引入的失败。
+- `ruff check` 上述三个 Python 文件：All checks passed，`RUFF_EXIT=0`。
+- 单独收集 `tests/test_notification_source_kinds.py`：5 passed in 0.55s。
+  CHECK 对账是参数化的两条（`orm` / `migration-0032`），所以是 5 条收集，不是 4 个函数。
+
+反向验证先有绿基线（上面那 5 passed），再改，`finally` 里按原字节写回。
+`HOST_RESTORED True`，`ORM_RESTORED True`。
+
+- 把 `_source_kind` 改回闭集 `{"quality_alert", "approval_pending_for_me"}`：exit 1，
+  `FAILED tests/test_notification_source_kinds.py::test_registering_a_kind_projects_it_without_editing_the_host`。
+  栈是 `project_notification_source` :464 → `_source_kind` :359，
+  `NotificationAuthorityInvalid: source_kind is not allowed`。
+- 只在 ORM 的 IN 列表加 `'billing_notice'`，迁移不动：exit 1，
+  `FAILED tests/test_notification_source_kinds.py::test_builtin_declarations_match_stored_checks[orm]`，
+  同一次输出是 `1 failed, 1 passed`。FAILED 行点名的是 `[orm]`。
+
+对账只比 `BUILTIN_NOTIFICATION_SOURCE_KINDS`，不比运行时注册表。测试里挂上的 `billing_notice`
+不会把 CHECK 栅栏打红，也过不了库。
+
+OpenAPI 本轮没有重测。前端通知模型里能搜到 `approval_pending_for_me`，不能据此说契约层认或不认
+一个新的 kind。权威 MySQL（192.168.100.128）本机连不上，上面的数字都是 sqlite 上的 pytest。

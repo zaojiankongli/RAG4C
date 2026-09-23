@@ -14,13 +14,16 @@ import json
 import re
 from typing import Any
 
+from core.notification_source_kinds import (
+    allowed_notification_categories,
+    notification_source_kind,
+    notification_source_kind_for_route,
+)
+
 
 UTC = timezone.utc
 NOTIFICATION_CENTER_SCHEMA_VERSION = 1
 
-_ALLOWED_SOURCE_KINDS = frozenset({"quality_alert", "approval_pending_for_me"})
-_ALLOWED_ROUTE_CODES = frozenset({"knowledge_quality_operations", "enterprise_approval"})
-_ALLOWED_CATEGORIES = frozenset({"quality", "approval"})
 _ALLOWED_SEVERITIES = frozenset({"info", "warning", "critical"})
 _ALLOWED_EVENT_TYPES = frozenset({"materialized", "marked_read", "marked_unread", "archived"})
 _ALLOWED_RECIPIENT_REASONS = frozenset(
@@ -352,15 +355,17 @@ def _first_value(
 
 
 def _source_kind(value: Any) -> str:
-    if not isinstance(value, str) or value not in _ALLOWED_SOURCE_KINDS:
+    spec = notification_source_kind(value)
+    if spec is None:
         raise _invalid("source_kind is not allowed")
-    return value
+    return spec.kind
 
 
 def _route_code(value: Any) -> str:
-    if not isinstance(value, str) or value not in _ALLOWED_ROUTE_CODES:
+    spec = notification_source_kind_for_route(value)
+    if spec is None:
         raise _invalid("route code is not allowed")
-    return value
+    return spec.route_code
 
 
 def canonical_notification_key(
@@ -458,13 +463,12 @@ def project_notification_source(
 
     raw = _merge_mapping_input(source, fields, "notification_source")
     kind = _source_kind(_first_value(raw, "source_kind", "kind", required=True))
+    spec = notification_source_kind(kind)
+    if spec is None:
+        raise _invalid("source_kind is not allowed")
     source_id = _first_value(raw, "source_id", "id")
     if source_id is None:
-        source_id = (
-            _first_value(raw, "alert_id")
-            if kind == "quality_alert"
-            else _first_value(raw, "approval_request_id")
-        )
+        source_id = _first_value(raw, spec.source_id_field)
     source_id = _safe_component(source_id, "source_id")
     revision = _first_value(raw, "source_revision", "revision", required=True)
     revision = _exact_integer(revision, "source_revision", minimum=1)
@@ -477,7 +481,7 @@ def project_notification_source(
     )
     source_digest = _sha256(source_digest, "source_digest")
 
-    category = "quality" if kind == "quality_alert" else "approval"
+    category = spec.category
     supplied_category = _first_value(raw, "category")
     if supplied_category is not None and supplied_category != category:
         raise _invalid("category does not match source_kind")
@@ -486,14 +490,14 @@ def project_notification_source(
         raise _invalid("severity is not allowed")
 
     dataset_id = _first_value(raw, "source_dataset_id", "dataset_id")
-    if kind == "quality_alert":
+    if spec.requires_dataset:
         dataset_id = _safe_component(dataset_id, "source_dataset_id", maximum=64)
     elif dataset_id is not None:
-        raise _invalid("source_dataset_id must be null for approval_pending_for_me")
+        raise _invalid(f"source_dataset_id must be null for {spec.kind}")
 
     semantic = _first_value(raw, "event_semantic", "event_type", "event")
     if semantic is None:
-        semantic = "opened" if kind == "quality_alert" else "pending"
+        semantic = spec.default_semantic
     semantic = _safe_code(semantic, "event_type")
     cycle_key = raw.get("cycle_key")
     if cycle_key is not None:
@@ -537,6 +541,7 @@ def project_notification_source(
         "safe_facts",
         "facts",
     }
+    known.add(spec.source_id_field)
     for key, value in raw.items():
         if key not in known:
             if key in facts and facts[key] != value:
@@ -610,11 +615,10 @@ def project_notification_route(
     parameter_value = _first_value(
         raw, "params", "route_params", "target_route_params", "target_route_params_json"
     )
-    schema = (
-        ("tenant_id", "dataset_id", "release_id", "channel_id", "alert_id")
-        if code == "knowledge_quality_operations"
-        else ("tenant_id", "approval_request_id")
-    )
+    route_spec = notification_source_kind_for_route(code)
+    if route_spec is None:
+        raise _invalid("route code is not allowed")
+    schema = route_spec.route_params
     if parameter_value is None:
         direct = {
             key: value
@@ -665,7 +669,7 @@ def project_notification_payload(
     category = _first_value(raw, "category")
     if category is None:
         category = source_projected["category"]
-    if category not in _ALLOWED_CATEGORIES or category != source_projected["category"]:
+    if category not in allowed_notification_categories() or category != source_projected["category"]:
         raise _invalid("category does not match source")
     severity = _first_value(raw, "severity")
     if severity is None:
@@ -673,27 +677,26 @@ def project_notification_payload(
     if severity not in _ALLOWED_SEVERITIES or severity != source_projected["severity"]:
         raise _invalid("severity does not match source")
 
-    expected_route = (
-        "knowledge_quality_operations"
-        if source_projected["source_kind"] == "quality_alert"
-        else "enterprise_approval"
-    )
+    source_spec = notification_source_kind(source_projected["source_kind"])
+    if source_spec is None:
+        raise _invalid("source_kind is not allowed")
+    expected_route = source_spec.route_code
     if route_projected["target_route_code"] != expected_route:
         raise _invalid("route code does not match source_kind")
     route_params = route_projected["target_route_params_json"]
     if route_params["tenant_id"] != source_projected["tenant_id"]:
         raise _invalid("route tenant_id does not match source")
-    if expected_route == "knowledge_quality_operations":
-        if route_params["dataset_id"] != source_projected["source_dataset_id"]:
-            raise _invalid("route dataset_id does not match source")
-        if route_params["alert_id"] != source_projected["source_id"]:
-            raise _invalid("route alert_id does not match source")
-        for fact_key in ("release_id", "channel_id"):
-            fact_value = source_projected["safe_facts"].get(fact_key)
-            if fact_value is not None and route_params[fact_key] != fact_value:
-                raise _invalid(f"route {fact_key} does not match source")
-    elif route_params["approval_request_id"] != source_projected["source_id"]:
-        raise _invalid("route approval_request_id does not match source")
+    if source_spec.dataset_route_param is not None:
+        dataset_key = source_spec.dataset_route_param
+        if route_params[dataset_key] != source_projected["source_dataset_id"]:
+            raise _invalid(f"route {dataset_key} does not match source")
+    source_key = source_spec.source_id_route_param
+    if route_params[source_key] != source_projected["source_id"]:
+        raise _invalid(f"route {source_key} does not match source")
+    for fact_key in source_spec.fact_route_params:
+        fact_value = source_projected["safe_facts"].get(fact_key)
+        if fact_value is not None and route_params[fact_key] != fact_value:
+            raise _invalid(f"route {fact_key} does not match source")
 
     action_required = _exact_boolean(
         _first_value(raw, "action_required", required=True), "action_required"
