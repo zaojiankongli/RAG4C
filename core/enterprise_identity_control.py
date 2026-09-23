@@ -36,6 +36,12 @@ from core.enterprise_tenant_idempotency import (
     tenant_request_hash,
 )
 from models.orm import Account, Tenant, TenantAuditEvent, TenantMember
+from core.identity_provider_types import (
+    IdentityProviderTypeSpec,
+    identity_provider_type,
+    register_identity_provider_type,
+    seal_builtin_identity_provider_types,
+)
 from core.identity_revocations import (
     PROTECTED_COLUMNS,
     RevocationKindSpec,
@@ -974,44 +980,55 @@ def revoke_domain(
     )
 
 
+def _project_oidc_provider(
+    data: Mapping[str, Any], resolver: IdentityTxtResolver
+) -> dict[str, Any]:
+    issuer = _safe_https_url(data.get("issuer_url"), resolver)
+    client_id = _clean(data.get("client_id"), "client_id", 256)
+    secret_ref = _secret_ref(data.get("secret_ref"))
+    scopes = data.get("scopes") or ["openid"]
+    if not isinstance(scopes, Sequence) or isinstance(scopes, (str, bytes)):
+        raise IdentityValidationError("identity_request_invalid", "scopes must be a list")
+    scope_values = sorted({_clean(item, "scope", 64) for item in scopes})
+    return {
+        "issuer_url": issuer,
+        "client_id": client_id,
+        "secret_ref": secret_ref,
+        "scopes": " ".join(scope_values),
+        "entity_id": None,
+        "sso_url": None,
+        "metadata_url": None,
+        "certificate_fingerprint": None,
+    }
+
+
+def _project_saml_provider(
+    data: Mapping[str, Any], resolver: IdentityTxtResolver
+) -> dict[str, Any]:
+    entity_id = _clean(data.get("entity_id"), "entity_id", 512)
+    sso_url = _safe_https_url(data.get("sso_url"), resolver)
+    metadata = data.get("metadata_url")
+    metadata_url = _safe_https_url(metadata, resolver) if metadata else None
+    fingerprint = _clean(data.get("certificate_fingerprint"), "certificate_fingerprint", 128)
+    return {
+        "issuer_url": None,
+        "client_id": None,
+        "secret_ref": None,
+        "scopes": None,
+        "entity_id": entity_id,
+        "sso_url": sso_url,
+        "metadata_url": metadata_url,
+        "certificate_fingerprint": fingerprint,
+    }
+
+
 def _provider_values(
     provider_type: str, data: Mapping[str, Any], resolver: IdentityTxtResolver
 ) -> dict[str, Any]:
-    if provider_type == "oidc":
-        issuer = _safe_https_url(data.get("issuer_url"), resolver)
-        client_id = _clean(data.get("client_id"), "client_id", 256)
-        secret_ref = _secret_ref(data.get("secret_ref"))
-        scopes = data.get("scopes") or ["openid"]
-        if not isinstance(scopes, Sequence) or isinstance(scopes, (str, bytes)):
-            raise IdentityValidationError("identity_request_invalid", "scopes must be a list")
-        scope_values = sorted({_clean(item, "scope", 64) for item in scopes})
-        return {
-            "issuer_url": issuer,
-            "client_id": client_id,
-            "secret_ref": secret_ref,
-            "scopes": " ".join(scope_values),
-            "entity_id": None,
-            "sso_url": None,
-            "metadata_url": None,
-            "certificate_fingerprint": None,
-        }
-    if provider_type == "saml":
-        entity_id = _clean(data.get("entity_id"), "entity_id", 512)
-        sso_url = _safe_https_url(data.get("sso_url"), resolver)
-        metadata = data.get("metadata_url")
-        metadata_url = _safe_https_url(metadata, resolver) if metadata else None
-        fingerprint = _clean(data.get("certificate_fingerprint"), "certificate_fingerprint", 128)
-        return {
-            "issuer_url": None,
-            "client_id": None,
-            "secret_ref": None,
-            "scopes": None,
-            "entity_id": entity_id,
-            "sso_url": sso_url,
-            "metadata_url": metadata_url,
-            "certificate_fingerprint": fingerprint,
-        }
-    raise IdentityValidationError("identity_request_invalid", "provider_type is invalid")
+    spec = identity_provider_type(provider_type)
+    if spec is None:
+        raise IdentityValidationError("identity_request_invalid", "provider_type is invalid")
+    return spec.project(data, resolver)
 
 
 def create_provider(
@@ -1723,4 +1740,26 @@ def register_builtin_revocation_kinds() -> None:
     )
 
 
+def register_builtin_identity_provider_types() -> None:
+    """Declare oidc and saml. Replace, so a second load of this module re-seals its own builtins."""
+    register_identity_provider_type(
+        IdentityProviderTypeSpec(
+            provider_type="oidc",
+            required_not_null=("issuer_url", "client_id", "secret_ref"),
+            project=_project_oidc_provider,
+        ),
+        replace=True,
+    )
+    register_identity_provider_type(
+        IdentityProviderTypeSpec(
+            provider_type="saml",
+            required_not_null=("entity_id", "sso_url", "certificate_fingerprint"),
+            project=_project_saml_provider,
+        ),
+        replace=True,
+    )
+    seal_builtin_identity_provider_types()
+
+
+register_builtin_identity_provider_types()
 register_builtin_revocation_kinds()

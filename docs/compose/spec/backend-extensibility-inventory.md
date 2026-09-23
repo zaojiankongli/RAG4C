@@ -34,6 +34,7 @@ retrieval 12/4606、models 3/9344、config 2/1473；字面量等值分派点 247
 | **`parser_meta` 字符串键筛选/分面（本轮新增）** | 共享 helper 三件套：一个键一行声明，不再一个键一条内联分支（`engine` 与 `chunking_reason_code` 走同一条路） | `tests/test_document_catalog_api.py`（新增 4 条 + 分面/游标/旧库拒绝断言），落地记录见 §R |
 | **可查看来源后缀（补登记，落地记录见 §S）** | 声明式规格表 `SourcePreviewSpec`：一个后缀一行，content type / 可否 inline / 大小上限同源；HTTP 层与取文件层都只查表 | `tests/test_source_preview_registry.py`（36 条）+ `tests/test_knowledge_source_preview_api.py`（14 条）+ `frontend/src/parse-intervention/components/SourcePreview.test.tsx`（10 条） |
 | **通知 source_kind 的投影（本轮，见 §AM）** | 声明式规格表 `NotificationSourceKindSpec`。投影三函数查表。回执与物化不在这张表里 | `tests/test_notification_source_kinds.py`（5 条：宿主字节不变 + ORM/迁移 CHECK 对账） |
+| **身份 provider 的投影（本轮，见 §AN）** | 声明式规格表 `IdentityProviderTypeSpec`。投影函数留在宿主，未知类型拒绝，不落到另一种 | `tests/test_identity_provider_types.py`（5 条：宿主字节不变 + IN 列表对账 + 字段组合 CHECK 对账） |
 
 `core/embedding.py` / `core/llm.py` / `core/reranker.py` 经核实**本就已经到位**：
 全部经 `ProviderRegistry`，`server/` 与 `config/` 里没有任何残留 `if provider ==`；
@@ -54,7 +55,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 | 7 | ~~告警操作 acknowledge/suppress/resolve~~ **本轮已完成**，见 §M | — | 0（注册即全认；两条槽位栅栏 + 列名核对齐模型） | 否 | 否 | 已落 `core/quality_alert_operations.py` |
 | 8 | 通知 `source_kind` | 投影层已收成 `core/notification_source_kinds.py`（§AM）。回执 `_safe_route` / `_handoff` 与两个物化函数仍是行为代码，不在这张表里 | 投影 0。回执/物化不是加一行声明 | **存储仍是**（`orm.py:4183,4203-4210`，本轮没加宽） | 本轮没重测 OpenAPI。前端通知模型里有这个词，不代表契约层认它 | 投影层声明表已落。回执与物化本轮没动 |
 | 9 | `gate_reason → alert_type` 派生 | `alerts.py:1102-1133`（7 条顺序 if），`_ALERT_TYPES:71-80`，CHECK `orm.py:3799` | 3 | **是** | 否 | 有序 matcher 表，保末尾两条启发式的位置 |
-| 10 | 身份 provider `oidc/saml` | `enterprise_identity_control.py:972-1008`，消费 `:1030,1040,1086,1269` | 3 | **是**（`orm.py:1220` + 字段组合 CHECK `0021:171`） | openapi 2 hits | Adapter（每 provider 一份字段形状）；**登录凭据信任形状，须 fail closed** |
+| 10 | 身份 provider `oidc/saml` | 投影已收成 `core/identity_provider_types.py`（§AN）。`_provider_values` 只查表。存储 IN 列表与字段组合 CHECK 没加宽 | 投影 0。能落库的新类型仍要 CHECK 迁移 | **是**（`orm.py` 的 IN 列表 + 字段组合 CHECK 在迁移 `0021` 与 API 测试 DDL，不在 ORM） | 本轮没重测 OpenAPI | 投影声明已落。未知类型仍拒绝。注册不会让它能落库 |
 | 11 | ~~身份吊销 `kind`~~ **本轮已完成**，见 §J | — | 0（注册即全认；栅栏由注册期拒绝而非约定） | 否 | 否 | 已落 `core/identity_revocations.py` |
 | 12 | 自动化 trigger/condition/action 码 | `enterprise_automation_workflows_api.py:225,233,241,556-563,568-598`；`service.py:68,2107-2291,2322,2307` | 3–4 | **是**（`orm.py:5588`） | openapi `:6371,6415` | `TRIGGER_ADAPTER_ORDER` 改为从注册表推导 |
 | 13 | ~~文档排序 `sort` / 游标耦合~~ **本轮已完成**，见 §L | — | 0（新增一个排序一行声明；**第二个 keyset 排序被注册期拒绝**） | 否 | openapi 枚举未动（加排序仍需同步枚举，见 §L 的诚实边界） | 已落 `core/document_sorts.py` |
@@ -66,7 +67,7 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 **本轮之后仍为"待做"的原因**：5、6、8、9、10、12 六条要改数据库 CHECK → 按红线必须单独成切片；
 3 号虽无迁移但直接压在投影栅栏上，风险最高，需要独立设计与评审。 17 号是新登记的一条，不在「顺手可修」里：每次改动都要同时证明与冻结版行为等价，而收益只是少抄一处 ladder。
 
-后来的更正：#5、#6、#9、#12 的 Python 侧已经各自收口，都没有加宽 CHECK。#8 只收了投影层（§AM），CHECK、回执、物化没动。按这张表还开着的是 #8 的回执/物化、#10、#3、#17。
+后来的更正：#5、#6、#9、#12 的 Python 侧已经各自收口，都没有加宽 CHECK。#8 只收了投影层（§AM），CHECK、回执、物化没动。#10 只收了投影（§AN），CHECK 没加宽，注册一种类型仍不能落库。按这张表还开着的是 #8 的回执/物化、#3、#17。
 
 ## C. 故意不转（这一节和上表同等重要）
 
@@ -1422,3 +1423,55 @@ Fetch 白名单这 7 个名字与成员都核对无误，发出侧全扫 + 真�
 
 OpenAPI 本轮没有重测。前端通知模型里能搜到 `approval_pending_for_me`，不能据此说契约层认或不认
 一个新的 kind。权威 MySQL（192.168.100.128）本机连不上，上面的数字都是 sqlite 上的 pytest。
+
+## AN. 轴 #10 的投影层：一种 provider 一行声明（本轮，没加宽 CHECK）
+
+oidc 与 saml 的差别是行为：HTTPS、scope 排序、可选的 metadata。投影函数因此留在宿主
+`core/enterprise_identity_control.py`，没有搬进注册表。注册表是
+`core/identity_provider_types.py`，不 import 宿主，避免环。
+
+`_provider_values`（:1025）只查表。`identity_provider_type` 返回 None 就抛
+`IdentityValidationError("identity_request_invalid", "provider_type is invalid")`，
+拒绝在 :1030。未知类型不会落到另一种。宿主里已经没有 `provider_type ==`。
+
+内置声明：oidc 的 `required_not_null` 是 `("issuer_url", "client_id", "secret_ref")`，
+saml 是 `("entity_id", "sso_url", "certificate_fingerprint")`。
+`register_builtin_identity_provider_types`（:1743）用 `replace=True` 注册，
+然后 `seal_builtin_identity_provider_types()`。测试期再注册一种类型，不会挪动这份内置快照，
+也不会挪动 CHECK 对账。
+
+`_CHECKS["ck_tenant_identity_providers_type"]` 仍是手写的 `("oidc", "saml")`（:156）。
+它是 `_ensure_0021` 的子串存在性探针，本轮没有改成从表生成。
+字段组合 CHECK `ck_tenant_identity_providers_type_fields` 在迁移 `0021` 和
+API 测试 DDL 里。ORM 的 `TenantIdentityProvider` 没有这条约束。本轮没有把它加进 ORM，
+也没有写一条断言去钉"ORM 里没有它"。
+
+注册一种类型不会让它能落库。`ldap` 可以在进程内投影，存储 CHECK 仍拒。
+能落库的新 provider 仍要单独的 CHECK 迁移。零改分支只覆盖投影：运行时注册的类型不用改宿主，
+未注册的类型在 insert 之前就被拒绝。
+
+宿主仍是纯 CRLF（1765 行，`lf_only` 0）。`git diff --numstat` 与
+`--numstat --ignore-cr-at-eol` 都是 `74 35`。
+
+本轮实跑：
+
+- `tests/test_identity_provider_types.py`：5 passed in 3.28s。变异前的预检再跑一次：
+  5 passed in 1.77s。
+- 既有身份吊销 + federation API + federation migration：60 passed, 550 warnings in 37.35s。
+  警告是既有的 `utcnow` 弃用和 sqlite datetime adapter 弃用。
+- `ruff check` 宿主、注册表、新测试：干净。
+
+反向验证先有上面的绿基线，再改，`finally` 里按原字节写回。
+
+- 把 `if provider_type == "oidc"` / `"saml"` 塞回 `_provider_values`：exit 1，
+  `FAILED tests/test_identity_provider_types.py::test_registering_a_type_projects_it_without_editing_the_host_or_the_builtins`，
+  `IdentityValidationError: provider_type is invalid`。同一次是 1 failed / 4 passed。
+  栈上的 `:1032` 是被改过的文件，不是还原后的拒绝点。还原后拒绝在 `_provider_values:1030`。
+  `HOST_RESTORED True`。
+- 只在迁移 `0021` 的 IN 列表加 `'ldap'`：exit 1，
+  `FAILED tests/test_identity_provider_types.py::test_builtin_types_match_every_stored_in_list_and_the_schema_probe`，
+  断言点名的是这条迁移的路径。同一次是 1 failed / 4 passed。`MIGRATION_RESTORED True`。
+
+对账只比 `builtin_identity_provider_types()`，不比运行时注册表。测试里挂上的 `ldap`
+不会把 CHECK 栅栏打红。OpenAPI 本轮没有重测。权威 MySQL（192.168.100.128）本机连不上，
+上面的数字都是 sqlite 上的 pytest。
