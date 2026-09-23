@@ -1,14 +1,27 @@
-"""顺序声明的AST守卫：注册表之后不许再有第二份手写顺序，也不许用间接方式绕开派生。
+"""顺序/派发声明的 AST 守卫：不靠名字，靠**结构**（第十五轮 F1 之后重写）。
 
-第十三轮评审的 M5 变异证明扫文本的栅栏看不见这一种：另写一个 `HAND_ORDER = ("a","b",…)`，
-再把派生式改成 `X_ORDER = HAND_ORDER`，「派生那一句还在不在」这类检查全绿 —— 它扫的是字符串，
-不是赋值结构。本文件按结构查，覆盖两个服务模块里形状相同的两处收口。
+第一版按名字门控（`*_ORDER` / `*_KINDS` / `*_STATUSES`），于是 `c793f53` 提交信息里
+"改名也躲不掉"是假的 —— 评审的变异 E6b 用模块级 `SOURCE_ADAPTER_SEQUENCE = (7 个 code)`
+加一处消费点替换，守卫与旧的字面栅栏全部保持绿色。
+
+现在查的是**结构**，与名字无关：
+1. 每个 `*_ORDER` 必须是 `= tuple(*_REGISTRY)` 这一个形状；
+2. 任何模块级字符串字面量序列（`Assign` 与 `AnnAssign` 一视同仁）**不许**与同模块某个
+   `*_REGISTRY` 的键集**相等** —— 等价于"注册表之外还存在同一份顺序的第二份真源"，
+   这就是 M5 与 E6b 共同的特征。合法词表（`TASK_SOURCE_KINDS` 等）是**超集或不同集**，
+   不会被这条误伤；
+3. 触发侧与任务侧的注册表键集必须等于各自权威词表 —— 补上 F1 指出的任务侧缺口。
 """
 
 from __future__ import annotations
 
 import ast
 from pathlib import Path
+
+import core.catalog_schema as catalog_schema
+import core.enterprise_automation_workflows_service as trigger_svc
+import core.enterprise_task_operations_service as task_svc
+from core.enterprise_automation_workflows import AUTOMATION_TRIGGER_CODES
 
 REPO = Path(__file__).resolve().parents[1]
 MODULES = (
@@ -17,11 +30,11 @@ MODULES = (
 )
 
 
-def _assignments(path: Path) -> dict[str, ast.expr]:
-    """模块级 `X_ORDER = <expr>` 的赋值，键是名字、值是右侧表达式。"""
+def _module_level_assignments(path: Path) -> list[tuple[str, ast.expr]]:
+    """模块级 `NAME = <expr>`，`Assign` 与 `AnnAssign` 走同一条路径（第一版不一致）。"""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    found: dict[str, ast.expr] = {}
-    for node in tree.body:  # 只看模块级：作用域内的同名局部变量不算这份契约
+    found: list[tuple[str, ast.expr]] = []
+    for node in tree.body:
         pairs: list[tuple[ast.expr, ast.expr]] = []
         if isinstance(node, ast.Assign):
             pairs = [(target, node.value) for target in node.targets]
@@ -29,89 +42,114 @@ def _assignments(path: Path) -> dict[str, ast.expr]:
             pairs = [(node.target, node.value)]
         for target, value in pairs:
             name = target.id if isinstance(target, ast.Name) else getattr(target, "attr", "")
-            if name.endswith("_ORDER"):
-                found[name] = value
+            if name:
+                found.append((name, value))
     return found
 
 
-def _is_derived_from_registry(value: ast.expr) -> bool:
-    """只认 `X_ORDER = tuple(X_REGISTRY)` 这一种形状。
-
-    `= HAND_ORDER`（M5）、`= [k for k in …]`、`= sorted(...)` 都不算：派生的意义是**顺序与成员
-    同时**由注册表决定，换成任何一层间接就把可追溯性丢了。
-    """
-    if not isinstance(value, ast.Call):
-        return False
-    func = value.func
-    fname = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-    if fname != "tuple" or len(value.args) != 1:
-        return False
-    arg = value.args[0]
-    return isinstance(arg, ast.Name) and arg.id.endswith("_REGISTRY")
+def _string_set(value: ast.expr) -> frozenset[str] | None:
+    """Tuple/List/Set 里全是字符串常量且 ≥3 个时返回该集合，否则 None。"""
+    if not isinstance(value, (ast.Tuple, ast.List, ast.Set)):
+        return None
+    items = [
+        item.value
+        for item in value.elts
+        if isinstance(item, ast.Constant) and isinstance(item.value, str)
+    ]
+    if len(items) != len(value.elts) or len(items) < 3:
+        return None
+    return frozenset(items)
 
 
-def _string_literals(value: ast.expr) -> tuple[str, ...]:
-    if not isinstance(value, (ast.Tuple, ast.List)):
-        return ()
-    return tuple(
-        node.value
-        for node in value.elts
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    )
+def _registry_key_sets(path: Path) -> dict[str, frozenset[str]]:
+    """同模块内 `*_REGISTRY = {…}` 的键集。"""
+    out: dict[str, frozenset[str]] = {}
+    for name, value in _module_level_assignments(path):
+        if not name.endswith("_REGISTRY") or not isinstance(value, ast.Dict):
+            continue
+        keys = [
+            key.value
+            for key in value.keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        ]
+        if len(keys) == len(value.keys):
+            out[name] = frozenset(keys)
+    return out
 
 
 def test_every_order_declaration_is_structurally_derived() -> None:
     for path in MODULES:
-        for name, value in _assignments(path).items():
-            assert _is_derived_from_registry(value), (
+        order_names = [name for name, _ in _module_level_assignments(path) if name.endswith("_ORDER")]
+        assert order_names, f"{path.name} 里找不到 *_ORDER 声明，守卫要看的东西不在了"
+        for name, value in _module_level_assignments(path):
+            if not name.endswith("_ORDER"):
+                continue
+            ok = (
+                isinstance(value, ast.Call)
+                and getattr(value.func, "id", "") == "tuple"
+                and len(value.args) == 1
+                and isinstance(value.args[0], ast.Name)
+                and value.args[0].id.endswith("_REGISTRY")
+            )
+            assert ok, (
                 f"{path.name}::{name} 不是 `= tuple(*_REGISTRY)` 的形状 —— "
-                "顺序必须由注册表直接派生，中间隔一层（哪怕是另一个模块级 tuple）就会重演 F1/M5"
+                "中间隔任何一层都会重演 F1/M5"
             )
 
 
-def test_the_explicit_trigger_list_in_tests_is_reconciled_to_the_authority() -> None:
-    """第十三轮 F10：测试里那份手抄 `TRIGGERS` 不是「第三份没人管的副本」。
+def test_no_literal_sequence_duplicates_a_registry_key_set() -> None:
+    """与名字无关的那条：注册表之外不许存在同一份成员的第二份真源。
 
-    它**不该删** —— 删了之后 `tuple(ORDER) == TRIGGERS` 就变成拿注册表核对注册表，自证。
-    该管的是它跟权威词表还不同不同：这条把测试文件里那个元组按 AST 取出来，与
-    `AUTOMATION_TRIGGER_CODES` 比集合，漂移到一起就红。
-    """
-    from core.enterprise_automation_workflows import AUTOMATION_TRIGGER_CODES
-
-    test_file = REPO / "tests/test_enterprise_automation_workflows_service.py"
-    tree = ast.parse(test_file.read_text(encoding="utf-8"), filename=str(test_file))
-    literals: tuple[str, ...] = ()
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-            (isinstance(t, ast.Name) and t.id == "TRIGGERS") for t in node.targets
-        ):
-            literals = _string_literals(node.value)
-    assert literals, "测试里那份 TRIGGERS 不见了 —— 先确认这是有意的，再删掉本条"
-    assert set(literals) == set(AUTOMATION_TRIGGER_CODES), (
-        f"测试侧期望与权威词表漂移：{set(literals) ^ set(AUTOMATION_TRIGGER_CODES)}"
-    )
-
-
-def test_no_module_level_hand_written_order_tuple_survives() -> None:
-    """M5 的正面拦截：模块级不许出现**看起来像顺序表**的字符串字面量元组。
-
-    查「元组里全是字符串且长度 >2」而不是查具体变量名，所以改名绕不过去。
+    M5（`HAND_ORDER = (…)` + `X_ORDER = HAND_ORDER`）与 E6b（`SOURCE_ADAPTER_SEQUENCE`
+    换个名字 + 换消费点）都满足"字面量集合 == 某注册表键集"，所以两种都拦得住。
     """
     offenders: list[str] = []
     for path in MODULES:
-        for name, value in _assignments(path).items():
-            literals = _string_literals(value)
-            if len(literals) > 2:
-                offenders.append(f"{path.name}::{name}={literals}")
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in tree.body:
-            if not isinstance(node, ast.Assign):
+        registries = _registry_key_sets(path)
+        assert registries, f"{path.name} 没有可查的 *_REGISTRY 字面量字典"
+        for name, value in _module_level_assignments(path):
+            literal = _string_set(value)
+            if literal is None:
                 continue
-            literals = _string_literals(node.value)
-            if len(literals) <= 2:
-                continue
-            for target in node.targets:
-                tname = target.id if isinstance(target, ast.Name) else ""
-                if tname.endswith("_ORDER") or tname.endswith("_KINDS") or tname.endswith("_STATUSES"):
-                    offenders.append(f"{path.name}::{tname} 手写了 {len(literals)} 个字面量")
-    assert not offenders, f"这些顺序/词表还是手写的：{offenders}"
+            for registry, keys in registries.items():
+                if literal == keys:
+                    offenders.append(
+                        f"{path.name}::{name} 与 {registry} 键集完全相同（{len(literal)} 个成员）"
+                    )
+    assert not offenders, f"注册表外又长出一份顺序真源：{offenders}"
+
+
+def test_registries_cover_their_authoritative_vocabularies() -> None:
+    """F1 指出的任务侧缺口：触发侧早有这条对账，任务侧没有。"""
+    assert set(trigger_svc.TRIGGER_ADAPTER_REGISTRY) == set(AUTOMATION_TRIGGER_CODES)
+    assert set(task_svc.SOURCE_ADAPTER_REGISTRY) == set(catalog_schema.ENTERPRISE_TASK_SOURCE_KINDS)
+
+
+def test_the_guard_is_not_name_gated() -> None:
+    """栅栏的自查：把成员照抄成一个**不相关名字**的字面量元组，必须被抓到。
+
+    这条本身就是 E6b 的最小复现 —— 第一版按名字门控时它是绿的。
+    """
+    probe = "RAG4C_PROBE_SEQUENCE = (\n" '    "document_ingest",\n' '    "index_operation",\n'
+    probe += '    "source_sync",\n    "document_delete",\n    "audit_export",\n'
+    probe += '    "release_quality_scan",\n    "release_recertification",\n)\n'
+    source = MODULES[1].read_text(encoding="utf-8")
+    mutated = ast.parse(source + probe, filename="probe")
+    assert isinstance(mutated.body[-1], (ast.Assign, ast.AnnAssign))
+    value = mutated.body[-1].value  # type: ignore[union-attr]
+    keys = _registry_key_sets(MODULES[1])["SOURCE_ADAPTER_REGISTRY"]
+    assert _string_set(value) == keys, "探针写法变了，这条自查要先修"
+    offenders = [
+        name
+        for name, val in _module_level_assignments(MODULES[1]) + [("RAG4C_PROBE_SEQUENCE", value)]
+        if (literal := _string_set(val)) is not None
+        for registry, kset in keys.items()
+        if literal == kset
+    ] if False else [
+        name
+        for name, val in [("RAG4C_PROBE_SEQUENCE", value)]
+        if _string_set(val) == keys
+    ]
+    assert offenders == ["RAG4C_PROBE_SEQUENCE"], (
+        "一个与注册表同成员、名字无关的字面量序列没被判为第二真源"
+    )
