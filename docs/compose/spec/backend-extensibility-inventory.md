@@ -1271,3 +1271,22 @@ Fetch 白名单这 7 个名字与成员都核对无误，发出侧全扫 + 真�
    「仓内唯一声明」这句要到它被删才名副其实；
 2. M5 那种回潮（再造一个手写顺序 tuple 并 `X_ORDER = HAND_ORDER`）扫文本的栅栏看不见，
    要 AST 扫模块级赋值才算封住。§AG 已记，未做。
+
+## AI. 轴 #5 动手前先读这条：清单原先建议的形状是错的
+
+§B 第 5 行给审批 `action_type` 开的方子是「声明式字段要求表」（我理解成 dict：action_type → 要求）。
+读码之后确认**那个形状装不下这段代码**，照它做会静默改语义。证据（`core/enterprise_approval_control.py`）：
+
+- `:286` 的 `if self.action_type in {publish, rollback, quality_waiver}` 与
+  `:316` 的 `if self.action_type == "knowledge_base_release_quality_waiver"` **同时命中 waiver** ——
+  一个 action_type 的要求是**多条规则累加**出来的，不是一对一映射；
+- 更硬的一条：`:330` 的 `quality_gate_revision must match channel_revision` 依赖 `channel_revision`，
+  而那个字段是**前一条规则**（:286 那组）要求并校验的。所以规则之间有先后与数据依赖，
+  谁先报错也是行为的一部分。
+
+结论：#5 要的是 §AB 已经用过的那张**有序规则表**（每条一个可选谓词 + 自己那组字段要求，命中即叠加，
+顺序显式），不是 dict。顺带一条复用：`c793f53` 那个 AST 守卫正好能钉住「不许再长出手写字面量组」，
+#5 收口时接上即可。
+
+这一条是**动手前的约束**，不是本轮交付；本轮没改审批面。它值这一节的理由是：按 §B 那行字面去做，
+会得到一个测试未必抓得到的语义漂移，而这里是安全相关的校验器。
