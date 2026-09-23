@@ -1334,3 +1334,41 @@ Fetch 白名单这 7 个名字与成员都核对无误，发出侧全扫 + 真�
 
 原样保留的一处死分支：`waiver_expires_at is required`（被前面的别名检查抢跑）。注释写明它到不了，
 金表 `UNREACHABLE` 钉住；没顺手"修好"，因为那属行为变更。
+
+## AL. 第十五轮独立评审处置（PASS-WITH-FIXES，两条 blocker，都已被变异复现）
+
+评审的诚实度值得记一句：它在并发 agent 把 tip 从 `c793f53` 推到 `6255555` 之后，用
+`git diff --stat c793f53..6255555` 确认它审过的七个文件全部逐字节未变，才肯沿用旧读数为新 tip
+背书。以下是它打掉的我的说法：
+
+**F1（blocker，我的注释与提交信息都在吹）**：`tests/test_service_order_declarations_ast.py`
+那条"手写字面量元组"的扫描**按名字门控**（`*_ORDER` / `*_KINDS` / `*_STATUSES`），所以
+`c793f53` 提交信息里那句「改名也躲不掉」是假的。复现的变异 E6b：模块级
+`SOURCE_ADAPTER_SEQUENCE = (7 个 code)` + 消费点改用它，派生式一行不动 —— 守卫 3 全绿，
+旧的字面栅栏也绿。而且这一层缺的还不止形状：**任务侧没有**触发侧那条
+`set(registry) == 词表` 对账，所以改名漂移没有任何东西会响。⇒ 已记为待修（下面"仍未清"）。
+
+**F2（blocker，我先前正是怀疑这个）**：`DocumentsPage.workspace.test.tsx` 那条"查看与编辑平级"
+的断言，把 `ParsedContextPane` 塞进行内 Dialog 后仍然全绿 —— 也就是说它钉的是
+"行上动作 + 叠层 + 没跳转"，**不是**"看是编辑的平级"。修法已落地：正向钉壳自己的可访问名
+（TDesign 把 header 渲成 div，没有 heading 角色，可访问名来自 `aria-label`），反向钉编辑台的
+`解析上下文` region 与 `PARSED CONTEXT` 字样在壳内与页面上都不许出现。
+本轮自己复现同一个变异验过：注入后 `1 failed | 38 passed`，还原后 `39 passed`，
+宿主 `DocumentsPage.tsx` 逐字节还原。
+另外评审独立证伪了我一处怀疑：`设置/重新索引` 那三条**不是**同义反复 —— 页面级接管的变异
+正好红在那里。我原本准备承认它是弱断言，结论反了，记下来。
+
+**我写错的三条读数，就地更正**：
+1. §AH 写"AST 守卫初始 2 passed" —— 实为收集到 3 条、3 passed。
+2. `c793f53` 提交信息说 "AST guards **replacing** a textual fence" —— 那是 117 行纯新增、
+   0 删除，正则栅栏**仍在发布**。是叠加，不是替换。
+3. F10 的处置我承认一半是 rationalisation：`set(TRIGGERS) == set(AUTOMATION_TRIGGER_CODES)`
+   被既有的 `test_enterprise_automation_workflows_service.py:209` 与本仓
+   `test_automation_trigger_adapter_registry.py:42` 蕴含，所以它是**删除引线**，不是漂移探测器；
+   保留 `TRIGGERS` 的理由（它是唯一的**有序**锚点，权威词表是 frozenset）仍然成立。
+
+**仍未清（下一位的活，别当成已解决）**：F1 要求把那条扫描改成不依赖名字（按值的字面量结构查，
+而不是查赋值目标名），并补任务侧 `set(SOURCE_ADAPTER_REGISTRY) == TASK_SOURCE_KINDS` 对账；
+评审还列出守卫在函数作用域、下标目标、第三个模块 re-export、整行删除四种情况下**空洞为绿**
+（E7/E8/E9/E23），以及 `Assign` 与 `AnnAssign` 处理不一致（E16 绿 / E17 红）、按名字加宽会
+撞上仓内 10 个合法词表名造成假红。

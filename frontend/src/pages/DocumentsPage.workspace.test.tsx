@@ -1647,8 +1647,20 @@ describe("DocumentsPage shared knowledge workspace", () => {
     await waitFor(() => expect(dialog.querySelector("iframe")).toBeTruthy());
 
     // 打开看的叠层之后，列表还在原处：行动作仍可达，说明没有跳转进编辑台。
+    // （第十五轮：这三条不是同义反复 —— 页面级接管的变异正好红在这里。）
     expect(screen.getByRole("button", { name: "设置" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "重新索引" })).toBeTruthy();
     expect(api.fetchDocumentSource).toHaveBeenCalled();
+
+    // 第十五轮评审 F2：上面那三条钉住"行上动作 + 叠层 + 没跳转"，**没**钉住"看是编辑的平级"。
+    // 复现过的漏法是把 ParsedContextPane（编辑台那一栏）塞进行内 Dialog —— 这样
+    // SourcePreview 依然没有平级挂载点，而前三条断言照样全绿。所以正向钉这个壳自己的可访问名
+    // （TDesign 把 header 渲染成 div，没有 heading 角色，可访问名来自 aria-label），
+    // 反向钉编辑台的标记不许出现在壳里、也不许出现在页面上。
+    expect(within(dialog).getByText("原文查看 · 员工手册.md")).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: /原文查看/ })).toBeTruthy();
+    expect(within(dialog).queryByRole("region", { name: "解析上下文" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "解析上下文" })).toBeNull();
+    expect(screen.queryByText("PARSED CONTEXT")).toBeNull();
   });
 });
