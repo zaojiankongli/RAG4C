@@ -1618,4 +1618,37 @@ describe("DocumentsPage shared knowledge workspace", () => {
     expect(screen.getByText("文档导航")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "文档管理" })).toBeNull();
   });
+
+  it("opens 查看原文 from the list row as an overlay, without leaving the list", async () => {
+    // 「查看」此前只存在于编辑台内部（SourcePreview 全仓唯一挂载点在 ParsedContextPane）。
+    // 这条钉的是入口层级：看是列表行上的平级动作，不是切进干预界面才能看到的子面。
+    api.fetchDocuments.mockResolvedValue({ documents: [DOCUMENT] });
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:source-preview"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    // 覆盖默认的「这台服务没开这个能力」拒绝：这条要的是成功分支。
+    api.fetchDocumentSource.mockResolvedValue({
+      blob: new Blob(["%PDF-1.4"], { type: "application/pdf" }),
+      mediaType: "application/pdf",
+      disposition: `inline; filename="员工手册.md"`,
+      etag: '"1-aa"',
+    });
+    render(
+      <TestKnowledgeWorkspaceProvider preferSummaryApi={false}>
+        <DocumentsPage preferModernCatalog={false} />
+      </TestKnowledgeWorkspaceProvider>,
+    );
+    await waitFor(() => expect(screen.getAllByText("员工手册.md").length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole("button", { name: "查看原文" }));
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(dialog.querySelector("iframe")).toBeTruthy());
+
+    // 打开看的叠层之后，列表还在原处：行动作仍可达，说明没有跳转进编辑台。
+    expect(screen.getByRole("button", { name: "设置" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "重新索引" })).toBeTruthy();
+    expect(api.fetchDocumentSource).toHaveBeenCalled();
+  });
 });
