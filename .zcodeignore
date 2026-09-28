@@ -58,12 +58,6 @@ progress.md
 .rag4c_cache/
 # 检索评测的嵌入缓存（几 MB 的向量，按语料指纹重新生成即可，不进版本库）
 eval/.cache/
-
-# 智能体会话工具状态（评审/阶段文件/扫描缓存），本地工作资料，不进版本库
-.mimosa/
-.slim/
-frontend/src/.mimosa/
-
 .agents/
 output/
 backups/
@@ -98,3 +92,31 @@ debug-readonly*.txt
 server-live-*.log
 server-live-*.err.log
 .worktrees/
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+bower_components/
+jspm_packages/
+site-packages/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+test-results/
+allure-results/
+allure-report/
+cdk.out/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）
