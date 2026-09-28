@@ -219,3 +219,25 @@ describe("MonitorPage native TDesign migration", () => {
     await waitFor(() => expect(api.fetchMetrics).toHaveBeenCalledTimes(3));
   });
 });
+
+// 卡片 '引用失败率' 的分母曾经是'验证次数'：两次验证各失败一次就会显示 100%，
+// 而那一轮界面里有 21~47 条引用。现在两端都用引用条数之和（verify.citations.* 的 sum）。
+describe('citation failure rate denominator', () => {
+  it('divides failed citations by total citations, not by verification calls', async () => {
+    api.fetchMetrics.mockReset().mockResolvedValue({
+      ...snapshot,
+      metrics: {
+        ...snapshot.metrics,
+        'verify.total': { ...metric, count: 2 },
+        'verify.citations.total': { ...metric, count: 2, sum: 20 },
+        'verify.citations.failed': { ...metric, count: 2, sum: 4 },
+      },
+    });
+    render(<MonitorPage active />);
+    await screen.findByText('技术明细');
+    const card = await screen.findByText('引用失败率');
+    const stat = card.closest('.stat-card') as HTMLElement;
+    expect(within(stat).getByText('20.0')).toBeTruthy();
+    expect(within(stat).queryByText('200.0')).toBeNull();
+  });
+});

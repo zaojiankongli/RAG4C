@@ -554,15 +554,27 @@ export default function MonitorPage({ active = true }: { active?: boolean }) {
   const recent = runsCapability === "legacy" ? legacyRecent : [];
   const abstainRate = abstentionPercent(m, metricRecent);
   // 引用验证质量（R3-B 埋点：verify.total / verify.citations.failed / verify.l3.evaluated）
-  const verifyTotal = (m["verify.total"] as MetricStat | undefined)?.count ?? 0;
-  const verifyFailed = (m["verify.citations.failed"] as MetricStat | undefined)?.count ?? 0;
-  const citationFailRate = verifyTotal > 0 ? (verifyFailed / verifyTotal) * 100 : 0;
+  const verifyCalls = (m["verify.total"] as MetricStat | undefined)?.count ?? 0;
+  const citationsTotal = (m["verify.citations.total"] as MetricStat | undefined)?.sum ?? 0;
+  const failedCitations = (m["verify.citations.failed"] as MetricStat | undefined)?.sum ?? 0;
+  const citationFailRate = citationsTotal > 0 ? (failedCitations / citationsTotal) * 100 : 0;
   const circuits = snapshot?.circuits ?? {};
   const trippedCircuits = Object.entries(circuits).filter(([, c]) => c.state !== "closed");
   // 查询缓存命中率（TTL 缓存：相同问题 10 分钟内直接命中，不重复检索）
   const cache = snapshot?.cache;
   const cacheHitRate = cacheHitPercent(cache);
   const protectionSignals = projectProtectionSignals(m);
+  // 上游降级率（服务端已算好比率）：降级是"上游没扛住"，要和质量指标分开看，
+  // 否则一次重排限流会被误读成"检索质量变差"。
+  const degraded = snapshot?.degraded;
+  const degradedScopes = [
+    { key: "retrieval", label: "检索降级", hint: "检索链路降级（含路由回退）的比例。", stat: degraded?.retrieval },
+    { key: "reranker", label: "重排降级", hint: "该重排却没重排成（如重排服务限流）的比例。", stat: degraded?.reranker },
+  ].filter((item) => item.stat && item.stat.total > 0);
+  const unreachableTotal = Object.values(degraded?.endpoint_unreachable ?? {}).reduce(
+    (sum, value) => sum + Number(value || 0),
+    0,
+  );
   const embedCacheRate = cacheHitPercent(snapshot?.embed_cache);
   const llmCacheRate = cacheHitPercent(snapshot?.llm_cache);
   const sharedQueue = snapshot?.queue?.shared;
@@ -713,14 +725,14 @@ export default function MonitorPage({ active = true }: { active?: boolean }) {
               label="引用验证次数"
               hint="答案经过三层引用验证（L1 存在性 / L2 文本哈希 / L3 蕴含判定）的累计次数。"
               icon={<CertificateIcon />}
-              value={verifyTotal.toLocaleString()}
+              value={verifyCalls.toLocaleString()}
               unit="次"
             />
           </Col>
           <Col xs={12} md={6}>
             <StatCard
               label="引用失败率"
-              hint="验证中判定为非 ok 的引用占比（含未支撑 / 陈旧 / 仅存在）。比例高时答案可信度需关注。"
+              hint="判定为非 ok 的引用条数占全部引用条数的比例（含未支撑 / 陈旧 / 仅存在）。此前分母用的是验证次数，两次验证各失败一次就会显示 100%。"
               tone={citationFailRate > 0 ? "warning" : "success"}
               icon={citationFailRate > 0 ? <StopCircleIcon /> : <CheckCircleIcon />}
               value={citationFailRate.toFixed(1)}
@@ -771,6 +783,46 @@ export default function MonitorPage({ active = true }: { active?: boolean }) {
             />
           </Col>
         </Row>
+
+        {/* 上游降级率：把"上游没扛住"和"检索变差"分开看 */}
+        {degradedScopes.length > 0 ? (
+          <Card
+            size="small"
+            title="上游降级（进程累计）"
+            actions={
+              <Tag variant="light-outline">
+                {degradedScopes.every((item) => (item.stat?.rate ?? 0) === 0) ? "正常" : "有降级"}
+              </Tag>
+            }
+            style={{ marginBottom: 16 }}
+          >
+            <Row gutter={[12, 12]} className="monitor-summary monitor-summary-secondary">
+              {degradedScopes.map((item) => {
+                const rate = (item.stat?.rate ?? 0) * 100;
+                return (
+                  <Col xs={12} md={6} key={item.key}>
+                    <StatCard
+                      label={item.label}
+                      hint={item.hint}
+                      tone={rate === 0 ? "success" : rate >= 10 ? "danger" : "warning"}
+                      value={rate.toFixed(1)}
+                      unit={`% (${item.stat?.degraded ?? 0}/${item.stat?.total ?? 0})`}
+                    />
+                  </Col>
+                );
+              })}
+              <Col xs={12} md={6}>
+                <StatCard
+                  label="端点不可达"
+                  hint="探活发现的上游连不上次数（已快速失败，没白等重试）。"
+                  tone={unreachableTotal === 0 ? "success" : "danger"}
+                  value={unreachableTotal}
+                  unit="次"
+                />
+              </Col>
+            </Row>
+          </Card>
+        ) : null}
 
         <Card
           size="small"
