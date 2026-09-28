@@ -60,14 +60,31 @@ export default function RetrievalTrace({ traces, citations, evidence = [] }: Pro
     return map;
   }, [citations]);
 
-  // stale 引用 -> 可直达的切片；chunk->document 归属缺失时不编造链接
+  // stale 引用 -> 只有证据自身同时声明 document/dataset 归属才生成深链；
+  // 不能拿当前工作区或查询请求的 dataset 冒充跨库证据出处。
   const staleLinks = useMemo(() => {
-    const docByChunk = new Map(evidence.map((item) => [item.chunk_id, item.doc_id]));
+    const scopeByChunk = new Map(
+      evidence.map((item) => [
+        item.chunk_id,
+        {
+          docId: item.doc_id.trim(),
+          datasetId: item.dataset_id?.trim() ?? "",
+        },
+      ]),
+    );
     return citations
       .filter((item) => item.status === "stale")
       .map((item) => {
-        const docId = docByChunk.get(item.chunk_id) ?? "";
-        return { chunkId: item.chunk_id, url: docId ? chunkWorkbenchDeepLink(docId, item.chunk_id) : null };
+        const scope = scopeByChunk.get(item.chunk_id);
+        const docId = scope?.docId ?? "";
+        const datasetId = scope?.datasetId ?? "";
+        return {
+          chunkId: item.chunk_id,
+          url:
+            docId && datasetId
+              ? chunkWorkbenchDeepLink(docId, item.chunk_id, datasetId)
+              : null,
+        };
       });
   }, [citations, evidence]);
 
@@ -193,10 +210,10 @@ export default function RetrievalTrace({ traces, citations, evidence = [] }: Pro
                     </div>
                     {status === "stale" && staleLinks.length > 0 && (
                     <div className="rtrace-verify-links">
-                      {staleLinks.map((link) =>
+                      {staleLinks.map((link, linkIndex) =>
                         link.url ? (
                           <a
-                            key={link.chunkId}
+                            key={`${link.chunkId}:${linkIndex}`}
                             className="rtrace-verify-link"
                             href={link.url}
                             aria-label={`在解析干预中查看已变更的切片 ${link.chunkId}`}
@@ -204,8 +221,8 @@ export default function RetrievalTrace({ traces, citations, evidence = [] }: Pro
                             在解析干预中核对 <code>{link.chunkId}</code>
                           </a>
                         ) : (
-                          <span key={link.chunkId} className="rtrace-verify-link is-unavailable">
-                            切片 <code>{link.chunkId}</code> 缺少文档归属，无法直达
+                          <span key={`${link.chunkId}:${linkIndex}`} className="rtrace-verify-link is-unavailable">
+                            切片 <code>{link.chunkId}</code> 缺少文档或知识库归属，无法直达
                           </span>
                         ),
                       )}

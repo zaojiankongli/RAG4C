@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Citation, EvidenceChunk } from "../types/rag";
 import { parseChunkWorkbenchLocation } from "../run/appRoute";
 import RetrievalTrace from "./RetrievalTrace";
@@ -13,9 +13,14 @@ const citation = (chunk_id: string, status: Citation["status"]): Citation => ({
   status,
   reason: "",
 });
-const evidence = (chunk_id: string, doc_id: string): EvidenceChunk => ({
+const evidence = (
+  chunk_id: string,
+  doc_id: string,
+  dataset_id: string | null = "dataset-a",
+): EvidenceChunk => ({
   chunk_id,
   doc_id,
+  dataset_id,
   text: "body",
   score: 0.9,
   rank: 1,
@@ -38,14 +43,25 @@ describe("RetrievalTrace stale → 切片直达", () => {
     expect(parseChunkWorkbenchLocation({ pathname: "/", search: "", hash: href })).toEqual({
       docId: "doc-1",
       chunkId: "chunk-9",
-      datasetId: "",
+      datasetId: "dataset-a",
     });
   });
 
-  it("says 无法直达 instead of inventing a link when the chunk has no document ownership", () => {
+  it("says 无法直达 instead of inventing a link when document or dataset ownership is missing", () => {
     render(<RetrievalTrace traces={[]} citations={[citation("chunk-9", "stale")]} evidence={[]} />);
     expect(screen.queryByLabelText(/^在解析干预中查看已变更的切片/)).toBeNull();
-    expect(screen.getByText(/缺少文档归属，无法直达/)).toBeTruthy();
+    expect(screen.getByText(/缺少文档或知识库归属，无法直达/)).toBeTruthy();
+
+    cleanup();
+    render(
+      <RetrievalTrace
+        traces={[]}
+        citations={[citation("chunk-9", "stale")]}
+        evidence={[evidence("chunk-9", "doc-1", null)]}
+      />,
+    );
+    expect(screen.queryByLabelText(/^在解析干预中查看已变更的切片/)).toBeNull();
+    expect(screen.getByText(/缺少文档或知识库归属，无法直达/)).toBeTruthy();
   });
 
   it("keeps non-stale verification rows link-free", () => {
@@ -57,5 +73,28 @@ describe("RetrievalTrace stale → 切片直达", () => {
       />,
     );
     expect(screen.queryByText(/在解析干预中核对/)).toBeNull();
+  });
+
+  // 实机读数里刷了 363 次 React 警告：两条 stale 引用命中同一切片时，
+  // `key={link.chunkId}` 就撞了。重复引用是合法数据（同一条证据可以支撑多个结论），
+  // 撞的是 key。此前单测每条 stale 都取自不同 chunkId，所以一直没红。
+  it("renders one row per stale citation without a duplicate-key warning", () => {
+    const errors: unknown[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      errors.push(args.join(" "));
+    });
+    try {
+      render(
+        <RetrievalTrace
+          traces={[]}
+          citations={[citation("chunk-9", "stale"), citation("chunk-9", "stale")]}
+          evidence={[evidence("chunk-9", "doc-1")]}
+        />,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(errors.filter((line) => /same key/i.test(String(line)))).toEqual([]);
+    expect(screen.getAllByText(/在解析干预中核对/)).toHaveLength(2);
   });
 });
