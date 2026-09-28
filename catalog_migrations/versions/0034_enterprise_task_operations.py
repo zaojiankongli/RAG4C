@@ -266,20 +266,26 @@ def _create_guards() -> None:
 
 
 def _drop_guards() -> None:
+    # 目标名都是本迁移头部定义的常量（EVENT_INSERT_TRIGGER / no_update / no_delete /
+    # EVENT_VALIDATE_FUNCTION / EVENT_IMMUTABLE_FUNCTION）。DROP 守卫按安全扫描要求写成
+    # 完整字面量，不做任何动态拼接；迁移是冻结产物，这些名字不会再变。
     dialect = _dialect_name()
     if dialect == "postgresql":
-        op.execute(f"DROP TRIGGER IF EXISTS {EVENT_INSERT_TRIGGER} ON tenant_task_events")
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_task_events_validate_insert ON tenant_task_events"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_task_events_no_update ON tenant_task_events"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_task_events_no_delete ON tenant_task_events"
+        )
+        op.execute("DROP FUNCTION IF EXISTS rag4c_task_event_validate()")
+        op.execute("DROP FUNCTION IF EXISTS rag4c_task_event_immutable()")
     else:
-        op.execute(f"DROP TRIGGER IF EXISTS {EVENT_INSERT_TRIGGER}")
-    for operation in ("update", "delete"):
-        name = f"trg_tenant_task_events_no_{operation}"
-        if dialect == "postgresql":
-            op.execute(f"DROP TRIGGER IF EXISTS {name} ON tenant_task_events")
-        else:
-            op.execute(f"DROP TRIGGER IF EXISTS {name}")
-    if dialect == "postgresql":
-        op.execute(f"DROP FUNCTION IF EXISTS {EVENT_VALIDATE_FUNCTION}()")
-        op.execute(f"DROP FUNCTION IF EXISTS {EVENT_IMMUTABLE_FUNCTION}()")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_task_events_validate_insert")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_task_events_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_task_events_no_delete")
 
 
 def _guard_downgrade() -> None:

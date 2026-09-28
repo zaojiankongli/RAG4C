@@ -168,20 +168,40 @@ def _create_immutable_triggers() -> None:
 
 
 def _drop_triggers() -> None:
+    # 目标名都是本迁移头部定义的常量（REVISION_TABLE / EVENT_TABLE 派生的 no_update /
+    # no_delete 与 EVENT_INSERT_TRIGGER / EVENT_VALIDATE_FUNCTION / IMMUTABLE_FUNCTION）。
+    # DROP 守卫按安全扫描要求写成完整字面量，不做任何动态拼接；迁移是冻结产物，
+    # 这些名字不会再变。
     dialect = _require_supported_dialect()
-    for table in (REVISION_TABLE, EVENT_TABLE):
-        for operation in ("update", "delete"):
-            name = f"trg_{table}_no_{operation}"
-            if dialect == "postgresql":
-                op.execute(f"DROP TRIGGER IF EXISTS {name} ON {table}")
-            else:
-                op.execute(f"DROP TRIGGER IF EXISTS {name}")
     if dialect == "postgresql":
-        op.execute(f"DROP TRIGGER IF EXISTS {EVENT_INSERT_TRIGGER} ON {EVENT_TABLE}")
-        op.execute(f"DROP FUNCTION IF EXISTS {EVENT_VALIDATE_FUNCTION}()")
-        op.execute(f"DROP FUNCTION IF EXISTS {IMMUTABLE_FUNCTION}()")
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_automation_rule_revisions_no_update"
+            " ON tenant_automation_rule_revisions"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_automation_rule_revisions_no_delete"
+            " ON tenant_automation_rule_revisions"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_automation_events_no_update"
+            " ON tenant_automation_events"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_automation_events_no_delete"
+            " ON tenant_automation_events"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_automation_events_validate_insert"
+            " ON tenant_automation_events"
+        )
+        op.execute("DROP FUNCTION IF EXISTS rag4c_automation_event_validate()")
+        op.execute("DROP FUNCTION IF EXISTS rag4c_automation_immutable()")
     else:
-        op.execute(f"DROP TRIGGER IF EXISTS {EVENT_INSERT_TRIGGER}")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_automation_rule_revisions_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_automation_rule_revisions_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_automation_events_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_automation_events_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_automation_events_validate_insert")
 
 
 def _guard_downgrade() -> None:
