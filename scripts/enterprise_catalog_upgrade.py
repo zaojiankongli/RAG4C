@@ -1601,7 +1601,7 @@ def _knowledge_base_releases_preflight_report(
                     text(
                         "SELECT tenant_id, dataset_id, id, current_version_id, "
                         "desired_index_revision, indexed_revision, graph_revision "
-                        "FROM documents WHERE lifecycle_state='active' AND retrieval_enabled=1 "
+                        "FROM documents WHERE lifecycle_state='active' AND retrieval_enabled "
                         "ORDER BY tenant_id, dataset_id, id"
                     )
                 ).mappings()

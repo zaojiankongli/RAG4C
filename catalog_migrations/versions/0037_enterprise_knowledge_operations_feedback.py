@@ -269,7 +269,7 @@ def upgrade() -> None:
             "sampling_basis_points", sa.Integer(), nullable=False, server_default=sa.text("10000")
         ),
         sa.Column(
-            "safe_preview_enabled", sa.Boolean(), nullable=False, server_default=sa.text("1")
+            "safe_preview_enabled", sa.Boolean(), nullable=False, server_default=sa.true()
         ),
         sa.Column("review_sla_minutes", sa.Integer(), nullable=False, server_default=sa.text("60")),
         sa.Column("revision", sa.Integer(), nullable=False, server_default="1"),
@@ -436,8 +436,8 @@ def upgrade() -> None:
         sa.Column("retrieval_ms", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("generation_ms", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("total_ms", sa.Integer(), nullable=False, server_default=sa.text("0")),
-        sa.Column("cached", sa.Boolean(), nullable=False, server_default=sa.text("0")),
-        sa.Column("retry_used", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("cached", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column("retry_used", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column(
             "serving_generation", sa.Integer(), nullable=False, server_default=sa.text("0")
         ),

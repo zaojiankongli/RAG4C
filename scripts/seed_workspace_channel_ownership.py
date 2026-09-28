@@ -55,9 +55,9 @@ def main() -> int:
                         "environment, is_default, active_default_slot, revision, created_at, "
                         "created_by, updated_at, updated_by, archived_at, archived_by) "
                         "VALUES (:id, :tid, 'default', '默认工作区', 'default', '', 'active', "
-                        "'production', 1, 'default', 1, :now, 'seed', :now, 'seed', NULL, NULL)"
+                        "'production', :is_default, 'default', 1, :now, 'seed', :now, 'seed', NULL, NULL)"
                     ),
-                    {"id": ws_id, "tid": tid, "now": now},
+                    {"id": ws_id, "tid": tid, "now": now, "is_default": True},
                 )
                 print(f"workspace seeded: {ws_id}")
             if ch_count == 0:

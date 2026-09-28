@@ -53,6 +53,22 @@ class DialectSpec:
     # as `dialect != "sqlite"`, silently including engines nobody had ever tested.
     real_concurrent_locking: bool
     utc_clock: Callable[[], ColumnElement[Any]]
+    # 布尔列在 CHECK 约束里的字面量。PG 的 boolean 与 integer 不可比
+    # （``col IN (0, 1)`` 会报 ``operator does not exist: boolean = integer``），
+    # 必须写成 true/false；MySQL / SQLite 里 true/false 只是 1/0 的别名，
+    # 因此沿用数字形态可以保持与存量库里已存的约束文本一致。
+    boolean_literals: tuple[str, str] = ("1", "0")
+
+
+def boolean_check_sql(column: str, dialect: str) -> str:
+    """返回 ``<column> IN (...)`` 的方言正确写法（布尔列专用）。
+
+    方言差异只允许落在这一处：``models/orm.py``、Alembic 迁移与 schema 校验
+    三处都从这里取，避免哪天换个引擎又出现"PG 上建不了表"。
+    """
+    spec = resolve_dialect(dialect)
+    true_value, false_value = spec.boolean_literals
+    return f"{column} IN ({true_value}, {false_value})"
 
 
 def _mysql_utc_clock() -> ColumnElement[Any]:
@@ -90,6 +106,7 @@ BUILTIN_DIALECT_SPECS: tuple[DialectSpec, ...] = (
         aliases=("postgres",),
         real_concurrent_locking=True,
         utc_clock=_postgresql_utc_clock,
+        boolean_literals=("true", "false"),
     ),
 )
 

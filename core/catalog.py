@@ -111,6 +111,53 @@ def _catalog_schema_mode() -> str:
         return "legacy"
 
 
+def _connect_args_for(url: str, timeout_s: float) -> dict[str, Any]:
+    """把"连接等待上限"翻译成**对应驱动**认的 connect_args。
+
+    这里是两个驱动的差异点，踩过一次：psycopg2 只接受**整数**秒
+    （传 5.0 会直接报 ``invalid integer value "5.0"``），而 pymysql 接受浮点。
+    方言差异必须落在一处，不能让调用方各写各的。
+    """
+    if timeout_s <= 0:
+        return {}
+    lowered = (url or "").lower()
+    if lowered.startswith("postgres"):
+        return {"connect_timeout": max(1, int(round(timeout_s)))}
+    if lowered.startswith("sqlite"):
+        # sqlite3 的 Connection 不认 connect_timeout（它自己的参数是 timeout=），
+        # 透传下去会直接 TypeError，于是 verify 模式下任何 sqlite 目录库都起不来。
+        return {}
+    return {"connect_timeout": float(timeout_s)}
+
+
+def _remote_engine_kwargs(url: str = "") -> dict[str, Any]:
+    """远程库（MySQL / PG 等）的 ``create_engine`` 参数。
+
+    单独抽出来的两个理由：
+    1. 可测——不需要真的建引擎就能断言连接超时被下发；
+    2. 只有一处决定"等连接多久"，不会出现某个调用点漏配、于是悄悄等满 10 秒。
+    """
+    timeout = 10.0
+    resolved_url = url
+    try:
+        # 与本文件其他位置一样惰性导入：core.catalog 要能在没装配配置时被 import
+        from config.settings import get_settings
+
+        cfg = get_settings().catalog
+        timeout = float(cfg.connect_timeout_s)
+        resolved_url = url or str(cfg.db_url)
+    except Exception:  # noqa: BLE001 - 配置读不到就用驱动默认，不因此起不来
+        timeout = 10.0
+    kwargs: dict[str, Any] = {
+        "pool_pre_ping": True,
+        "pool_recycle": 3600,
+        "pool_size": 5,
+        "max_overflow": 10,
+    }
+    kwargs["connect_args"] = _connect_args_for(resolved_url, timeout)
+    return kwargs
+
+
 def get_engine() -> Any:
     """进程级 SQLAlchemy Engine 单例，并按配置创建或验证 schema。
 
@@ -143,13 +190,7 @@ def get_engine() -> Any:
                     cursor.execute("PRAGMA busy_timeout=30000")
                     cursor.close()
             else:
-                _engine = create_engine(
-                    url,
-                    pool_pre_ping=True,
-                    pool_recycle=3600,
-                    pool_size=5,
-                    max_overflow=10,
-                )
+                _engine = create_engine(url, **_remote_engine_kwargs(url))
             from core.catalog_schema import safe_database_label
 
             try:

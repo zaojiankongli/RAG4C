@@ -384,7 +384,7 @@ def upgrade() -> None:
         ),
         sa.Column("risk_tier", sa.String(length=16), nullable=False),
         sa.Column("promotion_order", sa.Integer(), nullable=False, server_default=sa.text("0")),
-        sa.Column("is_default_serving", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("is_default_serving", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("active_default_slot", sa.String(length=16), nullable=True),
         sa.Column("revision", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column(

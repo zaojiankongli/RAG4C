@@ -36,6 +36,15 @@ from sqlalchemy import (
 from sqlalchemy.dialects import mysql
 from sqlalchemy.engine import make_url
 
+from core.catalog_capability_producers import (
+    CatalogCapabilityPolicy,
+    build_catalog_capability_producer,
+    validate_catalog_capability_policy,
+)
+from core.providers import ProviderRegistry, UnknownProviderError
+from core.task_source_kinds import TASK_SOURCE_KIND_NAMES
+from core.task_vocabulary import TASK_CATEGORY_VALUES, TASK_NORMALIZED_STATUS_VALUES
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _ALEMBIC_INI = _PROJECT_ROOT / "alembic.ini"
 BASELINE_REVISION = "0001_base"
@@ -3898,25 +3907,9 @@ ENTERPRISE_TASK_OPERATIONS_TABLES = frozenset(
     }
 )
 ENTERPRISE_TASK_OPERATIONS_REQUIRED_TABLES = ENTERPRISE_TASK_OPERATIONS_TABLES
-ENTERPRISE_TASK_SOURCE_KINDS = (
-    "document_ingest",
-    "index_operation",
-    "source_sync",
-    "document_delete",
-    "audit_export",
-    "release_quality_scan",
-    "release_recertification",
-)
-ENTERPRISE_TASK_CATEGORIES = ("documents", "indexing", "sources", "compliance", "quality")
-ENTERPRISE_TASK_STATUSES = (
-    "queued",
-    "running",
-    "succeeded",
-    "failed",
-    "cancelled",
-    "blocked",
-    "unavailable",
-)
+ENTERPRISE_TASK_SOURCE_KINDS = TASK_SOURCE_KIND_NAMES
+ENTERPRISE_TASK_CATEGORIES = TASK_CATEGORY_VALUES
+ENTERPRISE_TASK_STATUSES = TASK_NORMALIZED_STATUS_VALUES
 ENTERPRISE_TASK_ACTION_TYPES = ("retry", "cancel", "acknowledge")
 ENTERPRISE_TASK_ACTION_STATUSES = (
     "requested",
@@ -5126,12 +5119,11 @@ def _enterprise_content_recovery_capability_issues(connection: Any) -> tuple[str
                 issues.append(f"non-tenant-leading foreign key {table}.{name}")
         actual_checks = {
             str(item.get("name")): str(item.get("sqltext") or "")
-            for item in inspector.get_check_constraints(table)
+            for item in _reflected_check_items(inspector, table)
             if item.get("name")
         }
         for name, fragments in ENTERPRISE_CONTENT_RECOVERY_REQUIRED_CHECK_FRAGMENTS[table].items():
-            sql = _parenless_sql(actual_checks.get(name))
-            if not sql or any(_parenless_sql(fragment) not in sql for fragment in fragments):
+            if not _check_fragments_match(actual_checks.get(name), fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
         actual_indexes = {
             str(item.get("name")): tuple(item.get("column_names") or ())
@@ -5152,7 +5144,7 @@ def _enterprise_content_recovery_capability_issues(connection: Any) -> tuple[str
     for table in ("tenant_approval_policies", "tenant_approval_requests"):
         checks = {
             str(item.get("name")): str(item.get("sqltext") or "")
-            for item in inspector.get_check_constraints(table)
+            for item in _reflected_check_items(inspector, table)
             if item.get("name")
         }
         actual = checks.get(f"ck_{table}_action_type")
@@ -5167,10 +5159,10 @@ def _enterprise_content_recovery_capability_issues(connection: Any) -> tuple[str
     return tuple(sorted(set(issues)))
 
 
-def inspect_enterprise_content_recovery_capability(
+def _knowledge_serving_original_content_recovery_capability(
     bind: Any,
 ) -> tuple[str, tuple[str, ...]]:
-    """Return revision-aware Stage 23 Content Recovery authority state."""
+    """Frozen pre-registry Stage 23 Content Recovery capability inspector."""
 
     def inspect_connection(connection: Any) -> tuple[str, tuple[str, ...]]:
         inspector = inspect(connection)
@@ -5199,7 +5191,9 @@ def inspect_enterprise_content_recovery_capability(
         }:
             if not recovery_present and revision in _known_catalog_revisions():
                 return "not_available", ()
-            return "unavailable", ("catalog is not at a known pre-0033, 0033 or 0034 revision",)
+            return "unavailable", (
+                "catalog is not at a known pre-0033, 0033 or 0034 revision",
+            )
         issues = _enterprise_content_recovery_capability_issues(connection)
         return ("ready", ()) if not issues else ("unavailable", issues)
 
@@ -5270,7 +5264,7 @@ def _task_event_guard_issues(connection: Any) -> tuple[str, ...]:
     if not insert_definition:
         issues.append(f"missing Task Operations event insert trigger {_TASK_EVENT_INSERT_TRIGGER}")
     elif any(
-        fragment not in insert_definition
+        fragment not in _trigger_behaviour_text(insert_definition, connection, dialect)
         for fragment in ("insert", "materialized", "previous_event_digest", "sequence")
     ):
         issues.append(f"invalid Task Operations event insert trigger {_TASK_EVENT_INSERT_TRIGGER}")
@@ -5592,12 +5586,11 @@ def _enterprise_task_operations_capability_issues(connection: Any) -> tuple[str,
                 issues.append(f"non-tenant-leading foreign key {table}.{name}")
         actual_checks = {
             str(item.get("name")): str(item.get("sqltext") or "")
-            for item in inspector.get_check_constraints(table)
+            for item in _reflected_check_items(inspector, table)
             if item.get("name")
         }
         for name, fragments in ENTERPRISE_TASK_OPERATIONS_REQUIRED_CHECK_FRAGMENTS[table].items():
-            sql = _parenless_sql(actual_checks.get(name))
-            if not sql or any(_parenless_sql(fragment) not in sql for fragment in fragments):
+            if not _check_fragments_match(actual_checks.get(name), fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
         actual_indexes = {
             str(item.get("name")): tuple(item.get("column_names") or ())
@@ -5750,6 +5743,10 @@ def _automation_guard_issues(connection: Any) -> tuple[str, ...]:
         )
         if dialect == "postgresql":
             required_insert = required_insert + ("rag4c_automation_event_validate",)
+            # PG 触发器体在函数里：片段要在"触发器 + 函数体"这段合起来的行为上核对。
+            insert = insert + " " + function_definitions.get(
+                "rag4c_automation_event_validate", ""
+            ).casefold()
         else:
             required_insert = required_insert + ("event_digest",)
         if any(fragment not in insert for fragment in required_insert):
@@ -6370,15 +6367,14 @@ def _enterprise_automation_workflows_capability_issues(connection: Any) -> tuple
                 issues.append(f"non-tenant-leading foreign key {table}.{name}")
         checks = {
             str(item.get("name")): str(item.get("sqltext") or "")
-            for item in inspector.get_check_constraints(table)
+            for item in _reflected_check_items(inspector, table)
             if item.get("name")
         }
         checks_by_table[table] = checks
         for name, fragments in ENTERPRISE_AUTOMATION_WORKFLOWS_REQUIRED_CHECK_FRAGMENTS[
             table
         ].items():
-            sql = _parenless_sql(checks.get(name))
-            if not sql or any(_parenless_sql(fragment) not in sql for fragment in fragments):
+            if not _check_fragments_match(checks.get(name), fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
         indexes = {
             str(item.get("name")): tuple(item.get("column_names") or ())
@@ -6394,10 +6390,10 @@ def _enterprise_automation_workflows_capability_issues(connection: Any) -> tuple
     return tuple(sorted(set(issues)))
 
 
-def inspect_enterprise_automation_workflows_capability(
+def _knowledge_serving_original_automation_capability(
     bind: Any,
 ) -> tuple[str, tuple[str, ...]]:
-    """Return revision-aware Stage25 Automation authority state."""
+    """Frozen pre-registry Stage25 Automation capability inspector."""
 
     def inspect_connection(connection: Any) -> tuple[str, tuple[str, ...]]:
         inspector = inspect(connection)
@@ -6411,13 +6407,27 @@ def inspect_enterprise_automation_workflows_capability(
                     text("SELECT version_num FROM alembic_version")
                 ).scalars()
             )
-        revision = revisions[0] if len(revisions) == 1 else None
-        if len(revisions) > 1:
-            return "unavailable", ("alembic_version contains multiple revisions",)
-        if revision != ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION:
-            if not present and revision in _known_catalog_revisions():
-                return "not_available", ()
-            return "unavailable", ("catalog is not at a known pre-0035 or 0035 revision",)
+        if len(revisions) != 1:
+            return "unavailable", (
+                ("alembic_version contains multiple revisions",)
+                if len(revisions) > 1
+                else ("catalog revision is missing",)
+            )
+        revision = revisions[0]
+        known = _known_catalog_revisions()
+        if revision not in known:
+            return "unavailable", ("catalog is not at a known revision",)
+        if not present:
+            return (
+                "not_available",
+                ()
+                if revision != ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION
+                else ("Automation tables are missing",),
+            )
+        if _REVISION_ORDER_FOR_CAPABILITY(revision) < _REVISION_ORDER_FOR_CAPABILITY(
+            ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION
+        ):
+            return "unavailable", ("catalog is before 0035 Automation Workflows revision",)
         issues = _enterprise_automation_workflows_capability_issues(connection)
         return ("ready", ()) if not issues else ("unavailable", issues)
 
@@ -6593,7 +6603,7 @@ def _enterprise_knowledge_base_release_capability_issues(connection: Any) -> tup
                 issues.append(f"missing or invalid foreign key {table}.{name}")
         actual_checks = {
             str(item.get("name")): str(item.get("sqltext") or "")
-            for item in inspector.get_check_constraints(table)
+            for item in _reflected_check_items(inspector, table)
             if item.get("name")
         }
         exact_checks = ENTERPRISE_KNOWLEDGE_BASE_RELEASE_REQUIRED_EXACT_CHECK_SQL.get(table, {})
@@ -6603,13 +6613,9 @@ def _enterprise_knowledge_base_release_capability_issues(connection: Any) -> tup
             raw_sql = actual_checks.get(name)
             expected_sql = exact_checks.get(name)
             if expected_sql is not None:
-                if not raw_sql or _parenless_sql(raw_sql) != _parenless_sql(
-                    expected_sql
-                ):
+                if not _check_sql_equal(raw_sql, expected_sql):
                     issues.append(f"missing or invalid exact check {table}.{name}")
-            elif not raw_sql or any(
-                _parenless_sql(fragment) not in _parenless_sql(raw_sql) for fragment in fragments
-            ):
+            elif not _check_fragments_match(raw_sql, fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
         actual_indexes = {
             str(item.get("name")): tuple(item.get("column_names") or ())
@@ -6625,7 +6631,7 @@ def _enterprise_knowledge_base_release_capability_issues(connection: Any) -> tup
     ):
         actual = {
             str(item.get("name")): str(item.get("sqltext") or "")
-            for item in inspector.get_check_constraints(table)
+            for item in _reflected_check_items(inspector, table)
         }
         raw_sql = actual.get(constraint_name, "")
         for action in ENTERPRISE_APPROVAL_ACTION_TYPES_0029:
@@ -6888,7 +6894,7 @@ def _enterprise_release_quality_certification_capability_issues(
                 issues.append(f"missing or invalid foreign key {table}.{name}")
         checks = {
             str(item.get("name")): str(item.get("sqltext") or "")
-            for item in inspector.get_check_constraints(table)
+            for item in _reflected_check_items(inspector, table)
             if item.get("name")
         }
         for name, fragments in ENTERPRISE_RELEASE_QUALITY_CERTIFICATION_REQUIRED_CHECK_FRAGMENTS[
@@ -6902,11 +6908,9 @@ def _enterprise_release_quality_certification_capability_issues(
                 else None
             )
             if expected_sql is not None:
-                if not sql or _parenless_sql(sql) != _parenless_sql(expected_sql):
+                if not _check_sql_equal(sql, expected_sql):
                     issues.append(f"missing or invalid exact check {table}.{name}")
-            elif not sql or any(
-                _parenless_sql(fragment) not in _parenless_sql(sql) for fragment in fragments
-            ):
+            elif not _check_fragments_match(sql, fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
         indexes = {
             str(item.get("name")): tuple(item.get("column_names") or ())
@@ -6921,7 +6925,7 @@ def _enterprise_release_quality_certification_capability_issues(
     for table in ("tenant_approval_policies", "tenant_approval_requests"):
         checks = {
             str(item.get("name")): str(item.get("sqltext") or "")
-            for item in inspector.get_check_constraints(table)
+            for item in _reflected_check_items(inspector, table)
         }
         if "knowledge_base_release_quality_waiver" not in checks.get(f"ck_{table}_action_type", ""):
             issues.append(f"missing quality waiver approval action {table}")
@@ -7285,16 +7289,14 @@ def _enterprise_release_quality_operations_capability_issues(
                 issues.append(f"missing or invalid foreign key {table}.{name}")
         checks = {
             str(item.get("name")): str(item.get("sqltext") or "")
-            for item in inspector.get_check_constraints(table)
+            for item in _reflected_check_items(inspector, table)
             if item.get("name")
         }
         for name, fragments in ENTERPRISE_RELEASE_QUALITY_OPERATIONS_REQUIRED_CHECK_FRAGMENTS[
             table
         ].items():
             sql = checks.get(name, "")
-            if not sql or any(
-                _parenless_sql(fragment) not in _parenless_sql(sql) for fragment in fragments
-            ):
+            if not _check_fragments_match(sql, fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
         indexes = {
             str(item.get("name")): tuple(item.get("column_names") or ())
@@ -7677,16 +7679,14 @@ def _enterprise_notification_center_capability_issues(connection: Any) -> tuple[
                 issues.append(f"missing or invalid foreign key {table}.{name}")
         checks = {
             str(item.get("name")): str(item.get("sqltext") or "")
-            for item in inspector.get_check_constraints(table)
+            for item in _reflected_check_items(inspector, table)
             if item.get("name")
         }
         for name, fragments in ENTERPRISE_NOTIFICATION_CENTER_REQUIRED_CHECK_FRAGMENTS[
             table
         ].items():
             sql = checks.get(name, "")
-            if not sql or any(
-                _parenless_sql(fragment) not in _parenless_sql(sql) for fragment in fragments
-            ):
+            if not _check_fragments_match(sql, fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
         indexes = {
             str(item.get("name")): tuple(item.get("column_names") or ())
@@ -7780,6 +7780,40 @@ def _known_catalog_revisions() -> frozenset[str]:
     )
 
 
+_PG_ARRAY_ANY_RE = re.compile(
+    r"\(?\s*(?P<col>[a-z_][a-z0-9_]*)\s*\)?(?:\s*::\s*[a-z ]+)?\s*"
+    r"(?P<op>=|<>)\s*(?:any|all)\s*\(\s*\(?\s*array\s*\[(?P<items>.*?)\s*\]\s*\)?"
+    r"(?:\s*::\s*[a-z\[\] ]+)?\s*\)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _array_any_to_in(sqltext: str | None) -> str:
+    """把 PostgreSQL 反射出来的 `col = ANY (ARRAY[...])` 改写回 `col IN (...)`。
+
+    PG 会把 `status IN ('active','removed')` 存成并回显成
+    `((status)::text = ANY ((ARRAY['active'::character varying, ...])::text[]))`，
+    MySQL / SQLite 则原样回显 `IN`。目录校验的期望值是按 `IN` 写的片段和整句，
+    不改写就会把 PG 上**真实存在**的约束判成缺失（实测 308 条问题里 221 条是这个）。
+    `<> ALL` 同理是 `NOT IN`。
+    """
+    text = str(sqltext or "")
+
+    def _rewrite(match: re.Match[str]) -> str:
+        operator = "in" if match.group("op") == "=" else "not in"
+        return f"{match.group('col')} {operator} ({match.group('items').strip()})"
+
+    return _PG_ARRAY_ANY_RE.sub(_rewrite, text)
+
+
+def _reflected_check_items(inspector: Any, table: str) -> list[dict[str, Any]]:
+    """反射 CHECK 约束，并把方言拼法统一成校验侧认的形状（单一入口）。"""
+    return [
+        dict(item, sqltext=_array_any_to_in(item.get("sqltext")))
+        for item in inspector.get_check_constraints(table)
+    ]
+
+
 def _normalized_sql(value: str | None) -> str:
     sql = str(value or "").strip().casefold().replace("`", "").replace('"', "")
     # MySQL reflection prefixes character literals with their connection charset.
@@ -7818,7 +7852,31 @@ def _strip_redundant_outer_parentheses(sql: str) -> str:
     return sql
 
 
-def _parenless_sql(value: str | None) -> str:
+def _strip_dialect_decorations(sql: str) -> str:
+    """把各方言反射出的同义写法压成同一种比较形态（单一声明，两个比对入口共用）。
+
+    - PostgreSQL 给字符串比较套了类型标注：``status::text``、``ARRAY[...]::text[]``；
+    - PostgreSQL 的 ``length()`` 与 MySQL 的 ``char_length()`` 是同义函数；
+    - 布尔列在 PG 只能和 ``true/false`` 比，在 MySQL / SQLite 写成 ``1/0``。
+
+    目录自检的期望值按 MySQL 拼法写。不剥掉这些标注，PG 上**真实存在**的约束会被
+    判成"缺失"（实测 308 条问题里 221 条是这一类，只改写 `= ANY` 只能降 7 条）。
+    """
+    sql = re.sub(
+        r"::(?:character varying|text|boolean|integer|bigint|numeric|smallint"
+        r"|timestamp without time zone|timestamp with time zone|date)",
+        "",
+        sql,
+    )
+    sql = re.sub(r"(?<!char_)\blength\(", "char_length(", sql)
+    sql = re.sub(r"\bis_default\s*=\s*false\b", "not is_default", sql)
+    sql = re.sub(r"\bis_default\s*=\s*true\b", "is_default", sql)
+    sql = re.sub(r"\btrue\b", "1", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bfalse\b", "0", sql, flags=re.IGNORECASE)
+    return sql
+
+
+def _parenless_sql(value: str | None, *, fold_range: bool = False) -> str:
     """去括号 + 去全部空白的 SQL 比较形态。
 
     MySQL 8.4 反射 CHECK 约束时保留多层冗余括号（``(((a) and (b)) or ...)``），
@@ -7827,7 +7885,9 @@ def _parenless_sql(value: str | None) -> str:
     语义序列不变（两侧做相同变换），同义约束即匹配。
     仅用于**同批迁移生成的约束**的自检比对（格式一致，变换安全）。
     """
-    sql = _normalized_sql(value)
+    sql = _strip_dialect_decorations(_normalized_sql(value))
+    if fold_range:
+        sql = _between_fold_variants(sql)
     # MySQL 反射把 != 规范化成 <>（同义），统一为 != 便于与 fragment 比对。
     sql = sql.replace("<>", "!=")
     # 去全部空白（含 = 两侧、函数调用内），再去括号——两侧同变换，
@@ -7836,15 +7896,53 @@ def _parenless_sql(value: str | None) -> str:
     return sql.replace("(", "").replace(")", "").strip()
 
 
-def _canonical_check_sql(value: str | None) -> str:
-    sql = _normalized_sql(value)
-    sql = re.sub(
-        r"::(?:character varying|text|boolean|integer|timestamp without time zone|timestamp with time zone)",
-        "",
+def _between_fold_variants(sql: str) -> str:
+    """把 `x >= a AND x <= b` 另写成等价的 `x BETWEEN a AND b`（PG 会做这个展开）。"""
+    return re.sub(
+        r"(?P<lhs>(?:\([^()]*\)|[^()\s])(?:\s*(?:\([^()]*\)|[^()\s]))*)"
+        r"\s*>=\s*(?P<lo>[\d.]+|[a-z_][a-z0-9_]*)\s+and\s+(?P=lhs)"
+        r"\s*<=\s*(?P<hi>[\d.]+|[a-z_][a-z0-9_]*)",
+        r"\g<lhs> between \g<lo> and \g<hi>",
         sql,
+        flags=re.IGNORECASE,
     )
-    sql = re.sub(r"\bis_default\s*=\s*false\b", "not is_default", sql)
-    sql = re.sub(r"\bis_default\s*=\s*true\b", "is_default", sql)
+
+
+def _parenless_forms(value: str | None) -> tuple[str, ...]:
+    """比对用的形态集合：原拼法 + BETWEEN 折回后的拼法。
+
+    清单里两种拼法都出现过（`ck_dataset_acl_mutation_requests_..._length` 写成
+    between，`ck_retrieval_judgments_score` 写成 >=/<=），而 MySQL 按原样回显、
+    PostgreSQL 把 between 展开成 >=/<=。只归一化成一种，另一种就永远对不上，
+    所以比对侧返回形态集合而不是单值。
+    """
+    forms = [_parenless_sql(value)]
+    folded = _parenless_sql(value, fold_range=True)
+    if folded not in forms:
+        forms.append(folded)
+    return tuple(forms)
+
+
+def _check_fragments_match(sqltext: str | None, fragments) -> bool:
+    """约束在，且每个期望片段都能在同义形态里的某一种中找到。"""
+    if not sqltext:
+        return False
+    forms = _parenless_forms(sqltext)
+    return all(
+        any(_parenless_sql(fragment) in form for form in forms)
+        for fragment in fragments
+    )
+
+
+def _check_sql_equal(actual: str | None, expected: str | None) -> bool:
+    """整句比对：两侧任一形态相同即算同义约束。"""
+    if not actual or not expected:
+        return False
+    return bool(set(_parenless_forms(actual)) & set(_parenless_forms(expected)))
+
+
+def _canonical_check_sql(value: str | None) -> str:
+    sql = _strip_dialect_decorations(_normalized_sql(value))
     return _strip_redundant_outer_parentheses(re.sub(r"\s+", " ", sql).strip())
 
 
@@ -8490,7 +8588,7 @@ def _knowledge_base_registry_capability_issues(
     }
     for table, required in required_checks.items():
         actual = {
-            item.get("name"): item.get("sqltext") for item in inspector.get_check_constraints(table)
+            item.get("name"): item.get("sqltext") for item in _reflected_check_items(inspector, table)
         }
         exact_required = dict(
             ENTERPRISE_KNOWLEDGE_BASE_REGISTRY_CAPABILITY_REQUIRED_EXACT_CHECK_SQL.get(table, {})
@@ -8530,13 +8628,9 @@ def _knowledge_base_registry_capability_issues(
             raw_sql = actual.get(name)
             expected_sql = exact_required.get(name)
             if expected_sql is not None:
-                if not raw_sql or _parenless_sql(raw_sql) != _parenless_sql(
-                    expected_sql
-                ):
+                if not _check_sql_equal(raw_sql, expected_sql):
                     issues.append(f"missing or invalid exact check {table}.{name}")
-            elif not raw_sql or any(
-                _parenless_sql(fragment) not in _parenless_sql(raw_sql) for fragment in fragments
-            ):
+            elif not _check_fragments_match(raw_sql, fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
 
     for table, required in ENTERPRISE_KNOWLEDGE_BASE_REGISTRY_CAPABILITY_REQUIRED_INDEXES.items():
@@ -8719,7 +8813,7 @@ def _workspace_authorization_capability_issues(
 
     for table, required in required_checks.items():
         actual = {
-            item.get("name"): item.get("sqltext") for item in inspector.get_check_constraints(table)
+            item.get("name"): item.get("sqltext") for item in _reflected_check_items(inspector, table)
         }
         exact_required = {
             **ENTERPRISE_APPROVAL_CONTROL_REQUIRED_EXACT_CHECK_SQL_BY_REVISION[
@@ -8732,13 +8826,9 @@ def _workspace_authorization_capability_issues(
             raw_sql = actual.get(name)
             expected_sql = exact_required.get(name)
             if expected_sql is not None:
-                if not raw_sql or _parenless_sql(raw_sql) != _parenless_sql(
-                    expected_sql
-                ):
+                if not _check_sql_equal(raw_sql, expected_sql):
                     issues.append(f"missing or invalid exact check {table}.{name}")
-            elif not raw_sql or any(
-                _parenless_sql(fragment) not in _parenless_sql(raw_sql) for fragment in fragments
-            ):
+            elif not _check_fragments_match(raw_sql, fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
 
     for table, required in ENTERPRISE_WORKSPACE_AUTHORIZATION_CAPABILITY_REQUIRED_INDEXES.items():
@@ -8827,6 +8917,29 @@ def inspect_workspace_authorization_capability(bind: Any) -> tuple[str, tuple[st
         return "unavailable", (
             f"workspace authorization schema inspection failed: {exc.__class__.__name__}",
         )
+
+
+def _trigger_behaviour_text(trigger_sql: str, connection, dialect: str) -> str:
+    """触发器"实际会执行的那段逻辑"：PG 要把它 EXECUTE FUNCTION 的函数体并进来。
+
+    MySQL / SQLite 把逻辑写在触发器定义里，PG 的 `pg_get_triggerdef` 只到
+    `EXECUTE FUNCTION rag4x_...` 为止，列名与校验都在函数体里。
+    """
+    if dialect != "postgresql":
+        return trigger_sql
+    names = re.findall(r"execute function (?:public\.)?(\w+)", trigger_sql, re.IGNORECASE)
+    bodies = []
+    for name in names:
+        body = connection.scalar(
+            text(
+                "SELECT pg_get_functiondef(oid) FROM pg_proc "
+                "WHERE proname=:name ORDER BY oid LIMIT 1"
+            ),
+            {"name": name},
+        )
+        if body:
+            bodies.append(str(body))
+    return trigger_sql + " " + " ".join(bodies)
 
 
 def _head_schema_issues(inspector: Any) -> tuple[str, ...]:
@@ -8988,7 +9101,7 @@ def _head_schema_issues(inspector: Any) -> tuple[str, ...]:
         if table not in tables:
             continue
         actual = {
-            item.get("name"): item.get("sqltext") for item in inspector.get_check_constraints(table)
+            item.get("name"): item.get("sqltext") for item in _reflected_check_items(inspector, table)
         }
         exact_required = {
             **ENTERPRISE_APPROVAL_CONTROL_REQUIRED_EXACT_CHECK_SQL_BY_REVISION[HEAD_REVISION].get(
@@ -9001,14 +9114,11 @@ def _head_schema_issues(inspector: Any) -> tuple[str, ...]:
         }
         for name, fragments in required.items():
             raw_sql = actual.get(name)
-            sql = _parenless_sql(raw_sql)
             expected_sql = exact_required.get(name)
             if expected_sql is not None:
-                if not raw_sql or _parenless_sql(raw_sql) != _parenless_sql(expected_sql):
+                if not _check_sql_equal(raw_sql, expected_sql):
                     issues.append(f"missing or invalid exact check {table}.{name}")
-            elif not sql or any(
-                _parenless_sql(fragment) not in sql for fragment in fragments
-            ):
+            elif not _check_fragments_match(raw_sql, fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
     for table, required in _HEAD_REQUIRED_INDEXES.items():
         if table not in tables:
@@ -10710,15 +10820,14 @@ def _enterprise_knowledge_serving_reliability_capability_issues(connection: Any)
 
         checks = {
             str(item.get("name")): str(item.get("sqltext") or "")
-            for item in inspector.get_check_constraints(table)
+            for item in _reflected_check_items(inspector, table)
             if item.get("name")
         }
         checks_by_table[table] = checks
         for name, fragments in ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REQUIRED_CHECK_FRAGMENTS[
             table
         ].items():
-            sql = _parenless_sql(checks.get(name))
-            if not sql or any(_parenless_sql(fragment) not in sql for fragment in fragments):
+            if not _check_fragments_match(checks.get(name), fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
 
         indexes = {
@@ -10739,10 +10848,10 @@ def _enterprise_knowledge_serving_reliability_capability_issues(connection: Any)
     return tuple(sorted(set(issues)))
 
 
-def inspect_enterprise_knowledge_serving_reliability_capability(
+def _knowledge_serving_original_knowledge_serving_reliability_capability(
     bind: Any,
 ) -> tuple[str, tuple[str, ...]]:
-    """Return revision-aware Stage26 Knowledge Serving authority state."""
+    """Frozen pre-registry Stage26 Knowledge Serving capability inspector."""
 
     def inspect_connection(connection: Any) -> tuple[str, tuple[str, ...]]:
         dialect = str(getattr(connection.dialect, "name", "")).casefold()
@@ -10782,6 +10891,13 @@ def inspect_enterprise_knowledge_serving_reliability_capability(
         return "unavailable", (
             f"Knowledge Serving schema inspection failed: {exc.__class__.__name__}",
         )
+
+
+def inspect_enterprise_knowledge_serving_reliability_capability(
+    bind: Any,
+) -> tuple[str, tuple[str, ...]]:
+    """Return revision-aware Stage26 Knowledge Serving authority state."""
+    return inspect_catalog_capability("knowledge_serving_reliability", bind)
 
 
 inspect_enterprise_knowledge_serving_capability = (
@@ -10844,49 +10960,8 @@ ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REQUIRED_TABLES = (
     ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_TABLES
 )
 
-# Stage25 remains a valid capability when the catalog advances to Stage26.
-_KNOWLEDGE_SERVING_LEGACY_AUTOMATION_CAPABILITY = inspect_enterprise_automation_workflows_capability
-
-
 def inspect_enterprise_automation_workflows_capability(bind: Any) -> tuple[str, tuple[str, ...]]:
-    def inspect_connection(connection: Any) -> tuple[str, tuple[str, ...]]:
-        inspector = inspect(connection)
-        tables = set(inspector.get_table_names())
-        present = bool(ENTERPRISE_AUTOMATION_WORKFLOWS_TABLES & tables)
-        revisions: tuple[str, ...] = ()
-        if "alembic_version" in tables:
-            revisions = tuple(
-                str(value)
-                for value in connection.execute(
-                    text("SELECT version_num FROM alembic_version")
-                ).scalars()
-            )
-        if len(revisions) != 1:
-            return "unavailable", ("alembic_version contains multiple revisions",) if len(
-                revisions
-            ) > 1 else ("catalog revision is missing",)
-        revision = revisions[0]
-        known = _known_catalog_revisions()
-        if revision not in known:
-            return "unavailable", ("catalog is not at a known revision",)
-        if not present:
-            return (
-                "not_available",
-                ()
-                if revision != ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION
-                else ("Automation tables are missing",),
-            )
-        if _REVISION_ORDER_FOR_CAPABILITY(revision) < _REVISION_ORDER_FOR_CAPABILITY(
-            ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION
-        ):
-            return "unavailable", ("catalog is before 0035 Automation Workflows revision",)
-        issues = _enterprise_automation_workflows_capability_issues(connection)
-        return ("ready", ()) if not issues else ("unavailable", issues)
-
-    try:
-        return _schema_connection(bind, inspect_connection)
-    except Exception as exc:
-        return "unavailable", (f"Automation schema inspection failed: {exc.__class__.__name__}",)
+    return inspect_catalog_capability("automation_workflows", bind)
 
 
 def _REVISION_ORDER_FOR_CAPABILITY(revision: str) -> int:
@@ -10921,6 +10996,95 @@ def _REVISION_ORDER_FOR_CAPABILITY(revision: str) -> int:
         )
     }
     return order.get(revision, -1)
+
+
+_CATALOG_CAPABILITY_PRODUCERS: ProviderRegistry[Any, tuple[str, tuple[str, ...]]] = (
+    ProviderRegistry("catalog capability")
+)
+_BUILTIN_CATALOG_CAPABILITY_PRODUCER_NAMES = frozenset(
+    {
+        "knowledge_base_releases",
+        "knowledge_base_registry",
+        "release_quality_certification",
+        "release_quality_operations",
+        "notification_center",
+        "workspace_authorization",
+        "content_recovery",
+        "task_operations",
+        "automation_workflows",
+        "knowledge_serving_reliability",
+        "knowledge_operations_feedback",
+    }
+)
+_BUILTIN_CATALOG_CAPABILITY_PRODUCER_FACTORIES: dict[str, Any] = {}
+
+
+def _catalog_capability_producer(
+    policy: CatalogCapabilityPolicy,
+) -> Any:
+    return build_catalog_capability_producer(
+        policy,
+        schema_connection=_schema_connection,
+        known_revisions=_known_catalog_revisions,
+        revision_order=_REVISION_ORDER_FOR_CAPABILITY,
+    )
+
+
+def _register_builtin_catalog_capability_producer(
+    name: str,
+    policy: CatalogCapabilityPolicy,
+) -> None:
+    key = name.strip().lower()
+    if key not in _BUILTIN_CATALOG_CAPABILITY_PRODUCER_NAMES:
+        raise ValueError("catalog capability producer name is not reserved for a built-in")
+    validate_catalog_capability_policy(policy)
+    factory = _catalog_capability_producer(policy)
+    _CATALOG_CAPABILITY_PRODUCERS.register(key, factory)
+    _BUILTIN_CATALOG_CAPABILITY_PRODUCER_FACTORIES[key] = factory
+
+
+def register_catalog_capability_producer(
+    name: str,
+    policy: CatalogCapabilityPolicy,
+) -> None:
+    """Register an in-process capability policy without changing the shared inspector."""
+
+    if type(name) is not str or not name.strip():
+        raise ValueError("catalog capability producer name must be a non-empty string")
+    key = name.strip().lower()
+    if key in _BUILTIN_CATALOG_CAPABILITY_PRODUCER_NAMES:
+        raise ValueError(f"catalog capability producer name is reserved: {key}")
+    validate_catalog_capability_policy(policy)
+    _CATALOG_CAPABILITY_PRODUCERS.register(key, _catalog_capability_producer(policy))
+
+
+def unregister_catalog_capability_producer(name: str) -> None:
+    """Remove a dynamic capability policy; built-in catalog probes are immutable."""
+
+    if type(name) is not str or not name.strip():
+        raise ValueError("catalog capability producer name must be a non-empty string")
+    key = name.strip().lower()
+    if key in _BUILTIN_CATALOG_CAPABILITY_PRODUCER_NAMES:
+        raise ValueError(f"catalog capability producer name is reserved: {key}")
+    _CATALOG_CAPABILITY_PRODUCERS.unregister(key)
+
+
+def inspect_catalog_capability(name: str, bind: Any) -> tuple[str, tuple[str, ...]]:
+    """Run a registered revision-aware capability producer."""
+
+    key = name.strip().lower()
+    try:
+        factory = _CATALOG_CAPABILITY_PRODUCERS.get_factory(key)
+    except UnknownProviderError as exc:
+        if key in _BUILTIN_CATALOG_CAPABILITY_PRODUCER_NAMES:
+            raise TypeError(f"built-in catalog capability producer was unregistered: {key}") from exc
+        raise
+    if (
+        key in _BUILTIN_CATALOG_CAPABILITY_PRODUCER_NAMES
+        and factory is not _BUILTIN_CATALOG_CAPABILITY_PRODUCER_FACTORIES.get(key)
+    ):
+        raise TypeError(f"built-in catalog capability producer contract was replaced: {key}")
+    return factory(bind)
 
 
 def _knowledge_serving_revision_compatible(
@@ -10984,82 +11148,51 @@ _KNOWLEDGE_SERVING_ORIGINAL_QUALITY_CAPABILITY = (
 _KNOWLEDGE_SERVING_ORIGINAL_QUALITY_OPERATIONS_CAPABILITY = (
     inspect_enterprise_release_quality_operations_capability
 )
+_KNOWLEDGE_SERVING_ORIGINAL_NOTIFICATION_CAPABILITY = (
+    inspect_enterprise_notification_center_capability
+)
 _KNOWLEDGE_SERVING_ORIGINAL_WORKSPACE_AUTHORIZATION_CAPABILITY = (
     inspect_workspace_authorization_capability
 )
 _KNOWLEDGE_SERVING_ORIGINAL_TASK_CAPABILITY = inspect_enterprise_task_operations_capability
 
 
+def inspect_enterprise_content_recovery_capability(bind: Any) -> tuple[str, tuple[str, ...]]:
+    return inspect_catalog_capability("content_recovery", bind)
+
+
 def inspect_enterprise_knowledge_base_registry_capability(bind: Any) -> tuple[str, tuple[str, ...]]:
-    return _knowledge_serving_revision_compatible(
-        bind,
-        _KNOWLEDGE_SERVING_ORIGINAL_REGISTRY_CAPABILITY,
-        ENTERPRISE_KNOWLEDGE_BASE_REGISTRY_TABLES,
-        ENTERPRISE_KNOWLEDGE_BASE_REGISTRY_REVISION,
-        lambda connection, revision: _knowledge_base_registry_capability_issues(
-            connection,
-            approval_action_revision=revision,
-        ),
-        revision_aware=True,
-    )
+    return inspect_catalog_capability("knowledge_base_registry", bind)
 
 
 def inspect_enterprise_knowledge_base_release_capability(bind: Any) -> tuple[str, tuple[str, ...]]:
-    return _knowledge_serving_revision_compatible(
-        bind,
-        _KNOWLEDGE_SERVING_ORIGINAL_RELEASE_CAPABILITY,
-        ENTERPRISE_KNOWLEDGE_BASE_RELEASE_TABLES,
-        ENTERPRISE_KNOWLEDGE_BASE_RELEASES_REVISION,
-        _enterprise_knowledge_base_release_capability_issues,
-    )
+    return inspect_catalog_capability("knowledge_base_releases", bind)
 
 
 def inspect_enterprise_release_quality_certification_capability(
     bind: Any,
 ) -> tuple[str, tuple[str, ...]]:
-    return _knowledge_serving_revision_compatible(
-        bind,
-        _KNOWLEDGE_SERVING_ORIGINAL_QUALITY_CAPABILITY,
-        ENTERPRISE_RELEASE_QUALITY_CERTIFICATION_TABLES,
-        ENTERPRISE_RELEASE_QUALITY_CERTIFICATION_REVISION,
-        _enterprise_release_quality_certification_capability_issues,
-    )
+    return inspect_catalog_capability("release_quality_certification", bind)
 
 
 def inspect_enterprise_release_quality_operations_capability(
     bind: Any,
 ) -> tuple[str, tuple[str, ...]]:
-    return _knowledge_serving_revision_compatible(
-        bind,
-        _KNOWLEDGE_SERVING_ORIGINAL_QUALITY_OPERATIONS_CAPABILITY,
-        ENTERPRISE_RELEASE_QUALITY_OPERATIONS_TABLES,
-        ENTERPRISE_RELEASE_QUALITY_OPERATIONS_REVISION,
-        _enterprise_release_quality_operations_capability_issues,
-    )
+    return inspect_catalog_capability("release_quality_operations", bind)
+
+
+def inspect_enterprise_notification_center_capability(
+    bind: Any,
+) -> tuple[str, tuple[str, ...]]:
+    return inspect_catalog_capability("notification_center", bind)
 
 
 def inspect_workspace_authorization_capability(bind: Any) -> tuple[str, tuple[str, ...]]:
-    return _knowledge_serving_revision_compatible(
-        bind,
-        _KNOWLEDGE_SERVING_ORIGINAL_WORKSPACE_AUTHORIZATION_CAPABILITY,
-        ENTERPRISE_WORKSPACE_AUTHORIZATION_TABLES,
-        ENTERPRISE_WORKSPACE_AUTHORIZATION_REVISION,
-        lambda connection, revision: _workspace_authorization_capability_issues(
-            connection,
-            approval_action_revision=revision,
-        ),
-        revision_aware=True,
-    )
+    return inspect_catalog_capability("workspace_authorization", bind)
 
 
 def inspect_enterprise_task_operations_capability(bind: Any) -> tuple[str, tuple[str, ...]]:
-    return _knowledge_serving_revision_compatible(
-        bind,
-        _KNOWLEDGE_SERVING_ORIGINAL_TASK_CAPABILITY,
-        ENTERPRISE_TASK_OPERATIONS_TABLES,
-        ENTERPRISE_TASK_OPERATIONS_REVISION,
-        _enterprise_task_operations_capability_issues,
-    )
+    return inspect_catalog_capability("task_operations", bind)
 
 
 # ---------------------------------------------------------------------------
@@ -11665,15 +11798,14 @@ def _enterprise_knowledge_operations_feedback_capability_issues(
 
         checks = {
             str(item.get("name")): str(item.get("sqltext") or "")
-            for item in inspector.get_check_constraints(table)
+            for item in _reflected_check_items(inspector, table)
             if item.get("name")
         }
         checks_by_table[table] = checks
         for name, fragments in ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REQUIRED_CHECK_FRAGMENTS[
             table
         ].items():
-            sql = _parenless_sql(checks.get(name))
-            if not sql or any(_parenless_sql(fragment) not in sql for fragment in fragments):
+            if not _check_fragments_match(checks.get(name), fragments):
                 issues.append(f"missing or invalid check {table}.{name}")
 
         indexes = {
@@ -11694,10 +11826,10 @@ def _enterprise_knowledge_operations_feedback_capability_issues(
     return tuple(sorted(set(issues)))
 
 
-def inspect_enterprise_knowledge_operations_feedback_capability(
+def _knowledge_serving_original_knowledge_operations_feedback_capability(
     bind: Any,
 ) -> tuple[str, tuple[str, ...]]:
-    """Return revision-aware Stage27 Knowledge Operations authority state."""
+    """Frozen pre-registry Stage27 Knowledge Operations capability inspector."""
 
     def inspect_connection(connection: Any) -> tuple[str, tuple[str, ...]]:
         dialect = str(getattr(connection.dialect, "name", "")).casefold()
@@ -11737,6 +11869,285 @@ def inspect_enterprise_knowledge_operations_feedback_capability(
         return "unavailable", (
             f"Knowledge Operations schema inspection failed: {exc.__class__.__name__}",
         )
+
+
+_CONTENT_RECOVERY_REVISION_ISSUE = (
+    "catalog is not at a known pre-0033, 0033 or 0034 revision"
+)
+_KNOWLEDGE_BASE_RELEASE_REVISION_ISSUE = (
+    "catalog is not at a known pre-0029, 0029 or 0033 revision"
+)
+_KNOWLEDGE_BASE_RELEASE_MISSING_TABLES_ISSUE = "required tables are missing: " + ", ".join(
+    sorted(ENTERPRISE_KNOWLEDGE_BASE_RELEASE_TABLES)
+)
+_RELEASE_QUALITY_CERTIFICATION_REVISION_ISSUE = (
+    "catalog is not at a known pre-0030, 0030, 0031 or 0033 revision"
+)
+_RELEASE_QUALITY_CERTIFICATION_MISSING_TABLES_ISSUE = "required tables are missing: " + ", ".join(
+    sorted(ENTERPRISE_RELEASE_QUALITY_CERTIFICATION_TABLES)
+)
+_RELEASE_QUALITY_OPERATIONS_REVISION_ISSUE = (
+    "catalog is not at a known pre-0031, 0031, 0032 or 0033 revision"
+)
+_RELEASE_QUALITY_OPERATIONS_MISSING_TABLES_ISSUE = "required tables are missing: " + ", ".join(
+    sorted(ENTERPRISE_RELEASE_QUALITY_OPERATIONS_TABLES)
+)
+_NOTIFICATION_CENTER_REVISION_ISSUE = (
+    "catalog is not at a known pre-0032, 0032 or 0033 revision"
+)
+_NOTIFICATION_CENTER_MISSING_TABLES_ISSUE = "required tables are missing: " + ", ".join(
+    sorted(ENTERPRISE_NOTIFICATION_CENTER_TABLES)
+)
+_KNOWLEDGE_BASE_REGISTRY_REVISION_ISSUE = (
+    "catalog is not at a known pre-0028, 0028, 0029, 0030 or 0031 revision"
+)
+_KNOWLEDGE_BASE_REGISTRY_MISSING_TABLES_ISSUE = "required tables are missing: " + ", ".join(
+    sorted(ENTERPRISE_KNOWLEDGE_BASE_REGISTRY_TABLES)
+)
+_WORKSPACE_AUTHORIZATION_REVISION_ISSUE = (
+    "catalog is not at a known pre-0027, 0027, 0028, 0029, 0030 or 0031 revision"
+)
+_WORKSPACE_AUTHORIZATION_MISSING_TABLES_ISSUE = "required tables are missing: " + ", ".join(
+    sorted(ENTERPRISE_WORKSPACE_AUTHORIZATION_TABLES)
+)
+
+
+def _catalog_knowledge_base_registry_policy_issues(
+    connection: Any,
+    revision: str,
+) -> tuple[str, ...]:
+    return _knowledge_base_registry_capability_issues(
+        connection,
+        approval_action_revision=revision,
+    )
+
+
+def _catalog_workspace_authorization_policy_issues(
+    connection: Any,
+    revision: str,
+) -> tuple[str, ...]:
+    return _workspace_authorization_capability_issues(
+        connection,
+        approval_action_revision=revision,
+    )
+
+
+_TASK_OPERATIONS_REVISION_ISSUE = (
+    "catalog is not at a known pre-0034, 0034 or 0035 revision"
+)
+_TASK_OPERATIONS_MISSING_TABLES_ISSUE = "required tables are missing: " + ", ".join(
+    sorted(ENTERPRISE_TASK_OPERATIONS_TABLES)
+)
+
+
+_register_builtin_catalog_capability_producer(
+    "content_recovery",
+    CatalogCapabilityPolicy(
+        minimum_revision=ENTERPRISE_CONTENT_RECOVERY_REVISION,
+        required_tables=ENTERPRISE_CONTENT_RECOVERY_TABLES,
+        supported_dialects=None,
+        capability_label="Content Recovery",
+        minimum_revision_issue=_CONTENT_RECOVERY_REVISION_ISSUE,
+        inspection_error_prefix="Content Recovery schema inspection failed",
+        issue_checker=_enterprise_content_recovery_capability_issues,
+        missing_revision_issue=_CONTENT_RECOVERY_REVISION_ISSUE,
+        unknown_revision_issue=_CONTENT_RECOVERY_REVISION_ISSUE,
+        before_minimum_revision_issue=_CONTENT_RECOVERY_REVISION_ISSUE,
+        fallback_inspector=_knowledge_serving_original_content_recovery_capability,
+    ),
+)
+
+
+_register_builtin_catalog_capability_producer(
+    "knowledge_base_releases",
+    CatalogCapabilityPolicy(
+        minimum_revision=ENTERPRISE_KNOWLEDGE_BASE_RELEASES_REVISION,
+        required_tables=ENTERPRISE_KNOWLEDGE_BASE_RELEASE_TABLES,
+        supported_dialects=None,
+        capability_label="Knowledge Base Release",
+        minimum_revision_issue=_KNOWLEDGE_BASE_RELEASE_REVISION_ISSUE,
+        inspection_error_prefix="knowledge base release schema inspection failed",
+        issue_checker=_enterprise_knowledge_base_release_capability_issues,
+        missing_tables_after_minimum="unavailable",
+        missing_tables_after_minimum_issue=_KNOWLEDGE_BASE_RELEASE_MISSING_TABLES_ISSUE,
+        inspection_error_mode="raise",
+        fallback_inspector=_KNOWLEDGE_SERVING_ORIGINAL_RELEASE_CAPABILITY,
+    ),
+)
+
+
+_register_builtin_catalog_capability_producer(
+    "release_quality_certification",
+    CatalogCapabilityPolicy(
+        minimum_revision=ENTERPRISE_RELEASE_QUALITY_CERTIFICATION_REVISION,
+        required_tables=ENTERPRISE_RELEASE_QUALITY_CERTIFICATION_TABLES,
+        supported_dialects=None,
+        capability_label="Release quality",
+        minimum_revision_issue=_RELEASE_QUALITY_CERTIFICATION_REVISION_ISSUE,
+        inspection_error_prefix="Release quality schema inspection failed",
+        issue_checker=_enterprise_release_quality_certification_capability_issues,
+        missing_tables_after_minimum="unavailable",
+        missing_tables_after_minimum_issue=(
+            _RELEASE_QUALITY_CERTIFICATION_MISSING_TABLES_ISSUE
+        ),
+        inspection_error_mode="raise",
+        fallback_inspector=_KNOWLEDGE_SERVING_ORIGINAL_QUALITY_CAPABILITY,
+    ),
+)
+
+
+_register_builtin_catalog_capability_producer(
+    "release_quality_operations",
+    CatalogCapabilityPolicy(
+        minimum_revision=ENTERPRISE_RELEASE_QUALITY_OPERATIONS_REVISION,
+        required_tables=ENTERPRISE_RELEASE_QUALITY_OPERATIONS_TABLES,
+        supported_dialects=None,
+        capability_label="Release quality operations",
+        minimum_revision_issue=_RELEASE_QUALITY_OPERATIONS_REVISION_ISSUE,
+        inspection_error_prefix="Release quality operations schema inspection failed",
+        issue_checker=_enterprise_release_quality_operations_capability_issues,
+        missing_tables_after_minimum="unavailable",
+        missing_tables_after_minimum_issue=_RELEASE_QUALITY_OPERATIONS_MISSING_TABLES_ISSUE,
+        inspection_error_mode="raise",
+        fallback_inspector=_KNOWLEDGE_SERVING_ORIGINAL_QUALITY_OPERATIONS_CAPABILITY,
+    ),
+)
+
+
+_register_builtin_catalog_capability_producer(
+    "notification_center",
+    CatalogCapabilityPolicy(
+        minimum_revision=ENTERPRISE_NOTIFICATION_CENTER_REVISION,
+        required_tables=ENTERPRISE_NOTIFICATION_CENTER_TABLES,
+        supported_dialects=None,
+        capability_label="Notification Center",
+        minimum_revision_issue=_NOTIFICATION_CENTER_REVISION_ISSUE,
+        inspection_error_prefix="Notification Center schema inspection failed",
+        issue_checker=_enterprise_notification_center_capability_issues,
+        missing_tables_after_minimum="unavailable",
+        missing_tables_after_minimum_issue=_NOTIFICATION_CENTER_MISSING_TABLES_ISSUE,
+        inspection_error_mode="raise",
+        fallback_inspector=_KNOWLEDGE_SERVING_ORIGINAL_NOTIFICATION_CAPABILITY,
+    ),
+)
+
+
+_register_builtin_catalog_capability_producer(
+    "knowledge_base_registry",
+    CatalogCapabilityPolicy(
+        minimum_revision=ENTERPRISE_KNOWLEDGE_BASE_REGISTRY_REVISION,
+        required_tables=ENTERPRISE_KNOWLEDGE_BASE_REGISTRY_TABLES,
+        supported_dialects=None,
+        capability_label="Knowledge Base Registry",
+        minimum_revision_issue=_KNOWLEDGE_BASE_REGISTRY_REVISION_ISSUE,
+        inspection_error_prefix="knowledge base registry schema inspection failed",
+        issue_checker=_catalog_knowledge_base_registry_policy_issues,
+        revision_aware=True,
+        missing_tables_after_minimum="unavailable",
+        missing_tables_after_minimum_issue=_KNOWLEDGE_BASE_REGISTRY_MISSING_TABLES_ISSUE,
+        inspection_error_mode="raise",
+        fallback_inspector=_KNOWLEDGE_SERVING_ORIGINAL_REGISTRY_CAPABILITY,
+    ),
+)
+
+
+_register_builtin_catalog_capability_producer(
+    "workspace_authorization",
+    CatalogCapabilityPolicy(
+        minimum_revision=ENTERPRISE_WORKSPACE_AUTHORIZATION_REVISION,
+        required_tables=ENTERPRISE_WORKSPACE_AUTHORIZATION_TABLES,
+        supported_dialects=None,
+        capability_label="Workspace authorization",
+        minimum_revision_issue=_WORKSPACE_AUTHORIZATION_REVISION_ISSUE,
+        inspection_error_prefix="workspace authorization schema inspection failed",
+        issue_checker=_catalog_workspace_authorization_policy_issues,
+        revision_aware=True,
+        missing_tables_after_minimum="unavailable",
+        missing_tables_after_minimum_issue=_WORKSPACE_AUTHORIZATION_MISSING_TABLES_ISSUE,
+        inspection_error_mode="raise",
+        fallback_inspector=_KNOWLEDGE_SERVING_ORIGINAL_WORKSPACE_AUTHORIZATION_CAPABILITY,
+    ),
+)
+
+
+_register_builtin_catalog_capability_producer(
+    "task_operations",
+    CatalogCapabilityPolicy(
+        minimum_revision=ENTERPRISE_TASK_OPERATIONS_REVISION,
+        required_tables=ENTERPRISE_TASK_OPERATIONS_TABLES,
+        supported_dialects=None,
+        capability_label="Task Operations",
+        minimum_revision_issue=_TASK_OPERATIONS_REVISION_ISSUE,
+        inspection_error_prefix="Task Operations schema inspection failed",
+        issue_checker=_enterprise_task_operations_capability_issues,
+        missing_revision_issue=_TASK_OPERATIONS_REVISION_ISSUE,
+        unknown_revision_issue=_TASK_OPERATIONS_REVISION_ISSUE,
+        before_minimum_revision_issue=_TASK_OPERATIONS_REVISION_ISSUE,
+        missing_tables_at_minimum_issue=_TASK_OPERATIONS_MISSING_TABLES_ISSUE,
+        missing_tables_at_minimum_state="unavailable",
+        missing_tables_after_minimum="unavailable",
+        missing_tables_after_minimum_issue=_TASK_OPERATIONS_MISSING_TABLES_ISSUE,
+        inspection_error_mode="raise",
+        fallback_inspector=_KNOWLEDGE_SERVING_ORIGINAL_TASK_CAPABILITY,
+    ),
+)
+
+
+_register_builtin_catalog_capability_producer(
+    "automation_workflows",
+    CatalogCapabilityPolicy(
+        minimum_revision=ENTERPRISE_AUTOMATION_WORKFLOWS_REVISION,
+        required_tables=ENTERPRISE_AUTOMATION_WORKFLOWS_TABLES,
+        supported_dialects=None,
+        capability_label="Automation",
+        minimum_revision_issue="catalog is not at a known pre-0035 or 0035 revision",
+        inspection_error_prefix="Automation schema inspection failed",
+        issue_checker=_enterprise_automation_workflows_capability_issues,
+        missing_revision_issue="catalog revision is missing",
+        unknown_revision_issue="catalog is not at a known revision",
+        before_minimum_revision_issue="catalog is before 0035 Automation Workflows revision",
+        missing_tables_at_minimum_issue="Automation tables are missing",
+        missing_tables_after_minimum="not_available",
+        fallback_inspector=_knowledge_serving_original_automation_capability,
+    ),
+)
+
+
+_register_builtin_catalog_capability_producer(
+    "knowledge_serving_reliability",
+    CatalogCapabilityPolicy(
+        minimum_revision=ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION,
+        required_tables=ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_TABLES,
+        supported_dialects=_KNOWLEDGE_SERVING_SUPPORTED_DIALECTS,
+        capability_label="Knowledge Serving",
+        minimum_revision_issue="catalog is not at a known pre-0036 or 0036 revision",
+        inspection_error_prefix="Knowledge Serving schema inspection failed",
+        issue_checker=_enterprise_knowledge_serving_reliability_capability_issues,
+        fallback_inspector=_knowledge_serving_original_knowledge_serving_reliability_capability,
+    ),
+)
+
+
+_register_builtin_catalog_capability_producer(
+    "knowledge_operations_feedback",
+    CatalogCapabilityPolicy(
+        minimum_revision=ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_REVISION,
+        required_tables=ENTERPRISE_KNOWLEDGE_OPERATIONS_FEEDBACK_TABLES,
+        supported_dialects=_KNOWLEDGE_OPERATIONS_SUPPORTED_DIALECTS,
+        capability_label="Knowledge Operations",
+        minimum_revision_issue="catalog is not at a known pre-0037 or 0037 revision",
+        inspection_error_prefix="Knowledge Operations schema inspection failed",
+        issue_checker=_enterprise_knowledge_operations_feedback_capability_issues,
+        fallback_inspector=_knowledge_serving_original_knowledge_operations_feedback_capability,
+    ),
+)
+
+
+def inspect_enterprise_knowledge_operations_feedback_capability(
+    bind: Any,
+) -> tuple[str, tuple[str, ...]]:
+    """Return revision-aware Stage27 Knowledge Operations authority state."""
+    return inspect_catalog_capability("knowledge_operations_feedback", bind)
 
 
 _KNOWLEDGE_OPERATIONS_LEGACY_HEAD_SCHEMA_ISSUES = _head_schema_issues

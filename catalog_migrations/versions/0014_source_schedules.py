@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import mysql
+from core.dialects import boolean_check_sql
 
 revision: str = "0014_source_schedules"
 down_revision: str | None = "0013_source_control"
@@ -60,7 +61,9 @@ def upgrade() -> None:
             name="ck_source_schedules_interval",
         ),
         sa.CheckConstraint(
-            "force_full IN (0, 1)",
+            # 布尔字面量按方言取：PG 的 boolean 不能与整数比较，写成 (0, 1) 会
+            # 直接报 "operator does not exist: boolean = integer"。
+            boolean_check_sql("force_full", op.get_bind().dialect.name),
             name="ck_source_schedules_force_full",
         ),
         sa.ForeignKeyConstraint(
