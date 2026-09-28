@@ -25,7 +25,15 @@ from sources.registry import (
     register_source_plugin,
     unregister_source_plugin,
 )
-from sources.runner import SourceSpec, SourceSyncer, SyncReport, load_manifest, make_doc_id
+from sources.runner import (
+    SourceSpec,
+    SourceSyncer,
+    SyncReport,
+    derived_cache_key,
+    load_manifest,
+    make_doc_id,
+    read_source_state,
+)
 
 # 副作用导入：注册内置源。放在最后，避免与上面的符号导入形成循环。
 from sources import plugins as _plugins  # noqa: E402,F401
@@ -40,9 +48,11 @@ __all__ = [
     "SyncReport",
     "content_sha256",
     "create_source",
+    "derived_cache_key",
     "list_source_plugins",
     "load_manifest",
     "make_doc_id",
+    "read_source_state",
     "register_source_plugin",
     "unregister_source_plugin",
 ]

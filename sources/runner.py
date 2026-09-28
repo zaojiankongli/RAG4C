@@ -152,6 +152,80 @@ def make_doc_id(source_name: str, rel_path: str) -> str:
     return f"{source_name}-{stem}-{digest}"
 
 
+def derived_cache_key(spec: SourceSpec) -> str:
+    """没有 ledger 记录时，这个源的缓存目录 / JSON 状态文件落在哪个 key 下。
+
+    发现端点（``server/app.py`` 的 ``doc_count``）要与写入方 ``SourceSyncer``
+    共用这把 key——这是"状态存在哪"的唯一第二读者；除此之外不要再拼
+    ``_state.json`` 路径（守卫见 ``tests/test_source_state_reader.py``）。
+    """
+    identity = json.dumps(
+        {
+            "tenant_id": spec.tenant_id,
+            "dataset_id": spec.dataset_id,
+            "type": spec.type,
+            "name": spec.name,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return "source-local-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+
+
+def read_source_state(
+    spec: SourceSpec,
+    *,
+    cache_dir: Path,
+    ledger: Any = None,
+    state_mode: str = "json",
+) -> dict[str, dict[str, Any]]:
+    """读"这个源当前有多少篇文档在库里"的权威状态。
+
+    发现端点曾自己拼 ``cache_root / spec.name / "_state.json"``——写方根本不落
+    那里（key 是 source id 或派生 cache key），于是那列数字恒为 0；且
+    ``database`` 模式下 JSON 根本不写。这里与 ``SourceSyncer._load_state``
+    同一套判定：问 :mod:`sources.state_modes` 的声明——ledger 说了算的模式
+    （``database``）只信 ledger；``dual`` 里 ledger 有行就用行，否则 JSON 兜底；
+    ``json`` 只看文件。读不到 / 文件损坏一律返回空 dict（等于"未知"，与同步
+    侧"最坏退化成全量"的容错同调），不抛异常。
+    """
+    declared = source_state_mode(state_mode)
+    if declared.requires_ledger and ledger is None:
+        # 与写方 SourceSyncer.__init__ 同一条判据：database 模式 JSON 根本不写，
+        # 读者在 ledger 缺位时落回 JSON 分支会把原始缺陷（doc_count 恒 0）在
+        # database 部署下原样复发。必须按声明拒绝，而不是静默返回空。
+        raise ValueError("database state_mode requires a SourceSyncLedger")
+    if declared.uses_ledger and ledger is not None:
+        try:
+            source_record = ledger.find_source(str(spec.tenant_id or ""), spec.name)
+        except Exception:  # noqa: BLE001 - dual 模式保住 JSON 兜底
+            if declared.ledger_failures_are_fatal:
+                raise
+            source_record = None
+        if source_record is not None:
+            try:
+                database_state = ledger.load_state(str(source_record.id))
+            except Exception:  # noqa: BLE001
+                if declared.ledger_failures_are_fatal:
+                    raise
+                database_state = {}
+            if database_state or declared.ledger_authoritative:
+                return dict(database_state or {})
+    return _read_json_state_file(
+        prepare_source_cache_directory(cache_dir, derived_cache_key(spec)) / "_state.json"
+    )
+
+
+def _read_json_state_file(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.is_file():
+        return {}
+    try:
+        return dict(json.loads(path.read_text(encoding="utf-8")).get("docs") or {})
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
 class SourceSyncer:
     """把一个源的文档同步进知识库（抓取 -> 增量判定 -> 入库 -> 清理）。
 
@@ -194,18 +268,7 @@ class SourceSyncer:
 
     @staticmethod
     def _derived_cache_key(spec: SourceSpec) -> str:
-        identity = json.dumps(
-            {
-                "tenant_id": spec.tenant_id,
-                "dataset_id": spec.dataset_id,
-                "type": spec.type,
-                "name": spec.name,
-            },
-            sort_keys=True,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        return "source-local-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+        return derived_cache_key(spec)
 
     def _cache_key(self, spec: SourceSpec) -> str:
         return self._active_cache_key or self._derived_cache_key(spec)

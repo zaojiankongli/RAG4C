@@ -170,9 +170,28 @@ expect_error(
     "目录不存在报错",
     lambda: list(LocalDirectorySource(str(_tmp / "ghost")).fetch(_tmp)),
 )
-one = next(iter(LocalDirectorySource(str(docroot), include=["a.md"]).fetch(_tmp)))
+one_iter = LocalDirectorySource(str(docroot), include=["a.md"]).fetch(docroot.parent / "workdir_files")
+one = next(one_iter)
+staged_alive = one.local_path.exists()  # 生成器推进前副本必须活着且可读
+try:
+    next(one_iter, None)
+finally:
+    one_iter.close()
 check("content_hash 非空", len(one.content_hash) == 64, one.content_hash)
-check("local_path 指向原文件", one.local_path == docroot / "a.md", str(one.local_path))
+# local_dir 现在走 verified staging（fab924c 起）：fetch 时把字节复制到
+# workdir/_verified 的随机名校验副本（uuid + 原后缀）交给消费方，迭代结束后
+# 生成器负责清理（staged.unlink）——不再直接指原文件。模块 docstring 那句
+# 「不复制文件」已过期，以行为为准。副本活着时必须落在 workdir/_verified/ 下，
+# 与 runner（源缓存 files/ 下）同一形态；close() 之后必须被回收。
+check(
+    "local_path 指向 verified staging 副本",
+    staged_alive
+    and one.local_path.parent.parent.name == "workdir_files"
+    and one.local_path.parent.name == "_verified"
+    and one.local_path.suffix == ".md"
+    and not one.local_path.exists(),
+    str(one.local_path),
+)
 
 
 class FakePipeline:
@@ -219,7 +238,11 @@ fp = FakePipeline()
 rep = SourceSyncer(fp, cache).sync(spec, dry_run=True)
 check("dry-run 抓到 3 篇", rep.fetched == 3, rep.summary())
 check("dry-run 不调用管线", fp.added == [] and fp.ensured == 0, str(fp.added))
-check("dry-run 不写状态文件", not (cache / "demo" / "_state.json").exists())
+# 状态文件按写方真实落点算（source-id / 派生 cache key），不许自己拼
+# `cache/<name>/_state.json`——那与真实落点不同名，本脚本曾因此从 :286
+# 起持续 FileNotFoundError（doc_count 恒 0 缺陷的同款拼法）。
+syncer_probe = SourceSyncer(fp, cache)
+check("dry-run 不写状态文件", not syncer_probe._state_path(spec).exists())  # noqa: SLF001
 # dry-run + limit 是「先小批量看一眼」最常用的组合；limit 曾因写在
 # 非 dry-run 分支里而在这条路径上完全失效，这里钉死。
 rep = SourceSyncer(FakePipeline(), cache).sync(spec, dry_run=True, limit=2)
@@ -246,32 +269,41 @@ rep = SourceSyncer(fp2, cache).sync(spec)
 check("次轮全部跳过", rep.skipped == 3 and rep.ingested == 0, rep.summary())
 check("次轮零写入", fp2.added == [], str(fp2.added))
 
+# 本段以下断言按现行语义校准（2026-09-27）。原断言钉的是「管线同步先删后写」的
+# 旧行为；现行 runner 在 replace 时走 reindex/state-machine 的 durable 写路径
+# （chunk 级差量，FakePipeline 不再收到同步 delete_document），上游删除走
+# durable delete 请求（无 ledger/tenant 的裸场景下显式报 "authority unavailable"
+# 进 failed，而不是假装删掉）——那才是现在"删错比漏删危险"的 fail-closed 出口。
+
 # force：无视哈希重入
 fp3 = FakePipeline()
 rep = SourceSyncer(fp3, cache).sync(spec, force=True)
 check("force 重新入库全部", rep.ingested == 3 and rep.skipped == 0, rep.summary())
-check("force 重入前先删旧 chunk", len(fp3.deleted) == 3, str(fp3.deleted))
+check("force 重入不伪造同步删除", fp3.deleted == [], str(fp3.deleted))
 
-# 改一篇：只有它重入，且先删后写
+# 改一篇：只有它重入
 (docroot / "a.md").write_text("# A\n正文一改过了", encoding="utf-8")
 fp4 = FakePipeline()
 rep = SourceSyncer(fp4, cache).sync(spec)
 check("改动后只重入 1 篇", rep.ingested == 1 and rep.skipped == 2, rep.summary())
 changed_id = make_doc_id("demo", "a.md")
 check("重入的是被改的那篇", fp4.added == [changed_id], str(fp4.added))
-check("重入前删掉旧版本", fp4.deleted == [changed_id], str(fp4.deleted))
-# 替换式重入库必须保留登记：注销掉会把配额名额一并退还，紧接着重新登记时
-# 要重占一次，中间挤进别的写入就可能占不回来——一次普通的内容更新会莫名其妙
-# 失败在配额上。
-check("重入走的是不注销登记的删除", fp4.unregistered == [False], str(fp4.unregistered))
+check("重入不伪造同步删除", fp4.deleted == [], str(fp4.deleted))
 
-# 删一篇：上游没了，库里也要清掉
+# 删一篇：上游没了。本 spec 无 tenant/ledger（durable delete authority 不可用），
+# 显式进 failed 而不是假装删掉；状态保留原条目，等有权威的一侧来清。
 (docroot / "draft" / "c.md").unlink()
 fp5 = FakePipeline()
 rep = SourceSyncer(fp5, cache).sync(spec)
 gone_id = make_doc_id("demo", "draft/c.md")
-check("上游删除被检测到", rep.removed == 1, rep.summary())
-check("清理的是被删的那篇", fp5.deleted == [gone_id], str(fp5.deleted))
+check("上游删除不伪造同步清理", rep.removed == 0 and fp5.deleted == [], rep.summary())
+check("无删除权威时显式报失败（fail-closed，不静默吞）",
+      any(doc_id == gone_id for doc_id, _msg in rep.failed), str(rep.failed))
+state_after_gone = json.loads(
+    SourceSyncer(fp5, cache)._state_path(spec).read_text(encoding="utf-8")  # noqa: SLF001
+)
+check("被删文档状态保留待权威清理", gone_id in state_after_gone["docs"],
+      str(list(state_after_gone["docs"])))
 fp6 = FakePipeline()
 rep = SourceSyncer(fp6, cache).sync(spec)
 check("清理不会重复触发", rep.removed == 0 and fp6.deleted == [], rep.summary())
@@ -279,12 +311,13 @@ check("清理不会重复触发", rep.removed == 0 and fp6.deleted == [], rep.su
 # limit 截断：绝不能把没轮到的文档当成「上游已删除」
 (docroot / "guide" / "d.md").write_text("# D\n新文档", encoding="utf-8")
 fp7 = FakePipeline()
-rep = SourceSyncer(fp7, cache).sync(spec, force=True, limit=1)
+syncer7 = SourceSyncer(fp7, cache)
+rep = syncer7.sync(spec, force=True, limit=1)
 check("limit 只入库 1 篇", rep.ingested == 1, rep.summary())
-check("limit 截断时不做删除", rep.removed == 0 and len(fp7.deleted) == 1,
+check("limit 截断时不做删除", rep.removed == 0 and len(fp7.deleted) == 0,
       f"removed={rep.removed} deleted={fp7.deleted}")
-state = json.loads((cache / "demo" / "_state.json").read_text(encoding="utf-8"))
-# 截断前状态里有 a、b 两篇（c 上一轮已被清理），本轮只轮到 a。
+state = json.loads(syncer7._state_path(spec).read_text(encoding="utf-8"))  # noqa: SLF001
+# 截断前状态里有 a、b 两篇（c 上一轮已无权威清理），本轮只轮到 a。
 # 关键不变量：没轮到的 b 必须原样留在状态里——丢了它，下一轮就会把一篇
 # 早就入过库的文档当成新文档重嵌一遍。而本轮同样没轮到的新文件 guide/d.md
 # 理应还不在状态里，它下一轮才会被认成新增。
@@ -302,11 +335,31 @@ class FlakyPipeline(FakePipeline):
 
 
 fp8 = FlakyPipeline()
-rep = SourceSyncer(fp8, cache).sync(spec, force=True)
-check("单篇失败不中断整源", rep.ingested == 2 and len(rep.failed) == 1, rep.summary())
-state = json.loads((cache / "demo" / "_state.json").read_text(encoding="utf-8"))
-check("失败的文档不进状态（下次会重试）",
-      make_doc_id("demo", "a.md") not in state["docs"], str(list(state["docs"])))
+syncer8 = SourceSyncer(fp8, cache)
+rep = syncer8.sync(spec, force=True)
+# 现行语义两处 fail-closed：flaky 那篇按单篇失败隔离（其余照常入库）；
+# 被改文档的旧登记因上一轮后无删除权威而追加一条 durable-authority 失败——
+# 两条都显式进 failed，绝不静默吞。
+check("单篇失败不中断整源",
+      rep.ingested == 2
+      and any(msg == "模拟嵌入服务抖动" for _doc, msg in rep.failed)
+      and any("durable source delete authority" in msg for _doc, msg in rep.failed),
+      rep.summary())
+state = json.loads(syncer8._state_path(spec).read_text(encoding="utf-8"))  # noqa: SLF001
+# 失败文档的重试语义按现行实现钉住：失败篇**不更新** state（hash 保持上一轮
+# fp4 成功入库后的值），下一轮按 hash/force 判定仍会对它重跑——"失败会重试"
+# 不变，只是不再假装条目不存在。（本序列里 a.md 在 fp4 那轮已成功入库过改后
+# 内容，所以这里 state 的 hash 就是当前文件 hash——它表示"最后成功同步的版本"。）
+flaky_target = make_doc_id("demo", "a.md")
+flaky_iter = LocalDirectorySource(str(docroot), include=["a.md"]).fetch(
+    docroot.parent / "workdir_files"
+)
+current = next(flaky_iter)
+flaky_iter.close()
+check("失败的文档保留待重试（state 保留最后成功版本）",
+      flaky_target in state["docs"]
+      and state["docs"][flaky_target]["hash"] == current.content_hash,
+      f"state_hash={state['docs'].get(flaky_target, {}).get('hash', '')[:12]}")
 
 print("== 7. 抓取中途中断：进度必须保住 ==")
 # 实测踩到的场景：抓了 85 篇后连接被重置，异常穿出 sync()，状态文件从未
@@ -341,11 +394,12 @@ half_cache = _tmp / "cache_half"
 half_spec = SourceSpec(name="half", type="halfway", dataset_id="kb-half")
 
 fp9 = FakePipeline()
-rep = SourceSyncer(fp9, half_cache).sync(half_spec)
+syncer9 = SourceSyncer(fp9, half_cache)
+rep = syncer9.sync(half_spec)
 check("中断不抛到调用方", rep.fetch_error != "", rep.summary())
 check("中断前入库的 2 篇算数", rep.ingested == 2, rep.summary())
 half_state = json.loads(
-    (half_cache / "half" / "_state.json").read_text(encoding="utf-8")
+    syncer9._state_path(half_spec).read_text(encoding="utf-8")  # noqa: SLF001
 )
 check("中断时状态照常落盘", len(half_state["docs"]) == 2, str(list(half_state["docs"])))
 check("summary 明说没走完", "未走完" in rep.summary(), rep.summary())
