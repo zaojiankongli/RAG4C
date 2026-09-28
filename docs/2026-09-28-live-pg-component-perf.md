@@ -119,7 +119,18 @@ harness：`scripts/bench/component_ablation.py`。要点：
 > 从未被消融过，原因是隔离语料库里一条 approved FAQ 都没有，关掉它 Δ 必然为 0，测了也是假的。
 > 本轮补了 `scripts/bench/seed_live_faqs.py`（走 `create_qa` + `review_qa`，6 条 approved）之后
 > 才加了 `no_qa_retrieval` 变体（`RAG4C_PIPELINE_QA_RETRIEVAL_ON=false`，已用 harness 自己的
-> `_resolvable` 确认能解析到 `pipeline.qa_retrieval_on`）。**下一轮要跑的才是它的真读数。**
+> `_resolvable` 确认能解析到 `pipeline.qa_retrieval_on`）。
+>
+> **这次没能跑出它的 Δ**：harness 起 baseline 服务时子进程启动失败（退出码 3），
+> 栈是 `server/app.py:680 lifespan → server/source_dispatcher.py:393 →
+> core/source_sync_ledger.py:1252 → core/db_clock.py:27`，连的是 `192.168.100.128:3307`
+> 的 MySQL（本机当前没开）。**我没有查清"为什么传了 `--env-file config/.env.live-bench`
+> 的子进程会去连 MySQL"**——查的过程中还犯了一次"空日志 = 没报错"的错（我 20 秒就把探针进程
+> 杀了，MySQL 连接超时根本没来得及写进日志）。按负责人的意思这条先放下。
+> 因此 `no_qa_retrieval` 的性能 Δ **仍是空白**，不要把它当已测。
+>
+> QA 权威这一路本轮是靠产品 API + Playwright 验的（不是靠消融）：
+> `query.qa_retrieval.hit` 从 0 → 4，`catalog_error` 归 0，界面↔服务端 8 项对账一致（§5.1/§5.2）。
 
 - 每个变体**单独起一个服务进程**，用进程环境变量覆盖（读取顺序：进程 env > env 文件），
   不写任何配置文件（`/api/config/update` 那条路会落盘改 `.env`，测量不该动配置）；
@@ -326,6 +337,11 @@ RAG4C_ENV_FILE=config/.env.live-bench .venv/Scripts/python.exe -m uvicorn server
    注意这条栅栏按"这条 SQL 涉及的表"取列类型交集，所以 `storage_backends.is_deleted IN (0,1)`
    这种**整数列**不会被误报（我先证伪了才没把它当缺陷改掉）。
 2. §3 的裁定：dataset 创建时是否应自动建 workspace ownership 权威行。
+7. **消融 harness 的 baseline 起不来**（本机 MySQL 未开时）：传了
+   `--env-file config/.env.live-bench` 的子进程仍去连 MySQL，栈见 §4。
+   MySQL 开起来之后要么它自然好，要么这是一个"第二个引擎绕开 `RAG4C_CATALOG_DB_URL`"的真缺陷
+   ——**这条还没定性**，别按"环境问题"归档。定性方法：让子进程自己打印
+   `catalog.get_engine().url` 与 `app.state.knowledge_auth_engine.url` 两个值再比。
 3. ~~Playwright 前端实测读数~~ **已清**：见 §5.1（首包/阶段耗时）、§5.2（界面↔服务端 8/8 对上）、
    §5.3（控制台判红）。留下的前端跟进：
    - `key={业务 id}` 这一类**只扫了 `RetrievalTrace` 一处**。同类形状（`.map` 里用非唯一业务字段当 key）
