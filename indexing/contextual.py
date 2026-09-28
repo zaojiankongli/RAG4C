@@ -27,6 +27,9 @@ from pathlib import Path
 from typing import Any
 
 from core.llm import LLMError, ParseFallbackError
+from core.observability import get_logger
+
+_logger = get_logger(__name__)
 
 
 class ContextualizerError(RuntimeError):
@@ -248,6 +251,28 @@ class Contextualizer:
                 original = requested.get(str(chunk_id))
                 if original is not None and original not in contexts:
                     contexts[original] = context
+
+        # 「开了增强却一个上下文都没生成」必须留下痕迹。
+        #
+        # 这条路径实测踩过：入库期三个槽位（contextual/triplet/classifier）刻意
+        # 指向本机 Ollama，机器没装 / 没起时，每次调用要先把重试耗满（实测 113 秒）
+        # 才失败，而失败被这里静默降级成空结果——外面看就是"增强开了、一篇文档
+        # 慢了近两分钟、上下文一条没生成"，既不报错也不告警，纯白花时间。
+        # 静默降级本身保留（入库不该被增强拖垮），但必须让它**看得见**。
+        if not contexts:
+            _logger.warning(
+                "Contextual Retrieval 未产出任何上下文：请求 %d 个片段、%d 批，全部降级。"
+                "常见原因是 contextual 槽位的端点不可用（如本机 Ollama 未启动）——"
+                "此时每次调用会先把重试耗满才失败，入库会被显著拖慢。",
+                len(cleaned),
+                len(batches),
+            )
+            try:
+                from core.metrics import get_metrics
+
+                get_metrics().incr("contextual.batches_degraded", value=float(len(batches)))
+            except Exception:  # noqa: BLE001 - 埋点失败不影响入库
+                pass
         return contexts
 
     def _document_digest(self, document: str) -> str:

@@ -19,6 +19,7 @@ from models.schemas import Chunk
 from core.llm import LLMClient, LLMError, ParseFallbackError
 from core.providers import ProviderRegistry
 from core.retry import RetryPolicy, retry_call
+from core.endpoint_probe import assert_endpoint_reachable
 
 
 def _retry_policy() -> RetryPolicy:
@@ -268,6 +269,9 @@ class ApiReranker:
         """API 打分，返回与 candidates 同序的分数列表。"""
         if not candidates:
             return []
+        # 端点不可达时快速失败：重排在检索关键路径上，服务没起的话每次查询
+        # 都要白等一整轮重试（与嵌入同因，实测单批 113 秒）。
+        assert_endpoint_reachable(self.base_url, RerankError, kind="reranker")
         documents = [c.text for c in candidates]
         payload: dict[str, Any] = {
             "model": self.model,

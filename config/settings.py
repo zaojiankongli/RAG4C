@@ -585,6 +585,20 @@ class LlmSlotsSettings(BaseModel):
         }
     )
 
+    # 价格表：``{模型名: {"prompt": 每 1K token 单价, "completion": 每 1K token 单价}}``。
+    #
+    # 只用于**估算单次问答的成本**（``QueryResult.usage.cost``），不参与任何
+    # 计费/限流决策。货币单位由部署方自定（人民币、美元、内部计价单位都行），
+    # 本仓刻意不内置任何价格——价格会变，写死就是在骗人。
+    #
+    # 没配价格的模型：token 照记，金额记 0，并把这部分 token 如实报在
+    # ``usage.unpriced_total_tokens`` 里（宁可说"算不出钱"，也不编一个数）。
+    # 写 ``"*"`` 可以给所有没单独配的模型一个兜底价。
+    #
+    # 配置示例（.env，JSON 字符串）：
+    #   RAG4C_LLM_PRICE_TABLE='{"glm-5.3-flash": {"prompt": 0.002, "completion": 0.006}}'
+    price_table: dict[str, dict[str, float]] = Field(default_factory=dict)
+
     # cache_ttl_s 不写在这些默认值里，由 _default_cache_ttl 在模型校验器里补：
     # 字段默认值只在"配置完全没提这个槽位"时生效，而一旦 .env 里出现
     # llm.rewrite（哪怕只写 model），整个对象会被重建、默认值随之丢失。
@@ -730,6 +744,22 @@ class PipelineSettings(BaseModel):
     dense_cosine_threshold: float = 0.52
     top_k: int = 8
 
+    # 混合检索向 Milvus 请求的候选条数 = ``top_k * search_candidate_factor``。
+    # 这个系数决定"重排/多样性能看到多少候选"，是重排收益与重排成本之间的旋钮。
+    #
+    # 取值来自 ``python -m eval.run_retrieval_eval --embedder api`` 的实测
+    # （227 切片语料 / 23 条可答用例，bge-m3 + bge-reranker-v2-m3，top_k=10）：
+    #
+    #     系数 2（=20 条）：NDCG@10 0.706  MRR@10 0.721  recall@10 0.783
+    #     系数 3（=30 条）：NDCG@10 0.719  MRR@10 0.725  recall@10 0.826
+    #     系数 5（=50 条）：NDCG@10 0.713  MRR@10 0.723  recall@10 0.826
+    #     重排耗时 p50   ： 397ms → 443ms → 758ms
+    #
+    # 结论：候选不是越多越好，3 附近是甜点，5 已经在变差且延迟翻倍。
+    # 默认仍保持 2（与改造前行为一致），想吃到那 1~4 个点的收益就把这里改成 3，
+    # 代价是重排大约多 12% 的耗时。换语料 / 换嵌入模型后请重跑评测再调。
+    search_candidate_factor: int = 2
+
     # ---- 可插拔检索增强开关（官方 how_to_enhance_your_rag 系列）----
     # 查询端增强（需 LLM，默认关闭以保持零额外成本；开启后由对应槽位生成）：
     # - hyde_on        ：HyDE 假设文档嵌入。检索前用 LLM 生成"假设答案"，
@@ -822,6 +852,10 @@ class GraphSettings(BaseModel):
     """
     model_config = ConfigDict(extra="ignore")
 
+    # Engine name is resolved by the graph Factory/Registry. ``auto`` keeps
+    # the historical Milvus default while allowing a registered backend to be
+    # selected without editing the assembly host.
+    engine: str = "auto"
     entity_top_k: int = 20
     relation_top_k: int = 20
     # 实体命中相似度阈值。卡的是 cosine(embed_query(整句查询), 实体名)——
@@ -912,6 +946,19 @@ class RetrySettings(BaseModel):
     max_delay: float = 30.0
     jitter: float = 0.1
     backoff_factor: float = 2.0
+
+    # 「端点不可达」时先做一次廉价探活，别把整轮退避耗完。
+    #
+    # 为什么需要：连接被拒（服务没起 / 地址写错）**不是瞬态故障**，重试多少次
+    # 都是同一个结果。实测入库期槽位指向没启动的本机 Ollama 时，一次调用要把
+    # 重试耗满（113 秒）才失败，而失败还被上层静默降级——纯白等两分钟。
+    # 探活只要一次 TCP 握手（默认 1 秒），不握手成功就立刻失败。
+    #
+    # 探活结果按地址缓存：失败结论缓存 negative_ttl_s 秒（默认 15 秒），
+    # 这样连续调用不会每次都多花 1 秒，也不会长时间把刚恢复的服务判死。
+    endpoint_probe_on: bool = True
+    endpoint_probe_timeout_s: float = 1.0
+    endpoint_probe_negative_ttl_s: float = 15.0
 
 
 class ObservabilitySettings(BaseModel):
@@ -1006,6 +1053,16 @@ class CatalogSettings(BaseModel):
     # 自动元数据过滤（检索时 LLM 生成表达式）与自动打标签（入库时 LLM 分类）
     auto_filter_on: bool = False
     auto_tag_on: bool = False
+    # 建立数据库连接的等待上限（秒），只对远程库（MySQL / PG）生效。
+    #
+    # 为什么要有这一项：连接池带 ``pool_pre_ping=True``，**每次取连接都会先探活**。
+    # 库不可达时，每一次探活都要等到驱动的默认超时（pymysql 是 10 秒）才失败——
+    # 本机跑测试时表现为"整条套件莫名挂住十几分钟"，其实是几十次 10 秒在排队。
+    # 把它调小（测试/CI 设 1~2 秒）就能把"挂住"变回"快速失败"，语义一点没变：
+    # 连不上就是连不上，早知道晚知道都是同一个结论。
+    #
+    # 默认保持 10 秒（与驱动默认一致），生产行为不变。
+    connect_timeout_s: float = 10.0
 
 
 class SourcesSettings(BaseModel):

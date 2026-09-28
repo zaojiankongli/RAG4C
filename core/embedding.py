@@ -17,7 +17,8 @@ from typing import Any, Protocol, runtime_checkable
 from config.settings import EmbeddingSettings
 from core.embed_cache import get_embed_cache
 from core.providers import ProviderRegistry
-from core.retry import RetryPolicy, retry_call
+from core.retry import DeadlineExceeded, RetryPolicy, remaining_budget, retry_call
+from core.endpoint_probe import assert_endpoint_reachable
 
 # 瞬态异常类缓存。与 core.llm._retry_policy 同样的懒探测套路：openai 未安装时
 # 本模块仍要能离线导入（config 校验、单测都会 import 它）。
@@ -86,6 +87,10 @@ class Bge3LocalEmbedder:
     ``return_dense=True``、``return_sparse=False``、``return_colbert_vecs=False``，
     仅取稠密向量。
     """
+
+    # Local inference is synchronous and cannot be safely interrupted by the
+    # route.  The route deadline is therefore a documented soft boundary.
+    graph_query_timeout_contract = "soft"
 
     def __init__(
         self,
@@ -192,6 +197,18 @@ class Bge3LocalEmbedder:
         cache.put(self.model_name, text, vec, variant=variant)
         return list(vec)
 
+    def embed_query_with_timeout(self, text: str, *, timeout_s: float) -> list[float]:
+        """Compatibility port for a soft contract.
+
+        ``timeout_s`` is intentionally not used to interrupt local inference;
+        the graph component only calls this method for providers declared
+        ``per_call``.  Keeping the method on the shared protocol makes the
+        distinction explicit without falsely upgrading local inference.
+        """
+
+        del timeout_s
+        return self.embed_query(text)
+
 
 class ApiEmbedder:
     """OpenAI 兼容 /embeddings 端点嵌入。
@@ -199,6 +216,9 @@ class ApiEmbedder:
     通过 openai SDK 请求 ``{base_url}/embeddings``，适合把嵌入服务化部署
     （vLLM / TEI / 各类网关）。
     """
+
+    # OpenAI's client receives the bounded api_timeout from the graph factory.
+    graph_query_timeout_contract = "per_call"
 
     def __init__(
         self,
@@ -246,7 +266,22 @@ class ApiEmbedder:
                     base_url=self.base_url or None,
                     api_key=self.api_key or "not-set",
                     timeout=self.timeout,
+                    max_retries=0,
                 )
+            except TypeError:
+                # Older OpenAI-compatible SDKs may not expose max_retries on
+                # construction.  The per-attempt timeout path below still
+                # remains active; retain compatibility with those clients.
+                try:
+                    self._client = OpenAI(
+                        base_url=self.base_url or None,
+                        api_key=self.api_key or "not-set",
+                        timeout=self.timeout,
+                    )
+                except Exception as exc:
+                    raise EmbeddingError(
+                        f"初始化嵌入客户端失败 base_url={self.base_url!r}: {exc}"
+                    ) from exc
             except Exception as exc:
                 raise EmbeddingError(
                     f"初始化嵌入客户端失败 base_url={self.base_url!r}: {exc}"
@@ -254,6 +289,66 @@ class ApiEmbedder:
             return self._client
 
     # ------------------------------------------------------------------ #
+    def _client_for_timeout(self, timeout_s: float | None = None) -> Any:
+        client = self._ensure_client()
+        candidates = [float(self.timeout)] if float(self.timeout) > 0 else []
+        if timeout_s is not None:
+            candidates.append(float(timeout_s))
+        budget = remaining_budget()
+        if budget is not None:
+            if budget <= 0:
+                raise DeadlineExceeded("嵌入调用预算已耗尽")
+            candidates.append(float(budget))
+        effective = min(candidates) if candidates else float(timeout_s or 0)
+        if effective <= 0:
+            raise DeadlineExceeded("嵌入调用预算已耗尽")
+        if effective >= float(self.timeout) and timeout_s is None and budget is None:
+            return client
+        with_options = getattr(client, "with_options", None)
+        if not callable(with_options):
+            raise EmbeddingError(
+                "嵌入客户端不支持 per-call timeout，拒绝绕过图查询预算"
+            )
+        try:
+            return with_options(timeout=effective, max_retries=0)
+        except TypeError:
+            return with_options(timeout=effective)
+
+    def _embed_texts(
+        self,
+        texts: list[str],
+        *,
+        timeout_s: float | None = None,
+    ) -> list[list[float]]:
+        if not texts:
+            return []
+        # 端点不可达时快速失败：嵌入常在入库期被成百上千次调用，
+        # 服务没起的话每一批都要把重试耗满才失败（实测单批 113 秒）。
+        assert_endpoint_reachable(self.base_url, EmbeddingError, kind="embedding")
+        policy = _retry_policy()
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), self.batch_size):
+            batch = texts[start : start + self.batch_size]
+
+            def request() -> Any:
+                client = self._client_for_timeout(timeout_s)
+                return client.embeddings.create(
+                    model=self.model,
+                    input=batch,
+                )
+
+            try:
+                resp = retry_call(request, policy=policy)
+            except DeadlineExceeded:
+                raise
+            except Exception as exc:
+                raise EmbeddingError(
+                    f"API 嵌入失败（model={self.model}, base_url={self.base_url}，"
+                    f"已完成 {len(vectors)}/{len(texts)} 条）: {exc}"
+                ) from exc
+            vectors.extend([float(x) for x in item.embedding] for item in resp.data)
+        return vectors
+
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """批量嵌入（按 ``batch_size`` 分批请求，保持输入顺序）。
 
@@ -262,28 +357,7 @@ class ApiEmbedder:
         服务端的单请求 token / 体积上限，而且一旦失败整篇文档的嵌入全部
         作废，没有任何部分进展。
         """
-        if not texts:
-            return []
-        client = self._ensure_client()
-        policy = _retry_policy()
-        vectors: list[list[float]] = []
-        for start in range(0, len(texts), self.batch_size):
-            batch = texts[start : start + self.batch_size]
-            try:
-                resp = retry_call(
-                    client.embeddings.create,
-                    model=self.model,
-                    input=batch,
-                    policy=policy,
-                )
-            except Exception as exc:
-                raise EmbeddingError(
-                    f"API 嵌入失败（model={self.model}, base_url={self.base_url}，"
-                    f"已完成 {len(vectors)}/{len(texts)} 条）: {exc}"
-                ) from exc
-            # OpenAI 响应按输入顺序返回
-            vectors.extend([float(x) for x in item.embedding] for item in resp.data)
-        return vectors
+        return self._embed_texts(texts)
 
     def embed_query(self, text: str) -> list[float]:
         """单条查询嵌入（带两级缓存：进程内 LRU + Redis）。
@@ -309,7 +383,18 @@ class ApiEmbedder:
         if hit is not None:
             return hit
 
-        vec = self.embed_texts([text])[0]
+        vec = self._embed_texts([text])[0]
+        cache.put(self.model, text, vec)
+        return list(vec)
+
+    def embed_query_with_timeout(self, text: str, *, timeout_s: float) -> list[float]:
+        """Embed one query while passing the remaining graph budget per attempt."""
+
+        cache = get_embed_cache()
+        hit = cache.get(self.model, text)
+        if hit is not None:
+            return hit
+        vec = self._embed_texts([text], timeout_s=timeout_s)[0]
         cache.put(self.model, text, vec)
         return list(vec)
 

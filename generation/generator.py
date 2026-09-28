@@ -309,7 +309,7 @@ def create_generator(settings=None) -> Generator:
     """
     if settings is None:
         settings = get_settings()
-    llm_client = create_client(settings.llm.generation)
+    llm_client = create_client(settings.llm.generation, slot="generation")
     return Generator(llm_client=llm_client)
 
 

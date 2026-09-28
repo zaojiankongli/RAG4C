@@ -114,7 +114,7 @@ def create_auto_tagger(settings: Any = None, user_field_types: dict[str, str] | 
     if not getattr(s.catalog, "auto_tag_on", False):
         return None
     try:
-        return AutoTagger(create_client(s.llm.classifier), user_field_types)
+        return AutoTagger(create_client(s.llm.classifier, slot="classifier"), user_field_types)
     except Exception:  # noqa: BLE001 - 槽位配置缺失静默降级
         return None
 

@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 from core.tracing import current_trace
 from core.observability import get_logger
+from core.llm_usage import finish, usage_scope
 from config.settings import get_settings, resolve_tenant
 from indexing.chunker import StructureAwareChunker
 from indexing.doc_types import (
@@ -797,46 +798,58 @@ class IngestPipeline:
         trace = current_trace()
         # 租户强制解析（enforced=True 时空 / None 回退 default_tenant）
         tenant = resolve_tenant(tenant_id, get_settings())
-        try:
-            chunks = self.chunker.chunk_document(
-                doc_id, text, source=source, metadata=metadata
-            )
-            if not chunks:
-                return 0
-            # 多租户隔离：chunk 的 tenant_id 由入库管线统一赋值（chunker 不感知）
-            for c in chunks:
-                c.tenant_id = tenant
-            # 知识库维度：与 parse_and_chunk 一致，空串不写（保留 schema 默认）
-            if dataset_id:
+        # 入库期的 LLM 用量台账：contextual（片段上下文）/ triplet（三元组）/
+        # classifier（自动标签）这几个槽位都是**按片段数线性放大**的，一篇大文档
+        # 能把配额烧穿。没有台账就只能等账单说话，所以这里把"这篇花了多少"记下来。
+        # 问答路径把台账挂在 QueryResult.usage 上；入库路径没有返回字段，
+        # 因此走"指标 + 日志"留痕（core.llm_usage.finish）。
+        with usage_scope() as _usage:
+            try:
+                chunks = self.chunker.chunk_document(
+                    doc_id, text, source=source, metadata=metadata
+                )
+                if not chunks:
+                    return 0
+                # 多租户隔离：chunk 的 tenant_id 由入库管线统一赋值（chunker 不感知）
                 for c in chunks:
-                    c.dataset_id = dataset_id
-            # Contextual Retrieval 增强（可选）：整篇文档为每个 chunk
-            # 生成定位上下文，写入 metadata["context"]
-            contextual_t0 = time.perf_counter()
-            self._apply_contextual(text, chunks)
-            self._last_stage_ms["contextual"] = (time.perf_counter() - contextual_t0) * 1000.0
-            self._enforce_chunk_quota(tenant, len(chunks))
-            texts = [self._embedding_text(c) for c in chunks]
+                    c.tenant_id = tenant
+                # 知识库维度：与 parse_and_chunk 一致，空串不写（保留 schema 默认）
+                if dataset_id:
+                    for c in chunks:
+                        c.dataset_id = dataset_id
+                # Contextual Retrieval 增强（可选）：整篇文档为每个 chunk
+                # 生成定位上下文，写入 metadata["context"]
+                contextual_t0 = time.perf_counter()
+                self._apply_contextual(text, chunks)
+                self._last_stage_ms["contextual"] = (time.perf_counter() - contextual_t0) * 1000.0
+                self._enforce_chunk_quota(tenant, len(chunks))
+                texts = [self._embedding_text(c) for c in chunks]
 
-            t0 = time.perf_counter()
-            vectors = self.embedder.embed_texts(texts)
-            embed_ms = (time.perf_counter() - t0) * 1000.0
-            self._last_stage_ms["embed"] = embed_ms
-            if trace is not None:
-                trace.add_span("embed", embed_ms)
+                t0 = time.perf_counter()
+                vectors = self.embedder.embed_texts(texts)
+                embed_ms = (time.perf_counter() - t0) * 1000.0
+                self._last_stage_ms["embed"] = embed_ms
+                if trace is not None:
+                    trace.add_span("embed", embed_ms)
 
-            t0 = time.perf_counter()
-            # 同 embed_and_insert：chunk_id 确定，用 upsert 让重试幂等
-            self.milvus.upsert_chunks(chunks, vectors)
-            insert_ms = (time.perf_counter() - t0) * 1000.0
-            self._last_stage_ms["insert"] = insert_ms
-            if trace is not None:
-                trace.add_span("insert", insert_ms)
-            return len(chunks)
-        except IngestError:
-            raise
-        except Exception as exc:
-            raise IngestError(f"索引文档失败（doc_id={doc_id!r}）: {exc}") from exc
+                t0 = time.perf_counter()
+                # 同 embed_and_insert：chunk_id 确定，用 upsert 让重试幂等
+                self.milvus.upsert_chunks(chunks, vectors)
+                insert_ms = (time.perf_counter() - t0) * 1000.0
+                self._last_stage_ms["insert"] = insert_ms
+                if trace is not None:
+                    trace.add_span("insert", insert_ms)
+                return len(chunks)
+            except IngestError:
+                raise
+            except Exception as exc:
+                raise IngestError(f"索引文档失败（doc_id={doc_id!r}）: {exc}") from exc
+            finally:
+                # 成功失败都要收尾：失败的那次调用同样花了 token
+                try:
+                    finish(_usage, scope="ingest", prices=get_settings().llm.price_table, logger=_logger)
+                except Exception:  # noqa: BLE001 - 台账永远不该影响入库结果
+                    pass
 
     def upsert_document(
         self,

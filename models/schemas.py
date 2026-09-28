@@ -105,6 +105,8 @@ class QueryResult(BaseModel):
     - ``abstained``：是否触发双重阈值弃权
     - ``route``：实际执行的路由（见 RouteDecision.target）
     - ``traces``：流水追踪信息（配合 core.tracing）
+    - ``usage``：本次问答的 LLM 用量台账（调用次数 / token / 缓存省下的
+      token / 估算成本），由 :mod:`core.llm_usage` 产出。没有开台账时是空字典。
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -116,6 +118,8 @@ class QueryResult(BaseModel):
     abstained: bool = False
     route: str = "hybrid"
     traces: list[str] = Field(default_factory=list)
+    #: 本次问答的 LLM 用量台账（见 core.llm_usage）；空字典 = 本次没有开台账。
+    usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class RouteDecision(BaseModel):

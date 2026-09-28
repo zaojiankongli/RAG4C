@@ -77,7 +77,7 @@ def _build_pipeline(settings, contextual: bool):
         from indexing.contextual import Contextualizer
 
         contextualizer = Contextualizer(
-            llm_client=create_client(settings.llm.contextual),
+            llm_client=create_client(settings.llm.contextual, slot="contextual"),
             template_path=_PROJECT_ROOT / "prompts" / "contextual_v1.txt",
             enabled=True,
             concurrency=int(getattr(settings.pipeline, "contextual_concurrency", 4)),

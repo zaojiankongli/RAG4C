@@ -22,6 +22,7 @@ import threading
 from typing import Any, Optional
 
 from config.settings import LlmSlotSettings, get_settings
+from core.endpoint_probe import probe_endpoint
 from core.retry import RetryPolicy, retry_call
 from core.providers import ProviderRegistry
 
@@ -118,7 +119,24 @@ def _observe_retry_delay(attempt: int, exc: BaseException, delay: float) -> None
     get_metrics().observe("retry.llm.delay", delay)
 
 
-def _record_usage(model: str, usage: Any, *, streamed: bool) -> None:
+def _assert_endpoint_reachable(base_url: str, model: str, slot: str) -> None:
+    """LLM 侧包装：探活不通过时抛 LLMError，并往台账记一次失败。"""
+    if probe_endpoint(base_url, kind="llm"):
+        return
+    try:
+        from core.llm_usage import record_failure
+
+        record_failure(model, slot)
+    except Exception:  # noqa: BLE001
+        pass
+    raise LLMError(
+        f"LLM 端点不可达（快速失败，未发起调用）: {base_url}。"
+        "检查端点是否启动、地址端口是否正确；确认无误后可关掉探活"
+        "（retry.endpoint_probe_on=false）恢复逐次重试行为。"
+    )
+
+
+def _record_usage(model: str, usage: Any, *, streamed: bool, slot: str = "") -> None:
     """把一次调用的 token 用量记进 metrics（惰性导入，**永不抛**）。
 
     为什么这组计数器是必需的：这个项目在缓存上花了很大力气，而缓存对外的
@@ -148,11 +166,16 @@ def _record_usage(model: str, usage: Any, *, streamed: bool) -> None:
             if isinstance(value, (int, float)) and value > 0:
                 metrics.incr(name, tags=tags, value=float(value))
         metrics.incr("llm.calls", tags=tags)
+        # 同一次用量再往"本次问答台账"里记一笔（core.llm_usage），
+        # 于是"这一问花了多少 token"变成可读数，而不只是全局累计。
+        from core.llm_usage import record_call
+
+        record_call(model, slot, usage)
     except Exception:  # noqa: BLE001 - 埋点永远不该影响调用结果
         pass
 
 
-def _record_cache_hit(model: str, envelope: dict) -> None:
+def _record_cache_hit(model: str, envelope: dict, *, slot: str = "") -> None:
     """记一次槽位缓存命中，以及**因此没花掉**的 token（惰性导入，永不抛）。
 
     ``llm.cache.saved.*`` 与 :func:`_record_usage` 的 ``llm.tokens.*`` 是同一
@@ -177,6 +200,9 @@ def _record_cache_hit(model: str, envelope: dict) -> None:
         ):
             if value > 0:
                 metrics.incr(name, tags=tags, value=value)
+        from core.llm_usage import record_cache_hit
+
+        record_cache_hit(model, slot, prompt=prompt, completion=completion)
     except Exception:  # noqa: BLE001 - 埋点永远不该影响调用结果
         pass
 
@@ -190,9 +216,10 @@ class LLMClient:
     行为与接入前完全一致（下游故障由 retry + deadline 兜底）。
     """
 
-    def __init__(self, config: LlmSlotSettings, circuit: Any = None) -> None:
+    def __init__(self, config: LlmSlotSettings, circuit: Any = None, slot: str = "") -> None:
         self.config = config
         self.circuit = circuit
+        self.slot = slot or ""
         self._client: Any = None  # openai.OpenAI，惰性创建
         self._client_lock = threading.Lock()
 
@@ -267,6 +294,8 @@ class LLMClient:
             LLMError: 调用失败。
         """
         self._circuit_guard()  # 熔断打开则快速失败
+        # 端点不可达时直接失败：连接被拒不是瞬态故障，重试多少次都一样
+        _assert_endpoint_reachable(self.config.base_url, self.config.model, self.slot)
         client = self._ensure_client()
         kwargs: dict[str, Any] = {
             "model": self.config.model,
@@ -303,11 +332,18 @@ class LLMClient:
                     raise
         except Exception as exc:  # 原有 LLMError 包装保持不变（__cause__ 契约）
             self._circuit_fail()
+            # 失败也要进台账：一次"调用失败"同样占了一次请求，成本账上不能当作没发生
+            try:
+                from core.llm_usage import record_failure
+
+                record_failure(self.config.model, self.slot)
+            except Exception:  # noqa: BLE001 - 埋点永远不该影响调用结果
+                pass
             raise LLMError(f"LLM 调用失败: {exc}") from exc
 
         content = resp.choices[0].message.content if resp.choices else None
         usage = getattr(resp, "usage", None)
-        _record_usage(self.config.model, usage, streamed=False)
+        _record_usage(self.config.model, usage, streamed=False, slot=self.slot)
         text = content or ""
         self._cache_store(digest, text, cache_ok, usage)
         self._circuit_ok()
@@ -352,7 +388,7 @@ class LLMClient:
                 cache.drop_digest(digest)
                 text = None
             if text is not None:
-                _record_cache_hit(self.config.model, env or {})
+                _record_cache_hit(self.config.model, env or {}, slot=self.slot)
             return text, digest
         except Exception:  # noqa: BLE001 - 缓存永远不该影响调用结果
             return None, None
@@ -408,6 +444,8 @@ class LLMClient:
         Raises:
             LLMError: 调用失败。
         """
+        # 流式同样先探活：连不上就别让用户在流里空等
+        _assert_endpoint_reachable(self.config.base_url, self.config.model, self.slot)
         client = self._ensure_client()
         kwargs: dict[str, Any] = {
             "model": self.config.model,
@@ -449,7 +487,7 @@ class LLMClient:
                 # 否则下面的 choices[0] 取不到东西，用量就被静默丢掉了。
                 usage = getattr(chunk, "usage", None)
                 if usage is not None:
-                    _record_usage(self.config.model, usage, streamed=True)
+                    _record_usage(self.config.model, usage, streamed=True, slot=self.slot)
                 choices = getattr(chunk, "choices", None) or []
                 delta = choices[0].delta if choices else None
                 content = getattr(delta, "content", None) if delta else None
@@ -499,6 +537,9 @@ class LLMClient:
                 }
             ]
 
+        # JSON 路径内部会重试 2 轮，端点不可达时更要提前挡掉（否则是双倍白等）
+        _assert_endpoint_reachable(self.config.base_url, self.config.model, self.slot)
+
         last_text = ""
         for attempt in range(2):  # 首次 + 1 次重试
             msgs = list(base_msgs)
@@ -542,7 +583,7 @@ LLM_PROVIDERS.register("openai_compatible", LLMClient)
 LLM_PROVIDERS.register("openai", LLMClient)
 
 
-def create_client(cfg: LlmSlotSettings, circuit: Any = None) -> LLMClient:
+def create_client(cfg: LlmSlotSettings, circuit: Any = None, slot: str = "") -> LLMClient:
     """工厂函数：由槽位配置创建 LLMClient。
 
     ``circuit`` 为可选熔断器（``core.circuit.CircuitBreaker``）：提供时附加到
@@ -558,6 +599,8 @@ def create_client(cfg: LlmSlotSettings, circuit: Any = None) -> LLMClient:
     client = LLM_PROVIDERS.create(cfg.provider, cfg)
     if circuit is not None:
         client.circuit = circuit
+    if slot:
+        client.slot = slot
     return client
 
 

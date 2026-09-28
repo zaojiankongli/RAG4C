@@ -254,8 +254,8 @@ def create_judges(settings: Settings | None = None) -> tuple[GroundednessJudge, 
     settings = settings if settings is not None else get_settings()
     cfg = settings.llm.judge
     return (
-        GroundednessJudge(llm_client=create_client(cfg)),
-        RelevanceJudge(llm_client=create_client(cfg)),
+        GroundednessJudge(llm_client=create_client(cfg, slot="judge")),
+        RelevanceJudge(llm_client=create_client(cfg, slot="judge")),
     )
 
 
