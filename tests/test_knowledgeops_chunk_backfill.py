@@ -315,6 +315,10 @@ def test_backfill_preserves_roles_revisions_context_metadata_and_reports_hashes(
     assert disabled.chunk_role == "flat"
     assert disabled.enabled is False
     assert disabled.content_revision == 1
+    # 墓碑头与 worker 的 delete 语义对齐（2026-09-27 裁定）：投影里已无此 chunk
+    # 就是期望态，回填同样记 ready/追平，不落 pending 恒真的旧口径。
+    assert disabled.index_status == "ready"
+    assert disabled.indexed_revision == disabled.desired_index_revision
 
     summary = json.dumps(applied.to_summary(ROLLOUT_SECRET), ensure_ascii=False, sort_keys=True)
     assert parent_text not in summary

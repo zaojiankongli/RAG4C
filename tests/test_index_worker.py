@@ -482,3 +482,729 @@ def test_sync_ownership_fence_failure_never_invokes_handler(
     assert refreshed.status == "claimed"
     assert refreshed.claimed_by == "worker-a"
     engine.dispose()
+
+def test_registered_revision_strategy_advances_a_custom_store_on_worker_success(
+    tmp_path: Path,
+) -> None:
+    from core.projection_attempt_lifecycle import (
+        ProjectionAttemptLifecyclePolicy,
+        register_projection_attempt_lifecycle_policy,
+        unregister_projection_attempt_lifecycle_policy,
+    )
+    from core.projection_revision_strategies import (
+        ProjectionRevisionContext,
+        register_projection_revision_strategy,
+        unregister_projection_revision_strategy,
+    )
+
+    engine, queue, attempt = create_worker_state(tmp_path)
+    operation = queue.enqueue_operation(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        document_id="doc-1",
+        attempt_id=attempt.id,
+        target_store="custom_projection",
+        operation="custom_refresh",
+        dedup_key="worker:doc-1:custom:2",
+        target_revision=2,
+        payload={"chunk_ids": ["chunk-1"]},
+    )
+    handler_calls: list[str] = []
+
+    def advance_custom_revision(context: ProjectionRevisionContext) -> None:
+        with Session(context.engine) as session:
+            document = session.get(Document, context.operation.document_id)
+            assert document is not None
+            document.indexed_revision = context.operation.target_revision
+            session.commit()
+
+    register_projection_revision_strategy("custom_projection", advance_custom_revision)
+    register_projection_attempt_lifecycle_policy(
+        "custom_projection",
+        ProjectionAttemptLifecyclePolicy(
+            role="secondary",
+            blocks_finalization=False,
+            is_ready=lambda _context: True,
+        ),
+    )
+    try:
+        worker = worker_module().IndexOperationWorker(
+            queue,
+            handlers={"custom_projection": lambda item: handler_calls.append(item.id)},
+            worker_id="custom-worker",
+        )
+        result = worker.run_once(limit=1)
+        assert result.succeeded == 1
+        assert handler_calls == [operation.id]
+        with Session(engine) as session:
+            document = session.get(Document, "doc-1")
+            assert document is not None
+            assert document.indexed_revision == 2
+    finally:
+        unregister_projection_revision_strategy("custom_projection")
+        unregister_projection_attempt_lifecycle_policy("custom_projection")
+        engine.dispose()
+
+
+def test_unregistered_revision_strategy_is_rejected_before_handler_side_effect(
+    tmp_path: Path,
+) -> None:
+    engine, queue, attempt = create_worker_state(tmp_path)
+    operation = queue.enqueue_operation(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        document_id="doc-1",
+        attempt_id=attempt.id,
+        target_store="missing_projection_policy",
+        operation="custom_refresh",
+        dedup_key="worker:doc-1:missing-policy:2",
+        target_revision=2,
+        payload={"chunk_ids": ["chunk-1"]},
+    )
+    handler_calls: list[str] = []
+    worker = worker_module().IndexOperationWorker(
+        queue,
+        handlers={"missing_projection_policy": lambda item: handler_calls.append(item.id)},
+        worker_id="missing-policy-worker",
+    )
+
+    result = worker.run_once(limit=1)
+
+    assert result.succeeded == 0
+    assert result.retried == 1
+    assert handler_calls == []
+    assert queue.get_operation(operation.id).status == "retry"
+    engine.dispose()
+
+def test_projection_revision_strategy_registration_rejects_duplicate_and_bad_shape() -> None:
+    from core.projection_revision_strategies import register_projection_revision_strategy
+
+    with pytest.raises(ValueError, match="already registered"):
+        register_projection_revision_strategy("milvus_chunks", lambda context: None)
+    with pytest.raises(TypeError, match="callable"):
+        register_projection_revision_strategy("custom_projection", None)
+    with pytest.raises(TypeError, match="accept one positional context"):
+        register_projection_revision_strategy("custom_projection", lambda: None)
+
+def test_revision_strategy_is_pinned_before_handler_runs(tmp_path: Path) -> None:
+    from core.projection_attempt_lifecycle import (
+        ProjectionAttemptLifecyclePolicy,
+        register_projection_attempt_lifecycle_policy,
+        unregister_projection_attempt_lifecycle_policy,
+    )
+    from core.projection_revision_strategies import (
+        ProjectionRevisionContext,
+        register_projection_revision_strategy,
+        unregister_projection_revision_strategy,
+    )
+
+    engine, queue, attempt = create_worker_state(tmp_path)
+    queue.enqueue_operation(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        document_id="doc-1",
+        attempt_id=attempt.id,
+        target_store="replaceable_projection",
+        operation="custom_refresh",
+        dedup_key="worker:doc-1:replaceable:2",
+        target_revision=2,
+        payload={"chunk_ids": ["chunk-1"]},
+    )
+    calls: list[str] = []
+
+    def first_strategy(context: ProjectionRevisionContext) -> None:
+        calls.append("first")
+        with Session(context.engine) as session:
+            document = session.get(Document, "doc-1")
+            assert document is not None
+            document.indexed_revision = 2
+            session.commit()
+
+    def replacement_strategy(context: ProjectionRevisionContext) -> None:
+        calls.append("replacement")
+        with Session(context.engine) as session:
+            document = session.get(Document, "doc-1")
+            assert document is not None
+            document.indexed_revision = 1
+            session.commit()
+
+    register_projection_revision_strategy("replaceable_projection", first_strategy)
+    register_projection_attempt_lifecycle_policy(
+        "replaceable_projection",
+        ProjectionAttemptLifecyclePolicy(
+            role="secondary",
+            blocks_finalization=False,
+            is_ready=lambda _context: True,
+        ),
+    )
+
+    def replace_during_handler(_item) -> None:
+        unregister_projection_revision_strategy("replaceable_projection")
+        unregister_projection_attempt_lifecycle_policy("replaceable_projection")
+        register_projection_revision_strategy(
+            "replaceable_projection", replacement_strategy
+        )
+
+    try:
+        worker = worker_module().IndexOperationWorker(
+            queue,
+            handlers={"replaceable_projection": replace_during_handler},
+            worker_id="replaceable-worker",
+        )
+        result = worker.run_once(limit=1)
+        assert result.succeeded == 1
+        assert calls == ["first"]
+        with Session(engine) as session:
+            document = session.get(Document, "doc-1")
+            assert document is not None
+            assert document.indexed_revision == 2
+    finally:
+        unregister_projection_revision_strategy("replaceable_projection")
+        unregister_projection_attempt_lifecycle_policy("replaceable_projection")
+        engine.dispose()
+
+def test_builtin_graph_revision_strategy_keeps_content_revision_fence(
+    tmp_path: Path,
+) -> None:
+    engine, queue, attempt = create_worker_state(tmp_path)
+    operation = queue.enqueue_operation(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        document_id="doc-1",
+        attempt_id=attempt.id,
+        target_store="graph_projection",
+        operation="upsert",
+        dedup_key="worker:doc-1:graph:2",
+        target_revision=2,
+        payload={"chunk_ids": ["chunk-1"]},
+    )
+    worker = worker_module().IndexOperationWorker(
+        queue,
+        handlers={"graph_projection": lambda _item: None},
+        worker_id="graph-worker",
+    )
+
+    result = worker.run_once(limit=1)
+
+    assert result.succeeded == 1
+    with Session(engine) as session:
+        document = session.get(Document, "doc-1")
+        assert document is not None
+        assert document.graph_revision == 2
+        # The custom graph store is an auxiliary projection; it does not advance the
+        # primary indexed revision in place of Milvus.
+        assert document.indexed_revision == 0
+    assert queue.get_operation(operation.id).status == "succeeded"
+    engine.dispose()
+
+def test_case_variant_target_store_does_not_alias_builtin_revision_policy(
+    tmp_path: Path,
+) -> None:
+    engine, queue, attempt = create_worker_state(tmp_path)
+    operation = queue.enqueue_operation(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        document_id="doc-1",
+        attempt_id=attempt.id,
+        target_store="MILVUS_CHUNKS",
+        operation="upsert",
+        dedup_key="worker:doc-1:uppercase-milvus:2",
+        target_revision=2,
+        payload={"chunk_ids": ["chunk-1"]},
+    )
+    handler_calls: list[str] = []
+    worker = worker_module().IndexOperationWorker(
+        queue,
+        handlers={"MILVUS_CHUNKS": lambda item: handler_calls.append(item.id)},
+        worker_id="uppercase-store-worker",
+    )
+
+    result = worker.run_once(limit=1)
+
+    assert result.succeeded == 0
+    assert result.retried == 1
+    assert handler_calls == []
+    assert queue.get_operation(operation.id).status == "retry"
+    engine.dispose()
+
+def test_projection_revision_strategy_registration_rejects_async_callables() -> None:
+    from core.projection_revision_strategies import register_projection_revision_strategy
+
+    async def async_strategy(_context) -> None:
+        return None
+
+    async def async_generator_strategy(_context):
+        yield None
+
+    def generator_strategy(_context):
+        yield None
+
+    class AsyncCallable:
+        async def __call__(self, _context) -> None:
+            return None
+
+    class AsyncGeneratorCallable:
+        async def __call__(self, _context):
+            yield None
+
+    class GeneratorCallable:
+        def __call__(self, _context):
+            yield None
+
+    for strategy in (
+        async_strategy,
+        AsyncCallable(),
+        async_generator_strategy,
+        generator_strategy,
+        AsyncGeneratorCallable(),
+        GeneratorCallable(),
+    ):
+        with pytest.raises(TypeError, match="synchronous"):
+            register_projection_revision_strategy("async_projection", strategy)
+
+
+def test_unregistered_graph_prefix_target_is_not_implicitly_accepted(
+    tmp_path: Path,
+) -> None:
+    engine, queue, attempt = create_worker_state(tmp_path)
+    operation = queue.enqueue_operation(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        document_id="doc-1",
+        attempt_id=attempt.id,
+        target_store="graph_custom",
+        operation="upsert",
+        dedup_key="worker:doc-1:graph-custom:2",
+        target_revision=2,
+        payload={"chunk_ids": ["chunk-1"]},
+    )
+    handler_calls: list[str] = []
+    worker = worker_module().IndexOperationWorker(
+        queue,
+        handlers={"graph_custom": lambda item: handler_calls.append(item.id)},
+        worker_id="unregistered-graph-worker",
+    )
+
+    result = worker.run_once(limit=1)
+
+    assert result.succeeded == 0
+    assert result.retried == 1
+    assert handler_calls == []
+    assert queue.get_operation(operation.id).status == "retry"
+    engine.dispose()
+
+def test_projection_revision_strategy_runtime_rejects_sync_returned_generator() -> None:
+    import inspect
+
+    from core.projection_revision_strategies import (
+        ProjectionRevisionContext,
+        invoke_projection_revision_strategy,
+    )
+
+    produced = []
+
+    def returns_generator(_context):
+        def generator():
+            yield None
+
+        result = generator()
+        produced.append(result)
+        return result
+
+    context = ProjectionRevisionContext(engine=None, operation=None)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="must be synchronous"):
+        invoke_projection_revision_strategy(returns_generator, context)
+    assert inspect.getgeneratorstate(produced[0]) == inspect.GEN_CLOSED
+
+def test_attempt_lifecycle_policy_is_pinned_across_operations_in_an_attempt(
+    tmp_path: Path,
+) -> None:
+    from core.projection_attempt_lifecycle import (
+        ProjectionAttemptLifecyclePolicy,
+        register_projection_attempt_lifecycle_policy,
+        unregister_projection_attempt_lifecycle_policy,
+    )
+    from core.projection_revision_strategies import (
+        ProjectionRevisionContext,
+        register_projection_revision_strategy,
+        unregister_projection_revision_strategy,
+    )
+
+    engine, queue, attempt = create_worker_state(tmp_path)
+    operations = [
+        queue.enqueue_operation(
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            document_id="doc-1",
+            attempt_id=attempt.id,
+            target_store="custom_projection",
+            operation="custom_refresh",
+            dedup_key=f"worker:doc-1:custom-attempt-policy:{revision}",
+            target_revision=2,
+            payload={"chunk_ids": ["chunk-1"]},
+        )
+        for revision in (1, 2)
+    ]
+    handler_calls: list[str] = []
+
+    def advance_custom_revision(context: ProjectionRevisionContext) -> None:
+        with Session(context.engine) as session:
+            document = session.get(Document, context.operation.document_id)
+            assert document is not None
+            document.indexed_revision = context.operation.target_revision
+            session.commit()
+
+    def ready(_context) -> bool:
+        return True
+
+    def not_ready(_context) -> bool:
+        return False
+
+    register_projection_revision_strategy("custom_projection", advance_custom_revision)
+    register_projection_attempt_lifecycle_policy(
+        "custom_projection",
+        ProjectionAttemptLifecyclePolicy(
+            role="secondary",
+            blocks_finalization=False,
+            is_ready=ready,
+        ),
+    )
+
+    def handler(item) -> None:
+        handler_calls.append(item.id)
+        register_projection_attempt_lifecycle_policy(
+            "custom_projection",
+            ProjectionAttemptLifecyclePolicy(
+                role="secondary",
+                blocks_finalization=False,
+                is_ready=not_ready,
+            ),
+            replace=True,
+        )
+
+    try:
+        worker = worker_module().IndexOperationWorker(
+            queue,
+            handlers={"custom_projection": handler},
+            worker_id="custom-attempt-policy-worker",
+        )
+
+        first = worker.run_once(limit=1)
+        second = worker.run_once(limit=1)
+
+        assert first.succeeded == 1
+        assert second.succeeded == 1
+        assert set(handler_calls) == {operation.id for operation in operations}
+        assert IngestLedger(engine).list_attempts("doc-1")[0].state == "completed"
+    finally:
+        unregister_projection_revision_strategy("custom_projection")
+        unregister_projection_attempt_lifecycle_policy("custom_projection")
+        engine.dispose()
+
+
+@pytest.mark.parametrize("first_outcome", ["not_ready", "raises"])
+def test_attempt_readiness_failure_is_durably_retried(
+    tmp_path: Path, first_outcome: str
+) -> None:
+    from core.projection_attempt_lifecycle import (
+        ProjectionAttemptLifecyclePolicy,
+        register_projection_attempt_lifecycle_policy,
+        unregister_projection_attempt_lifecycle_policy,
+    )
+    from core.projection_revision_strategies import (
+        ProjectionRevisionContext,
+        register_projection_revision_strategy,
+        unregister_projection_revision_strategy,
+    )
+
+    engine, queue, attempt = create_worker_state(tmp_path)
+    operation = queue.enqueue_operation(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        document_id="doc-1",
+        attempt_id=attempt.id,
+        target_store="retryable_projection",
+        operation="custom_refresh",
+        dedup_key=f"worker:doc-1:retryable-policy:{first_outcome}",
+        target_revision=2,
+        payload={"chunk_ids": ["chunk-1"]},
+    )
+    handler_calls: list[str] = []
+    readiness_calls = 0
+
+    def is_ready(_context) -> bool:
+        nonlocal readiness_calls
+        readiness_calls += 1
+        if readiness_calls == 1 and first_outcome == "raises":
+            raise RuntimeError("temporary readiness failure")
+        return readiness_calls > 1
+
+    def advance_revision(context: ProjectionRevisionContext) -> None:
+        with Session(context.engine) as session:
+            document = session.get(Document, context.operation.document_id)
+            assert document is not None
+            document.indexed_revision = context.operation.target_revision
+            session.commit()
+
+    register_projection_revision_strategy("retryable_projection", advance_revision)
+    register_projection_attempt_lifecycle_policy(
+        "retryable_projection",
+        ProjectionAttemptLifecyclePolicy(
+            role="secondary",
+            blocks_finalization=False,
+            is_ready=is_ready,
+        ),
+    )
+    now = datetime(2026, 8, 24, 10, 0, 0)
+    try:
+        worker = worker_module().IndexOperationWorker(
+            queue,
+            handlers={
+                "retryable_projection": lambda item: handler_calls.append(item.id)
+            },
+            worker_id="retryable-policy-worker",
+        )
+
+        first = worker.run_once(now=now)
+        assert first.retried == 1
+        assert queue.get_operation(operation.id).status == "retry"
+        assert handler_calls == [operation.id]
+
+        second = worker.run_once(now=now + timedelta(seconds=5))
+        assert second.succeeded == 1
+        assert queue.get_operation(operation.id).status == "succeeded"
+        assert handler_calls == [operation.id, operation.id]
+        assert readiness_calls == 2
+        assert IngestLedger(engine).list_attempts("doc-1")[0].state == "completed"
+    finally:
+        unregister_projection_revision_strategy("retryable_projection")
+        unregister_projection_attempt_lifecycle_policy("retryable_projection")
+        engine.dispose()
+
+def test_registered_secondary_policy_controls_finalizing_and_terminal_readiness(
+    tmp_path: Path,
+) -> None:
+    from core.projection_attempt_lifecycle import (
+        ProjectionAttemptLifecyclePolicy,
+        register_projection_attempt_lifecycle_policy,
+        unregister_projection_attempt_lifecycle_policy,
+    )
+    from core.projection_revision_strategies import (
+        register_projection_revision_strategy,
+        unregister_projection_revision_strategy,
+    )
+
+    engine, queue, attempt = create_worker_state(tmp_path)
+    milvus_operation = enqueue(queue, attempt, revision=2)
+    custom_operation = queue.enqueue_operation(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        document_id="doc-1",
+        attempt_id=attempt.id,
+        target_store="custom_projection",
+        operation="custom_refresh",
+        dedup_key="worker:doc-1:custom-secondary:2",
+        target_revision=2,
+        payload={"chunk_ids": ["chunk-1"]},
+    )
+    with Session(engine) as session:
+        later_operation = session.get(type(custom_operation), custom_operation.id)
+        assert later_operation is not None
+        later_operation.created_at = datetime.utcnow() + timedelta(days=1)
+        session.commit()
+    handler_calls: list[str] = []
+
+    register_projection_revision_strategy("custom_projection", lambda _context: None)
+    register_projection_attempt_lifecycle_policy(
+        "custom_projection",
+        ProjectionAttemptLifecyclePolicy(
+            role="secondary",
+            blocks_finalization=True,
+            is_ready=lambda _context: True,
+        ),
+    )
+    try:
+        worker = worker_module().IndexOperationWorker(
+            queue,
+            handlers={
+                "milvus_chunks": lambda item: handler_calls.append(item.id),
+                "custom_projection": lambda item: handler_calls.append(item.id),
+            },
+            worker_id="custom-secondary-worker",
+        )
+
+        first = worker.run_once(limit=1)
+        assert first.succeeded == 1
+        assert handler_calls == [milvus_operation.id]
+        assert IngestLedger(engine).list_attempts("doc-1")[0].state == "finalizing"
+
+        second = worker.run_once(limit=1)
+        assert second.succeeded == 1
+        assert handler_calls == [milvus_operation.id, custom_operation.id]
+        assert IngestLedger(engine).list_attempts("doc-1")[0].state == "completed"
+    finally:
+        unregister_projection_revision_strategy("custom_projection")
+        unregister_projection_attempt_lifecycle_policy("custom_projection")
+        engine.dispose()
+
+
+def test_missing_attempt_lifecycle_policy_retries_before_handler_side_effect(
+    tmp_path: Path,
+) -> None:
+    from core.projection_revision_strategies import (
+        register_projection_revision_strategy,
+        unregister_projection_revision_strategy,
+    )
+
+    engine, queue, attempt = create_worker_state(tmp_path)
+    operation = queue.enqueue_operation(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        document_id="doc-1",
+        attempt_id=attempt.id,
+        target_store="missing_attempt_policy",
+        operation="custom_refresh",
+        dedup_key="worker:doc-1:missing-attempt-policy:2",
+        target_revision=2,
+        payload={"chunk_ids": ["chunk-1"]},
+    )
+    handler_calls: list[str] = []
+    register_projection_revision_strategy("missing_attempt_policy", lambda _context: None)
+    try:
+        worker = worker_module().IndexOperationWorker(
+            queue,
+            handlers={
+                "missing_attempt_policy": lambda item: handler_calls.append(item.id)
+            },
+            worker_id="missing-attempt-policy-worker",
+        )
+
+        result = worker.run_once(limit=1)
+
+        assert result.succeeded == 0
+        assert result.retried == 1
+        assert handler_calls == []
+        assert queue.get_operation(operation.id).status == "retry"
+    finally:
+        unregister_projection_revision_strategy("missing_attempt_policy")
+        engine.dispose()
+
+
+def test_attempt_lifecycle_policy_registration_rejects_duplicates_and_bad_shapes() -> None:
+    from core.projection_attempt_lifecycle import (
+        ProjectionAttemptLifecyclePolicy,
+        register_projection_attempt_lifecycle_policy,
+    )
+
+    with pytest.raises(ValueError, match="already registered"):
+        register_projection_attempt_lifecycle_policy(
+            "milvus_chunks",
+            ProjectionAttemptLifecyclePolicy(
+                role="primary",
+                blocks_finalization=False,
+                is_ready=lambda _context: True,
+            ),
+        )
+    with pytest.raises(ValueError, match="role"):
+        register_projection_attempt_lifecycle_policy(
+            "custom_projection",
+            ProjectionAttemptLifecyclePolicy(
+                role="other",
+                blocks_finalization=False,
+                is_ready=lambda _context: True,
+            ),
+        )
+    with pytest.raises(TypeError, match="is_ready"):
+        register_projection_attempt_lifecycle_policy(
+            "custom_projection",
+            ProjectionAttemptLifecyclePolicy(
+                role="secondary",
+                blocks_finalization=False,
+                is_ready=lambda: True,
+            ),
+        )
+
+def test_attempt_lifecycle_policy_dispatch_has_no_builtin_store_branches() -> None:
+    import inspect
+
+    source = inspect.getsource(worker_module().IndexOperationWorker._advance_attempt_lifecycle)
+
+    assert '"milvus_chunks"' not in source
+    assert '"graph_projection"' not in source
+    assert "pinned_policies.get(operation.target_store)" in source
+
+def test_new_attempt_during_readiness_callback_prevents_old_attempt_finalization(
+    tmp_path: Path,
+) -> None:
+    from core.projection_attempt_lifecycle import (
+        ProjectionAttemptLifecyclePolicy,
+        register_projection_attempt_lifecycle_policy,
+        unregister_projection_attempt_lifecycle_policy,
+    )
+    from core.projection_revision_strategies import (
+        ProjectionRevisionContext,
+        register_projection_revision_strategy,
+        unregister_projection_revision_strategy,
+    )
+
+    engine, queue, attempt = create_worker_state(tmp_path)
+    operation = queue.enqueue_operation(
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        document_id="doc-1",
+        attempt_id=attempt.id,
+        target_store="racing_projection",
+        operation="custom_refresh",
+        dedup_key="worker:doc-1:racing-policy:2",
+        target_revision=2,
+        payload={"chunk_ids": ["chunk-1"]},
+    )
+    replacement_attempts = []
+
+    def advance_revision(context: ProjectionRevisionContext) -> None:
+        with Session(context.engine) as session:
+            document = session.get(Document, context.operation.document_id)
+            assert document is not None
+            document.indexed_revision = context.operation.target_revision
+            session.commit()
+
+    def start_new_attempt(_context) -> bool:
+        replacement_attempts.append(
+            IngestLedger(engine).start_attempt(
+                tenant_id="tenant-1",
+                dataset_id="dataset-1",
+                document_id="doc-1",
+            )
+        )
+        return True
+
+    register_projection_revision_strategy("racing_projection", advance_revision)
+    register_projection_attempt_lifecycle_policy(
+        "racing_projection",
+        ProjectionAttemptLifecyclePolicy(
+            role="secondary",
+            blocks_finalization=False,
+            is_ready=start_new_attempt,
+        ),
+    )
+    try:
+        worker = worker_module().IndexOperationWorker(
+            queue,
+            handlers={"racing_projection": lambda _item: None},
+            worker_id="racing-policy-worker",
+        )
+
+        result = worker.run_once(limit=1)
+
+        assert result.succeeded == 1
+        assert queue.get_operation(operation.id).status == "succeeded"
+        assert len(replacement_attempts) == 1
+        with Session(engine) as session:
+            document = session.get(Document, "doc-1")
+            assert document is not None
+            assert document.current_attempt_id == replacement_attempts[0].id
+            assert document.status != "completed"
+    finally:
+        unregister_projection_revision_strategy("racing_projection")
+        unregister_projection_attempt_lifecycle_policy("racing_projection")
+        engine.dispose()

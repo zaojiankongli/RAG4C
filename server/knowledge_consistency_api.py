@@ -26,6 +26,11 @@ from core.chunk_catalog import ChunkCatalog
 from core.index_operations import IndexOperationQueue, process_keyed_lock
 from core.knowledge_governance import sanitize_audit_snapshot
 from core.knowledge_permissions import KNOWLEDGE_MANAGE, KNOWLEDGE_READ
+from core.projection_target_contract import (
+    ProjectionRequeueValidationContext,
+    resolve_projection_requeue_policy,
+    validate_projection_requeue_policy,
+)
 from models.orm import (
     ChunkHead,
     DataSourceRecord,
@@ -58,23 +63,6 @@ _REF_PATTERN = r"^ref-[0-9a-f]{64}$"
 _MANIFEST_REF_PATTERN = r"^ref-[0-9a-f]{64}$"
 _IDEMPOTENCY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
 _REF_DOMAIN = b"rag4c:knowledge-consistency-ref:v1\x00"
-_ORDINARY_TARGET_OPERATIONS = frozenset(
-    {
-        ("milvus_chunks", "upsert"),
-        ("milvus_chunks", "delete"),
-        ("milvus_chunks", "reconcile"),
-        ("graph_projection", "upsert"),
-        ("graph_projection", "delete"),
-    }
-)
-_DELETE_TARGET_OPERATIONS = frozenset(
-    {
-        ("milvus_chunks", "delete_document"),
-        ("graph_projection", "delete_document"),
-        ("catalog_finalize", "finalize_document_delete"),
-    }
-)
-_SUPPORTED_TARGET_OPERATIONS = _ORDINARY_TARGET_OPERATIONS | _DELETE_TARGET_OPERATIONS
 DatasetId = Annotated[str, Path(min_length=1, max_length=64, pattern=_SAFE_ID)]
 DeadLetterRef = Annotated[str, Path(pattern=_REF_PATTERN)]
 
@@ -101,6 +89,7 @@ class ConsistencyCounts(StrictModel):
     documents_scanned: int
     authoritative_heads: int
     projection_chunks: int
+    projection_read_incomplete_documents: int
     missing_chunks: int
     stale_chunks: int
     orphaned_chunks: int
@@ -129,6 +118,7 @@ class QAAuthorityCounts(StrictModel):
 
 class ConsistencySummaryResponse(StrictModel):
     mode: Literal["report-only"]
+    projection_read_status: Literal["best_effort", "incomplete"]
     counts: ConsistencyCounts
     drift_categories: DriftCategories
     manifest_ref: str
@@ -301,6 +291,7 @@ def _counts(report: ReconcileReport) -> dict[str, int]:
         "documents_scanned": int(report.documents_scanned),
         "authoritative_heads": int(report.authoritative_heads),
         "projection_chunks": int(report.projection_chunks),
+        "projection_read_incomplete_documents": int(report.projection_read_incomplete_documents),
         "missing_chunks": len(report.missing_ids),
         "stale_chunks": len(report.stale_ids),
         "orphaned_chunks": len(report.orphaned_ids),
@@ -387,6 +378,7 @@ def _summary_payload(
     counts = _counts(report)
     return {
         "mode": "report-only",
+        "projection_read_status": report.projection_read_status,
         "counts": counts,
         "drift_categories": {
             "missing": counts["missing_chunks"],
@@ -694,11 +686,7 @@ def _validate_ordinary_operation_semantics(
             lock=lock,
         )
         return
-    if (
-        operation.operation != "reconcile"
-        or operation.target_store != "milvus_chunks"
-        or not _valid_reconcile_payload(payload, operation)
-    ):
+    if operation.operation != "reconcile" or not _valid_reconcile_payload(payload, operation):
         raise _lineage_conflict("reconcile 投影 payload 无效")
 
 
@@ -711,8 +699,14 @@ def _validate_canonical_authority(
     dataset_id: str,
     lock: bool,
 ) -> None:
-    pair = (str(operation.target_store), str(operation.operation))
-    if pair not in _SUPPORTED_TARGET_OPERATIONS:
+    try:
+        requeue_policy = resolve_projection_requeue_policy(
+            str(operation.target_store),
+            str(operation.operation),
+        )
+    except (TypeError, ValueError):
+        requeue_policy = None
+    if requeue_policy is None:
         raise _target_conflict()
     if operation.status != "dead":
         raise _lineage_conflict("死信原始投影操作不是 dead 终态")
@@ -743,7 +737,7 @@ def _validate_canonical_authority(
     ):
         raise _lineage_conflict("投影操作、文档与入库尝试的 generation 不一致")
 
-    if pair in _ORDINARY_TARGET_OPERATIONS:
+    if requeue_policy.family == "ordinary":
         if operation.delete_operation_id is not None:
             raise _lineage_conflict("普通投影操作不得携带删除父操作")
         _validate_ordinary_operation_semantics(
@@ -754,31 +748,56 @@ def _validate_canonical_authority(
             dataset=dataset,
             lock=lock,
         )
-        return
+    elif requeue_policy.family == "document_delete":
+        if not operation.delete_operation_id or attempt.attempt_kind != "document_delete":
+            raise _lineage_conflict("删除投影操作缺少删除父操作或删除尝试")
+        parent = session.get(
+            DocumentDeleteOperation, operation.delete_operation_id, with_for_update=lock
+        )
+        if parent is None:
+            raise _lineage_conflict("删除父操作不存在")
+        if (
+            parent.tenant_id,
+            parent.dataset_id,
+            parent.document_id,
+            parent.attempt_id,
+            int(parent.delete_generation or 0),
+        ) != (tenant_id, dataset_id, document.id, attempt.id, generation):
+            raise _lineage_conflict("删除父操作与投影操作谱系不一致")
+        if int(operation.target_revision or 0) != generation:
+            raise _lineage_conflict("删除投影 target revision 与 generation 不一致")
+        payload = dict(operation.payload or {})
+        if (
+            payload.get("delete_operation_id") != parent.id
+            or int(payload.get("document_generation") or -1) != generation
+        ):
+            raise _lineage_conflict("删除投影 payload 与父操作谱系不一致")
+    else:  # pragma: no cover - registration rejects unsupported policy families
+        raise _target_conflict()
 
-    if not operation.delete_operation_id or attempt.attempt_kind != "document_delete":
-        raise _lineage_conflict("删除投影操作缺少删除父操作或删除尝试")
-    parent = session.get(
-        DocumentDeleteOperation, operation.delete_operation_id, with_for_update=lock
+    context = ProjectionRequeueValidationContext(
+        target_store=str(operation.target_store),
+        operation=str(operation.operation),
+        tenant_id=tenant_id,
+        dataset_id=dataset_id,
+        document_id=str(operation.document_id),
+        attempt_id=str(operation.attempt_id),
+        target_revision=int(operation.target_revision or 0),
+        document_generation=generation,
+        attempt_kind=str(attempt.attempt_kind),
+        delete_operation_id=(
+            str(operation.delete_operation_id)
+            if operation.delete_operation_id is not None
+            else None
+        ),
+        payload=dict(operation.payload or {}),
     )
-    if parent is None:
-        raise _lineage_conflict("删除父操作不存在")
-    if (
-        parent.tenant_id,
-        parent.dataset_id,
-        parent.document_id,
-        parent.attempt_id,
-        int(parent.delete_generation or 0),
-    ) != (tenant_id, dataset_id, document.id, attempt.id, generation):
-        raise _lineage_conflict("删除父操作与投影操作谱系不一致")
-    if int(operation.target_revision or 0) != generation:
-        raise _lineage_conflict("删除投影 target revision 与 generation 不一致")
-    payload = dict(operation.payload or {})
-    if (
-        payload.get("delete_operation_id") != parent.id
-        or int(payload.get("document_generation") or -1) != generation
-    ):
-        raise _lineage_conflict("删除投影 payload 与父操作谱系不一致")
+    try:
+        target_valid = validate_projection_requeue_policy(requeue_policy, context)
+    except Exception as exc:  # noqa: BLE001 - custom validation details must not leak
+        raise _lineage_conflict("投影目标一致性校验失败") from exc
+    if not target_valid:
+        raise _lineage_conflict("投影目标一致性校验未通过")
 
 
 def _validate_requeue_lineage(original: IndexOperation, requeued: IndexOperation) -> None:

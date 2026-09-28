@@ -479,8 +479,16 @@ def _write_head(
         head.content_hash = actual_hash
         head.enabled = enabled
         head.desired_index_revision = content_revision
-        head.indexed_revision = content_revision if enabled and role != "parent" else 0
-        head.index_status = "ready" if enabled and role != "parent" else "not_indexed"
+        # 停用（墓碑）头与 worker 的 delete 语义对齐：投影里已无此 chunk 就是
+        # 期望态，同样记 ready/追平，否则墓碑的 projection_pending 恒真。
+        # 前提是遗留部署没有 enabled=False 的向量仍驻留在 milvus（生产管线
+        # 不产这种元数据）；若真有，ready 只是与物理状态脱节，不产生写放大。
+        if role != "parent":
+            head.indexed_revision = content_revision
+            head.index_status = "ready"
+        else:
+            head.indexed_revision = 0
+            head.index_status = "not_indexed"
         head.editor_id = "knowledgeops-backfill"
         head.edit_source = "backfill"
         head.context_header = context_header

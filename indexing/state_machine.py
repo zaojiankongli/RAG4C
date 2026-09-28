@@ -20,6 +20,7 @@
     result = job.run("path/to/file.pdf")   # waiting -> ... -> completed
     result = job.run("path/to/file.pdf")   # 已 completed：跳过
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -31,7 +32,13 @@ from sqlalchemy.orm import Session
 from core import cache_epoch, catalog
 from core.db_clock import read_db_utc
 from core.observability import get_logger
+from core.projection_target_producers import (
+    ProjectionTarget,
+    ProjectionTargetProductionContext,
+    projection_targets,
+)
 from indexing.ingest import QuotaExceededError
+from indexing.projection_target_runtime import validate_projection_target_runtime
 from models.orm import (
     DataSourceRecord,
     Dataset,
@@ -88,9 +95,7 @@ def _validate_writer_rows(
     ):
         raise DocumentWriteSuperseded("document is not active for mutation")
     expected_source_id = permit.source_id if permit is not None else (source.id if source else None)
-    expected_source_generation = (
-        permit.source_generation if permit is not None else None
-    )
+    expected_source_generation = permit.source_generation if permit is not None else None
     if expected_source_id is not None:
         if (
             source is None
@@ -192,9 +197,7 @@ def assert_document_write_permit(
         document = active_session.scalar(document_query)
         source = None
         if permit.source_id is not None:
-            source_query = select(DataSourceRecord).where(
-                DataSourceRecord.id == permit.source_id
-            )
+            source_query = select(DataSourceRecord).where(DataSourceRecord.id == permit.source_id)
             if for_update:
                 source_query = source_query.with_for_update()
             source = active_session.scalar(source_query)
@@ -361,9 +364,7 @@ class DocumentIngestJob:
         try:
             with Session(engine, expire_on_commit=False) as session:
                 with session.begin():
-                    assert_document_write_permit(
-                        permit, session=session, for_update=True
-                    )
+                    assert_document_write_permit(permit, session=session, for_update=True)
                     attempt = self.ledger.start_attempt_in_session(
                         tenant_id=doc["tenant_id"],
                         dataset_id=self.dataset_id or doc["dataset_id"],
@@ -377,13 +378,9 @@ class DocumentIngestJob:
             self._active_attempt_id = str(attempt.id)
             return attempt
         except Exception as exc:  # noqa: BLE001 - shadow remains fail-open
-            if self.ledger_mode == "active" or isinstance(
-                exc, DocumentWriteSuperseded
-            ):
+            if self.ledger_mode == "active" or isinstance(exc, DocumentWriteSuperseded):
                 raise
-            _logger.warning(
-                "入库 ledger shadow 写入失败（start_attempt）: %s", str(exc)[:200]
-            )
+            _logger.warning("入库 ledger shadow 写入失败（start_attempt）: %s", str(exc)[:200])
             return None
 
     def _record_ledger_progress(self, stage: str, fraction: float, detail: str) -> None:
@@ -408,9 +405,7 @@ class DocumentIngestJob:
             if stage == "graph":
                 self._ledger_call(
                     "attempt_finalizing",
-                    lambda: self.ledger.set_attempt_state(
-                        self._active_attempt_id, "finalizing"
-                    ),
+                    lambda: self.ledger.set_attempt_state(self._active_attempt_id, "finalizing"),
                 )
         if fraction >= 1.0:
             finished = self._ledger_call(
@@ -464,7 +459,6 @@ class DocumentIngestJob:
             ),
         )
 
-
     def _persist_chunk_heads(
         self,
         doc: dict[str, Any],
@@ -486,6 +480,7 @@ class DocumentIngestJob:
             chunk_index = int(metadata.get("chunk_index", fallback_index))
             chunk.document_revision = target_revision
             chunk.content_revision = int(getattr(chunk, "content_revision", 0) or 0)
+
             def callback(
                 chunk=chunk,
                 role=role,
@@ -508,6 +503,7 @@ class DocumentIngestJob:
                     metadata=metadata,
                     session=session,
                 )
+
             if session is None:
                 self._ledger_call(f"upsert_chunk_head:{chunk.chunk_id}", callback)
             else:
@@ -520,7 +516,7 @@ class DocumentIngestJob:
         chunks: list[Any],
         target_revision: int,
         *,
-        include_graph: bool = False,
+        targets: tuple[ProjectionTarget, ...],
         permit: DocumentWritePermit,
         session: Session | None = None,
     ) -> None:
@@ -528,18 +524,15 @@ class DocumentIngestJob:
             return
         chunk_ids = [str(chunk.chunk_id) for chunk in chunks]
         initial_status = "shadow" if self.ledger_mode == "shadow" else "pending"
-        stores = ["milvus_chunks"]
-        if include_graph:
-            stores.append("graph_projection")
-        for target_store in stores:
+        for target in targets:
             operation = self.operation_queue.enqueue_operation(
                 tenant_id=doc["tenant_id"],
                 dataset_id=self.dataset_id or doc["dataset_id"],
                 document_id=self.doc_id,
                 attempt_id=attempt.id,
-                target_store=target_store,
+                target_store=target.target_store,
                 operation="upsert",
-                dedup_key=f"{self.doc_id}:{target_revision}:{'milvus' if target_store == 'milvus_chunks' else 'graph'}:upsert",
+                dedup_key=(f"{self.doc_id}:{target_revision}:{target.dedup_key_component}:upsert"),
                 target_revision=target_revision,
                 payload={
                     "chunk_ids": chunk_ids,
@@ -566,6 +559,14 @@ class DocumentIngestJob:
         include_graph: bool,
         permit: DocumentWritePermit,
     ) -> None:
+        targets: tuple[ProjectionTarget, ...] = ()
+        if attempt is not None and self.operation_queue is not None:
+            targets = projection_targets(
+                ProjectionTargetProductionContext(include_graph=include_graph)
+            )
+            for target in targets:
+                validate_projection_target_runtime(target.target_store)
+
         if self.chunk_catalog is None:
             assert_document_write_permit(permit)
             self._persist_chunk_heads(doc, chunks, target_revision)
@@ -574,7 +575,7 @@ class DocumentIngestJob:
                 attempt,
                 chunks,
                 target_revision,
-                include_graph=include_graph,
+                targets=targets,
                 permit=permit,
             )
             return
@@ -592,15 +593,13 @@ class DocumentIngestJob:
                 if attempt_row is not None:
                     attempt_row.attempt_kind = self.attempt_kind
                     attempt_row.document_generation = permit.document_generation
-                self._persist_chunk_heads(
-                    doc, chunks, target_revision, session=session
-                )
+                self._persist_chunk_heads(doc, chunks, target_revision, session=session)
                 self._enqueue_projection_intent(
                     doc,
                     attempt_row or attempt,
                     chunks,
                     target_revision,
-                    include_graph=include_graph,
+                    targets=targets,
                     permit=permit,
                     session=session,
                 )
@@ -614,9 +613,7 @@ class DocumentIngestJob:
             return
         lo, hi = span
         abs_progress = lo + fraction * (hi - lo)
-        catalog.set_document_status(
-            self.doc_id, status, detail, progress=abs_progress
-        )
+        catalog.set_document_status(self.doc_id, status, detail, progress=abs_progress)
         self._record_ledger_progress(stage, fraction, detail)
         if stage == "splitting" and self.on_segment is not None:
             import re
@@ -663,18 +660,12 @@ class DocumentIngestJob:
             except Exception:  # noqa: BLE001 - parser path keeps the authoritative error
                 input_hash = ""
             current_revision = int(doc.get("content_revision") or 0)
-            changed = bool(
-                input_hash and input_hash != str(doc.get("file_hash") or "")
-            )
+            changed = bool(input_hash and input_hash != str(doc.get("file_hash") or ""))
             target_revision = max(1, current_revision + (1 if changed else 0))
             assert_document_write_permit(permit)
-            attempt = self._start_ledger_attempt(
-                doc, input_hash, target_revision, permit
-            )
+            attempt = self._start_ledger_attempt(doc, input_hash, target_revision, permit)
             assert_document_write_permit(permit)
-            catalog.set_document_status(
-                self.doc_id, "parsing", "开始解析", progress=0.01
-            )
+            catalog.set_document_status(self.doc_id, "parsing", "开始解析", progress=0.01)
             chunks = self.pipeline.parse_and_chunk(
                 file_path,
                 doc_id=self.doc_id,
@@ -685,9 +676,7 @@ class DocumentIngestJob:
                 progress=self._on_progress,
             )
             assert_document_write_permit(permit)
-            catalog.set_document_status(
-                self.doc_id, "splitting", "解析切分完成", progress=0.45
-            )
+            catalog.set_document_status(self.doc_id, "splitting", "解析切分完成", progress=0.45)
             if not chunks:
                 empty_meta = self._collect_meta(None)
                 assert_document_write_permit(permit)
@@ -805,7 +794,6 @@ class DocumentIngestJob:
             _record_ingest_metrics({}, error=True)
             _logger.warning("文档 %s 入库失败: %s", self.doc_id, str(exc)[:200])
             return {"status": "error", "error": str(exc)[:500]}
-
 
 
 __all__ = [

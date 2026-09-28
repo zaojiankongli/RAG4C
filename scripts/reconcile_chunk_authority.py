@@ -24,6 +24,24 @@ from sqlalchemy.orm import Session
 
 from core.chunk_catalog import ChunkCatalog
 from core.index_operations import IndexOperationQueue
+from core.projection_consistency_readers import (
+    ProjectionConsistencyReadRequest,
+    read_projection_document,
+    resolve_projection_consistency_reader,
+)
+from core.projection_consistency_fences import resolve_projection_consistency_fence
+from core.projection_consistency_repairs import (
+    ProjectionConsistencyRepairAdapter,
+    ProjectionConsistencyRepairRequest,
+    enqueue_projection_consistency_repair,
+    resolve_projection_consistency_repair_adapter,
+)
+from core.projection_consistency_report_fences import (
+    CatalogProjectionSnapshotIdentity,
+    begin_projection_consistency_report_fence,
+    finish_projection_consistency_report_fence,
+    resolve_projection_consistency_report_fence,
+)
 from models.orm import (
     ChunkHead,
     Dataset,
@@ -301,6 +319,21 @@ def _projection_role(
     return "flat"
 
 
+def _repair_manifest_identity(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Exclude observation-only decorations from durable identity hashes."""
+
+    return {
+        key: value
+        for key, value in manifest.items()
+        if key
+        not in {
+            "target_store",
+            "projection_read_completeness",
+            "projection_observation_status",
+        }
+    }
+
+
 @dataclass(frozen=True)
 class ReconcileReport:
     tenant_id: str
@@ -321,6 +354,9 @@ class ReconcileReport:
     post_snapshot_excluded: int
     next_cursor: str
     complete: bool
+    projection_read_incomplete_documents: int = 0
+    target_store: str = "milvus_chunks"
+    projection_observation_status: str = "unfenced"
 
     @property
     def has_drift(self) -> bool:
@@ -329,6 +365,29 @@ class ReconcileReport:
             or self.stale_ids
             or self.orphaned_ids
             or self.repair_blocked_document_ids
+        )
+
+    @property
+    def projection_observation_incomplete(self) -> bool:
+        return self.projection_observation_status in {
+            "target_changed",
+            "unavailable",
+            "report_target_changed",
+            "report_target_unavailable",
+        }
+
+    @property
+    def projection_read_status(self) -> str:
+        """State only whether a target explicitly reported an incomplete read.
+
+        Even ``best_effort`` is not a cross-store snapshot or dataset-wide
+        completeness guarantee.
+        """
+
+        return (
+            "incomplete"
+            if self.projection_read_incomplete_documents or self.projection_observation_incomplete
+            else "best_effort"
         )
 
     def to_summary(self, report_secret: str) -> dict[str, Any]:
@@ -344,9 +403,13 @@ class ReconcileReport:
             "tenant_id": _pseudonym(self.tenant_id, report_secret=report_secret, kind="tenant"),
             "dataset_id": _pseudonym(self.dataset_id, report_secret=report_secret, kind="dataset"),
             "mode": self.mode,
+            "target_store": self.target_store,
             "documents_scanned": self.documents_scanned,
             "authoritative_heads": self.authoritative_heads,
             "projection_chunks": self.projection_chunks,
+            "projection_read_incomplete_documents": self.projection_read_incomplete_documents,
+            "projection_read_status": self.projection_read_status,
+            "projection_observation_status": self.projection_observation_status,
             "missing_ids": refs(self.missing_ids),
             "stale_ids": refs(self.stale_ids),
             "orphaned_ids": refs(self.orphaned_ids),
@@ -382,6 +445,7 @@ class ReconcileReport:
                 else ""
             ),
             "complete": self.complete,
+            "catalog_scan_complete": self.complete,
             "has_drift": self.has_drift,
         }
 
@@ -490,22 +554,38 @@ class _RepairPlan:
     payload: dict[str, Any]
 
 
-def _repair_base_key(plan: _RepairPlan) -> str:
-    return (
+def _repair_base_key(
+    plan: _RepairPlan,
+    repair_adapter: ProjectionConsistencyRepairAdapter | None = None,
+) -> str:
+    base_key = (
         f"knowledgeops:reconcile:{plan.document_id}:"
         f"{plan.desired_index_revision}:{plan.document_hash}"
     )
+    if repair_adapter is None or (
+        repair_adapter.target_store == "milvus_chunks"
+        and repair_adapter.operation == "reconcile"
+    ):
+        return base_key
+    return (
+        f"{base_key}:target:{repair_adapter.target_store}"
+        f":operation:{repair_adapter.operation}"
+    )
 
 
-def _existing_repair_operations(session: Session, plan: _RepairPlan) -> list[IndexOperation]:
-    base_key = _repair_base_key(plan)
+def _existing_repair_operations(
+    session: Session,
+    plan: _RepairPlan,
+    repair_adapter: ProjectionConsistencyRepairAdapter,
+) -> list[IndexOperation]:
+    base_key = _repair_base_key(plan, repair_adapter)
     return list(
         session.scalars(
             select(IndexOperation)
             .where(
                 IndexOperation.document_id == plan.document_id,
-                IndexOperation.target_store == "milvus_chunks",
-                IndexOperation.operation == "reconcile",
+                IndexOperation.target_store == repair_adapter.target_store,
+                IndexOperation.operation == repair_adapter.operation,
                 IndexOperation.dedup_key.like(f"{base_key}%"),
             )
             .order_by(IndexOperation.created_at, IndexOperation.id)
@@ -560,7 +640,11 @@ def _repair_document_matches_plan(document: Document, plan: _RepairPlan) -> bool
     )
 
 
-def _enqueue_repair_plans(queue: IndexOperationQueue, plans: list[_RepairPlan]) -> int:
+def _enqueue_repair_plans(
+    queue: IndexOperationQueue,
+    plans: list[_RepairPlan],
+    repair_adapter: ProjectionConsistencyRepairAdapter,
+) -> int:
     """CAS all planned documents, then bind attempts and operations atomically."""
     if not plans:
         return 0
@@ -585,7 +669,7 @@ def _enqueue_repair_plans(queue: IndexOperationQueue, plans: list[_RepairPlan]) 
 
             enqueued = 0
             for plan in plans:
-                existing = _existing_repair_operations(session, plan)
+                existing = _existing_repair_operations(session, plan, repair_adapter)
                 if any(item.status in _ACTIVE_OPERATION_STATES for item in existing):
                     continue
                 document = locked_documents[plan.document_id]
@@ -595,19 +679,23 @@ def _enqueue_repair_plans(queue: IndexOperationQueue, plans: list[_RepairPlan]) 
                         session, document=document, plan=plan
                     )
                 generation = len(existing) + 1
-                base_key = _repair_base_key(plan)
+                base_key = _repair_base_key(plan, repair_adapter)
                 dedup_key = base_key if generation == 1 else f"{base_key}:generation:{generation}"
-                queue.enqueue_operation(
-                    tenant_id=plan.tenant_id,
-                    dataset_id=plan.dataset_id,
-                    document_id=plan.document_id,
-                    attempt_id=attempt_id,
-                    target_store="milvus_chunks",
-                    operation="reconcile",
-                    dedup_key=dedup_key,
-                    target_revision=plan.desired_index_revision,
-                    payload=plan.payload,
-                    session=session,
+                enqueue_projection_consistency_repair(
+                    repair_adapter,
+                    ProjectionConsistencyRepairRequest(
+                        target_store=repair_adapter.target_store,
+                        operation=repair_adapter.operation,
+                        tenant_id=plan.tenant_id,
+                        dataset_id=plan.dataset_id,
+                        document_id=plan.document_id,
+                        attempt_id=attempt_id,
+                        target_revision=plan.desired_index_revision,
+                        dedup_key=dedup_key,
+                        payload=plan.payload,
+                    ),
+                    queue,
+                    session,
                 )
                 enqueued += 1
             session.commit()
@@ -628,6 +716,7 @@ def reconcile_chunk_authority(
     cursor: str = "",
     batch_size: int = DEFAULT_ROLLOUT_BATCH_SIZE,
     repair: bool = False,
+    target_store: str = "milvus_chunks",
 ) -> ReconcileReport:
     """Compare a stable snapshot and optionally enqueue a complete repair plan."""
     if not tenant_id or not dataset_id:
@@ -638,6 +727,27 @@ def reconcile_chunk_authority(
         raise ValueError("repair mode requires an IndexOperationQueue")
     if repair and cursor:
         raise ValueError("repair mode does not accept a resume cursor")
+    repair_adapter: ProjectionConsistencyRepairAdapter | None = None
+    if repair:
+        repair_adapter = resolve_projection_consistency_repair_adapter(
+            target_store,
+            backend=milvus,
+        )
+        if repair_adapter is None:
+            raise ValueError(
+                "repair mode is only supported for target_store='milvus_chunks' "
+                "or a registered projection consistency repair adapter"
+            )
+    projection_reader = resolve_projection_consistency_reader(target_store, backend=milvus)
+    projection_fence = resolve_projection_consistency_fence(target_store, backend=milvus)
+    projection_report_fence = resolve_projection_consistency_report_fence(
+        target_store,
+        backend=milvus,
+    )
+    report_fence_identity: CatalogProjectionSnapshotIdentity | None = None
+    report_fence_session = None
+    report_observation_status: str | None = None
+    report_observation_nonstable = False
 
     with rollout_snapshot_session(chunk_catalog.engine) as session:
         state = _scan_state(
@@ -647,6 +757,19 @@ def reconcile_chunk_authority(
             cursor=cursor,
             report_secret=report_secret,
         )
+        if projection_report_fence is not None:
+            report_fence_identity = CatalogProjectionSnapshotIdentity(
+                tenant_id=tenant_id,
+                dataset_id=dataset_id,
+                dataset_identity_digest=state.dataset_generation,
+                document_snapshot_fingerprint=state.snapshot_fingerprint,
+                document_snapshot_count=state.snapshot_count,
+            )
+            report_fence_session = begin_projection_consistency_report_fence(
+                projection_report_fence,
+                report_fence_identity,
+                target_store=target_store,
+            )
         filters: list[Any] = [
             Document.tenant_id == tenant_id,
             Document.dataset_id == dataset_id,
@@ -678,6 +801,8 @@ def reconcile_chunk_authority(
         blocked: list[str] = []
         manifests: list[dict[str, Any]] = []
         repair_plans: list[_RepairPlan] = []
+        projection_read_incomplete_documents = 0
+        projection_fence_statuses: set[str] = set()
         authoritative_count = projection_count = 0
 
         for document in documents:
@@ -692,16 +817,43 @@ def reconcile_chunk_authority(
                     .order_by(ChunkHead.id)
                 )
             )
-            projected = sorted(
-                milvus.query_chunks_by_doc(document.id, tenant_id=document.tenant_id),
-                key=lambda item: str(item.chunk_id),
+            read_result = read_projection_document(
+                projection_reader,
+                ProjectionConsistencyReadRequest(
+                    target_store=target_store,
+                    tenant_id=tenant_id,
+                    dataset_id=dataset_id,
+                    document_id=document.id,
+                    target_snapshot_token=(
+                        report_fence_session.target_snapshot_token
+                        if report_fence_session is not None
+                        else None
+                    ),
+                ),
+                fence=projection_fence if projection_report_fence is None else None,
             )
+            projection_fence_statuses.add(read_result.fence_status)
+            if read_result.completeness == "incomplete":
+                projection_read_incomplete_documents += 1
+                manifests.append(
+                    {
+                        "document_id": document.id,
+                        "projection_read": {
+                            "target_store": target_store,
+                            "completeness": read_result.completeness,
+                            "reason": read_result.incomplete_reason,
+                            "observed_chunks": len(read_result.chunks),
+                            "observation_status": read_result.fence_status,
+                        },
+                    }
+                )
+                continue
             authoritative_count += len(heads)
-            projection_count += len(projected)
+            projection_count += len(read_result.chunks)
+            projected = sorted(read_result.chunks, key=lambda item: str(item.chunk_id))
             missing, stale, orphaned, stale_reasons, manifest = _document_drift(
                 document, heads, projected
             )
-            manifests.append(manifest)
             missing_all.extend(missing)
             stale_all.extend(stale)
             orphaned_all.extend(orphaned)
@@ -731,6 +883,51 @@ def reconcile_chunk_authority(
                         },
                     )
                 )
+            # Keep the repair manifest hash compatible with the historical
+            # Milvus payload. Observation metadata belongs to the report
+            # projection, not to the durable repair identity/dedup key.
+            manifest["target_store"] = target_store
+            manifest["projection_read_completeness"] = read_result.completeness
+            manifest["projection_observation_status"] = read_result.fence_status
+            manifests.append(manifest)
+
+        if projection_report_fence is not None:
+            assert report_fence_identity is not None
+            assert report_fence_session is not None
+            report_observation = finish_projection_consistency_report_fence(
+                projection_report_fence,
+                report_fence_identity,
+                report_fence_session,
+                len(documents),
+                target_store=target_store,
+            )
+            report_observation_status = report_observation.status
+            if report_observation.status != "stable":
+                report_observation_nonstable = True
+                projection_read_incomplete_documents = len(documents)
+                authoritative_count = 0
+                projection_count = 0
+                missing_all.clear()
+                stale_all.clear()
+                orphaned_all.clear()
+                reasons_all.clear()
+                blocked.clear()
+                repair_plans.clear()
+                manifests = [
+                    {
+                        "target_store": target_store,
+                        "report_projection_observation": {
+                            "status": report_observation.status,
+                            "reason": report_observation.reason,
+                            "documents_read": len(documents),
+                        },
+                    }
+                ]
+
+    if repair and (projection_read_incomplete_documents or report_observation_nonstable):
+        raise ValueError(
+            "repair mode refused because one or more target projection reads were incomplete"
+        )
 
     _assert_scan_state_current(
         chunk_catalog,
@@ -743,11 +940,13 @@ def reconcile_chunk_authority(
     enqueued = 0
     if repair:
         assert queue is not None
-        enqueued = _enqueue_repair_plans(queue, repair_plans)
+        assert repair_adapter is not None
+        enqueued = _enqueue_repair_plans(queue, repair_plans, repair_adapter)
 
-    manifest_hash = _digest(manifests)
+    identity_manifests = [_repair_manifest_identity(manifest) for manifest in manifests]
+    manifest_hash = _digest(identity_manifests)
     if len(manifests) == 1:
-        manifest_hash = _digest(manifests[0])
+        manifest_hash = _digest(identity_manifests[0])
     next_cursor = ""
     if has_more and documents:
         next_cursor = _encode_cursor(
@@ -759,6 +958,22 @@ def reconcile_chunk_authority(
             report_secret=report_secret,
         )
     effective_batch_size = max(state.snapshot_count, 1) if repair else batch_size
+    if report_observation_status == "stable":
+        projection_observation_status = "report_target_observation_stable"
+    elif report_observation_status == "changed":
+        projection_observation_status = "report_target_changed"
+    elif report_observation_status == "unavailable":
+        projection_observation_status = "report_target_unavailable"
+    elif not projection_fence_statuses or projection_fence_statuses == {"unfenced"}:
+        projection_observation_status = "unfenced"
+    elif projection_fence_statuses == {"target_observation_stable"}:
+        projection_observation_status = "target_observation_stable"
+    elif "target_changed" in projection_fence_statuses:
+        projection_observation_status = "target_changed"
+    elif "unavailable" in projection_fence_statuses:
+        projection_observation_status = "unavailable"
+    else:
+        projection_observation_status = "mixed_observation"
     return ReconcileReport(
         tenant_id=tenant_id,
         dataset_id=dataset_id,
@@ -778,6 +993,9 @@ def reconcile_chunk_authority(
         post_snapshot_excluded=0,
         next_cursor=next_cursor,
         complete=not has_more,
+        projection_read_incomplete_documents=projection_read_incomplete_documents,
+        target_store=target_store,
+        projection_observation_status=projection_observation_status,
     )
 
 
@@ -861,7 +1079,15 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps({"sensitive_resume_cursor": report.next_cursor}, sort_keys=True),
             file=sys.stderr,
         )
-    return 2 if args.fail_on_drift and report.has_drift else 0
+    return (
+        2
+        if (
+            report.projection_read_incomplete_documents
+            or report.projection_observation_incomplete
+            or (args.fail_on_drift and report.has_drift)
+        )
+        else 0
+    )
 
 
 if __name__ == "__main__":

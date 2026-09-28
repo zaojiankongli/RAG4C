@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from core.chunk_catalog import ChunkCatalog
 from core.index_operations import IndexOperationQueue
 from core.ingest_ledger import IngestLedger
-from models.orm import Dataset, Document, DocumentIngestAttempt, IndexOperation, Tenant
+from models.orm import ChunkHead, Dataset, Document, DocumentIngestAttempt, IndexOperation, Tenant
 from models.schemas import Chunk
 import scripts.reconcile_chunk_authority as reconcile_module
 from tests.head_catalog import seed_head_authority
@@ -34,14 +34,31 @@ def _reconcile(catalog: ChunkCatalog, milvus: object, queue: object, **kwargs):
 class ReadOnlyMilvus:
     def __init__(self, chunks: list[Chunk]):
         self.chunks = list(chunks)
-        self.queries: list[tuple[str, str]] = []
+        self.queries: list[tuple[str, str, str, bool]] = []
 
-    def query_chunks_by_doc(self, doc_id: str, tenant_id: str = "") -> list[Chunk]:
-        self.queries.append((doc_id, tenant_id))
+    def query_chunks_by_doc(
+        self,
+        doc_id: str,
+        tenant_id: str = "",
+        *,
+        dataset_id: str = "",
+        include_unscoped_scope: bool = False,
+    ) -> list[Chunk]:
+        self.queries.append((doc_id, tenant_id, dataset_id, include_unscoped_scope))
         return [
             chunk
             for chunk in self.chunks
-            if chunk.doc_id == doc_id and (not tenant_id or chunk.tenant_id == tenant_id)
+            if chunk.doc_id == doc_id
+            and (
+                not tenant_id
+                or chunk.tenant_id == tenant_id
+                or (include_unscoped_scope and not chunk.tenant_id)
+            )
+            and (
+                not dataset_id
+                or chunk.dataset_id == dataset_id
+                or (include_unscoped_scope and not chunk.dataset_id)
+            )
         ]
 
     def upsert_chunks(self, *_args, **_kwargs):
@@ -217,6 +234,630 @@ def test_reconcile_report_only_finds_missing_stale_hash_and_orphaned(
     engine.dispose()
 
 
+def test_reconcile_dispatches_registered_chunk_reader_for_exact_target(
+    tmp_path: Path,
+) -> None:
+    from core.projection_consistency_readers import (
+        ProjectionConsistencyReadRequest,
+        ProjectionConsistencyReadResult,
+        register_projection_consistency_reader,
+        unregister_projection_consistency_reader,
+    )
+
+    engine, _ = _state(tmp_path)
+    catalog = ChunkCatalog(engine)
+    _head(catalog, "chunk-a", text="matching", index=0)
+    target_store = "custom_chunks"
+    projected = _chunk("chunk-a", text="matching")
+    requests: list[ProjectionConsistencyReadRequest] = []
+
+    class CustomReader:
+        def read_document(
+            self, request: ProjectionConsistencyReadRequest
+        ) -> ProjectionConsistencyReadResult:
+            requests.append(request)
+            return ProjectionConsistencyReadResult(
+                target_store=request.target_store,
+                tenant_id=request.tenant_id,
+                dataset_id=request.dataset_id,
+                document_id=request.document_id,
+                chunks=(projected,),
+                completeness="best_effort",
+            )
+
+    reader = CustomReader()
+    register_projection_consistency_reader(target_store, lambda _context: reader)
+    try:
+        report = _reconcile(
+            catalog,
+            object(),
+            IndexOperationQueue(engine),
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            target_store=target_store,
+        )
+    finally:
+        unregister_projection_consistency_reader(target_store)
+
+    assert report.target_store == target_store
+    assert report.projection_read_incomplete_documents == 0
+    assert report.missing_ids == report.stale_ids == report.orphaned_ids == ()
+    assert report.to_summary(ROLLOUT_SECRET)["target_store"] == target_store
+    assert requests == [
+        ProjectionConsistencyReadRequest(
+            target_store=target_store,
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            document_id="doc-1",
+        )
+    ]
+    engine.dispose()
+
+
+def test_reconcile_applies_registered_target_generation_fence(
+    tmp_path: Path,
+) -> None:
+    from core.projection_consistency_fences import (
+        ProjectionConsistencyFenceObservation,
+        register_projection_consistency_fence,
+        unregister_projection_consistency_fence,
+    )
+    from core.projection_consistency_readers import (
+        ProjectionConsistencyReadRequest,
+        ProjectionConsistencyReadResult,
+        register_projection_consistency_reader,
+        unregister_projection_consistency_reader,
+    )
+
+    engine, _ = _state(tmp_path)
+    catalog = ChunkCatalog(engine)
+    _head(catalog, "chunk-a", text="matching", index=0)
+    target_store = "fenced_chunks"
+    backend = SimpleNamespace(
+        generation=3,
+        change_before_finish=False,
+        unavailable=False,
+    )
+    projected = _chunk("chunk-a", text="matching")
+
+    class CustomReader:
+        def read_document(
+            self, request: ProjectionConsistencyReadRequest
+        ) -> ProjectionConsistencyReadResult:
+            return ProjectionConsistencyReadResult(
+                target_store=request.target_store,
+                tenant_id=request.tenant_id,
+                dataset_id=request.dataset_id,
+                document_id=request.document_id,
+                chunks=(projected,),
+                completeness="best_effort",
+            )
+
+    class GenerationFence:
+        def begin(self, _request: ProjectionConsistencyReadRequest) -> int:
+            return backend.generation
+
+        def finish(
+            self,
+            _request: ProjectionConsistencyReadRequest,
+            begin_token: int,
+            _read_result: ProjectionConsistencyReadResult,
+        ) -> ProjectionConsistencyFenceObservation:
+            if backend.unavailable:
+                return ProjectionConsistencyFenceObservation(
+                    status="unavailable",
+                    reason="target_generation_unavailable",
+                )
+            if backend.change_before_finish:
+                backend.generation += 1
+            if begin_token != backend.generation:
+                return ProjectionConsistencyFenceObservation(
+                    status="changed",
+                    reason="target_generation_changed",
+                )
+            return ProjectionConsistencyFenceObservation(
+                status="stable",
+                snapshot_token=f"generation:{begin_token}",
+            )
+
+    register_projection_consistency_reader(target_store, lambda _context: CustomReader())
+    register_projection_consistency_fence(target_store, lambda _context: GenerationFence())
+    try:
+        stable = _reconcile(
+            catalog,
+            backend,
+            IndexOperationQueue(engine),
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            target_store=target_store,
+        )
+        assert stable.projection_observation_status == "target_observation_stable"
+        assert stable.projection_read_incomplete_documents == 0
+        assert stable.missing_ids == stable.stale_ids == stable.orphaned_ids == ()
+
+        backend.change_before_finish = True
+        changed = _reconcile(
+            catalog,
+            backend,
+            IndexOperationQueue(engine),
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            target_store=target_store,
+        )
+        assert changed.projection_observation_status == "target_changed"
+        assert changed.projection_read_incomplete_documents == 1
+        assert changed.authoritative_heads == 0
+        assert changed.projection_chunks == 0
+        assert changed.has_drift is False
+
+        backend.change_before_finish = False
+        backend.unavailable = True
+        unavailable = _reconcile(
+            catalog,
+            backend,
+            IndexOperationQueue(engine),
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            target_store=target_store,
+        )
+        assert unavailable.projection_observation_status == "unavailable"
+        assert unavailable.projection_read_incomplete_documents == 1
+        assert unavailable.authoritative_heads == 0
+        assert unavailable.projection_chunks == 0
+        assert unavailable.has_drift is False
+    finally:
+        unregister_projection_consistency_fence(target_store)
+        unregister_projection_consistency_reader(target_store)
+    engine.dispose()
+
+
+def test_reconcile_applies_one_catalog_bound_report_fence_across_documents(
+    tmp_path: Path,
+) -> None:
+    from core.projection_consistency_report_fences import (
+        ProjectionConsistencyReportFenceObservation,
+        ProjectionConsistencyReportFenceSession,
+        register_projection_consistency_report_fence,
+        unregister_projection_consistency_report_fence,
+    )
+    from core.projection_consistency_readers import (
+        ProjectionConsistencyReadRequest,
+        ProjectionConsistencyReadResult,
+        register_projection_consistency_reader,
+        unregister_projection_consistency_reader,
+    )
+
+    engine, _ = _state(tmp_path)
+    with Session(engine) as session:
+        session.add(
+            Document(
+                id="doc-2",
+                tenant_id="tenant-1",
+                dataset_id="dataset-1",
+                name="Document 2",
+                content_revision=4,
+                desired_index_revision=4,
+                created_at=BASE_TIME + timedelta(hours=1),
+                updated_at=BASE_TIME + timedelta(hours=1),
+            )
+        )
+        session.commit()
+    catalog = ChunkCatalog(engine)
+    _head(catalog, "chunk-1", text="matching", index=0, document_id="doc-1")
+    _head(catalog, "chunk-2", text="matching", index=0, document_id="doc-2")
+    target_store = "report_fenced_chunks"
+    backend = SimpleNamespace(
+        generation=5,
+        bump_after_first=False,
+        unavailable=False,
+        read_count=0,
+        requests=[],
+    )
+
+    class CustomReader:
+        def read_document(
+            self, request: ProjectionConsistencyReadRequest
+        ) -> ProjectionConsistencyReadResult:
+            backend.requests.append(request.target_snapshot_token)
+            backend.read_count += 1
+            if backend.bump_after_first and backend.read_count == 1:
+                backend.generation += 1
+            chunk_id = "chunk-1" if request.document_id == "doc-1" else "chunk-2"
+            return ProjectionConsistencyReadResult(
+                target_store=request.target_store,
+                tenant_id=request.tenant_id,
+                dataset_id=request.dataset_id,
+                document_id=request.document_id,
+                chunks=(_chunk(chunk_id, doc_id=request.document_id, text="matching"),),
+                completeness="best_effort",
+            )
+
+    class ReportFence:
+        def begin_report(self, identity) -> ProjectionConsistencyReportFenceSession:
+            return ProjectionConsistencyReportFenceSession(
+                target_store=target_store,
+                tenant_id=identity.tenant_id,
+                dataset_id=identity.dataset_id,
+                dataset_identity_digest=identity.dataset_identity_digest,
+                document_snapshot_fingerprint=identity.document_snapshot_fingerprint,
+                document_snapshot_count=identity.document_snapshot_count,
+                target_snapshot_token=f"generation:{backend.generation}",
+            )
+
+        def finish_report(
+            self,
+            _identity,
+            session: ProjectionConsistencyReportFenceSession,
+            documents_read: int,
+        ) -> ProjectionConsistencyReportFenceObservation:
+            assert documents_read == 2
+            if backend.unavailable:
+                return ProjectionConsistencyReportFenceObservation(
+                    status="unavailable",
+                    reason="target_generation_unavailable",
+                )
+            if session.target_snapshot_token != f"generation:{backend.generation}":
+                return ProjectionConsistencyReportFenceObservation(
+                    status="changed",
+                    snapshot_token=f"generation:{backend.generation}",
+                    reason="target_generation_changed",
+                )
+            return ProjectionConsistencyReportFenceObservation(
+                status="stable",
+                snapshot_token=session.target_snapshot_token,
+            )
+
+    register_projection_consistency_reader(target_store, lambda _context: CustomReader())
+    register_projection_consistency_report_fence(target_store, lambda _context: ReportFence())
+    try:
+        stable = _reconcile(
+            catalog,
+            backend,
+            IndexOperationQueue(engine),
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            target_store=target_store,
+        )
+        assert stable.projection_observation_status == "report_target_observation_stable"
+        assert stable.projection_read_incomplete_documents == 0
+        assert stable.missing_ids == stable.stale_ids == stable.orphaned_ids == ()
+        assert backend.requests == ["generation:5", "generation:5"]
+
+        backend.bump_after_first = True
+        backend.read_count = 0
+        backend.requests.clear()
+        changed = _reconcile(
+            catalog,
+            backend,
+            IndexOperationQueue(engine),
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            target_store=target_store,
+        )
+        assert changed.projection_observation_status == "report_target_changed"
+        assert changed.projection_read_incomplete_documents == 2
+        assert changed.authoritative_heads == 0
+        assert changed.projection_chunks == 0
+        assert changed.missing_ids == changed.stale_ids == changed.orphaned_ids == ()
+        assert changed.has_drift is False
+        assert backend.requests == ["generation:5", "generation:5"]
+
+        backend.bump_after_first = False
+        backend.unavailable = True
+        backend.read_count = 0
+        unavailable = _reconcile(
+            catalog,
+            backend,
+            IndexOperationQueue(engine),
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            target_store=target_store,
+        )
+        assert unavailable.projection_observation_status == "report_target_unavailable"
+        assert unavailable.projection_read_incomplete_documents == 2
+        assert unavailable.has_drift is False
+    finally:
+        unregister_projection_consistency_report_fence(target_store)
+        unregister_projection_consistency_reader(target_store)
+    engine.dispose()
+
+
+def test_reconcile_does_not_fall_back_for_graph_and_custom_repair_is_refused(
+    tmp_path: Path,
+) -> None:
+    from core.providers import UnknownProviderError
+    from core.projection_consistency_readers import (
+        ProjectionConsistencyReadRequest,
+        ProjectionConsistencyReadResult,
+        register_projection_consistency_reader,
+        unregister_projection_consistency_reader,
+    )
+
+    engine, _ = _state(tmp_path)
+    catalog = ChunkCatalog(engine)
+    _head(catalog, "chunk-a", text="content", index=0)
+    queue = IndexOperationQueue(engine)
+
+    with pytest.raises(UnknownProviderError, match="projection consistency reader"):
+        _reconcile(
+            catalog,
+            ReadOnlyMilvus([]),
+            queue,
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            target_store="graph_projection",
+        )
+
+    class EmptyReader:
+        def read_document(
+            self, request: ProjectionConsistencyReadRequest
+        ) -> ProjectionConsistencyReadResult:
+            return ProjectionConsistencyReadResult(
+                target_store=request.target_store,
+                tenant_id=request.tenant_id,
+                dataset_id=request.dataset_id,
+                document_id=request.document_id,
+                chunks=(),
+                completeness="best_effort",
+            )
+
+    register_projection_consistency_reader("custom_chunks", lambda _context: EmptyReader())
+    try:
+        with pytest.raises(ValueError, match="only supported for target_store"):
+            _reconcile(
+                catalog,
+                object(),
+                queue,
+                tenant_id="tenant-1",
+                dataset_id="dataset-1",
+                target_store="custom_chunks",
+                repair=True,
+            )
+    finally:
+        unregister_projection_consistency_reader("custom_chunks")
+    assert queue.count_operations() == 0
+    engine.dispose()
+
+
+def test_reconcile_dispatches_registered_repair_adapter_for_custom_target(
+    tmp_path: Path,
+) -> None:
+    from core.projection_consistency_readers import (
+        ProjectionConsistencyReadRequest,
+        ProjectionConsistencyReadResult,
+        register_projection_consistency_reader,
+        unregister_projection_consistency_reader,
+    )
+    from core.projection_consistency_repairs import (
+        ProjectionConsistencyRepairRequest,
+        register_projection_consistency_repair_adapter,
+        unregister_projection_consistency_repair_adapter,
+    )
+
+    engine, _ = _state(tmp_path)
+    catalog = ChunkCatalog(engine)
+    _head(catalog, "missing-custom", text="authoritative", index=0)
+    queue = IndexOperationQueue(engine)
+    target_store = "custom_repair_chunks"
+    adapter_requests: list[ProjectionConsistencyRepairRequest] = []
+
+    class EmptyReader:
+        def read_document(
+            self, request: ProjectionConsistencyReadRequest
+        ) -> ProjectionConsistencyReadResult:
+            return ProjectionConsistencyReadResult(
+                target_store=request.target_store,
+                tenant_id=request.tenant_id,
+                dataset_id=request.dataset_id,
+                document_id=request.document_id,
+                chunks=(),
+                completeness="best_effort",
+            )
+
+    class CustomRepairAdapter:
+        target_store = "custom_repair_chunks"
+        operation = "reconcile"
+
+        def enqueue(
+            self,
+            request: ProjectionConsistencyRepairRequest,
+            queue: IndexOperationQueue,
+            session,
+        ) -> None:
+            adapter_requests.append(request)
+            queue.enqueue_operation(
+                tenant_id=request.tenant_id,
+                dataset_id=request.dataset_id,
+                document_id=request.document_id,
+                attempt_id=request.attempt_id,
+                target_store=request.target_store,
+                operation=request.operation,
+                dedup_key=request.dedup_key,
+                target_revision=request.target_revision,
+                payload=request.payload,
+                session=session,
+            )
+
+    register_projection_consistency_reader(target_store, lambda _context: EmptyReader())
+    register_projection_consistency_repair_adapter(
+        target_store,
+        lambda _context: CustomRepairAdapter(),
+    )
+    try:
+        report = _reconcile(
+            catalog,
+            object(),
+            queue,
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            target_store=target_store,
+            repair=True,
+        )
+    finally:
+        unregister_projection_consistency_repair_adapter(target_store)
+        unregister_projection_consistency_reader(target_store)
+
+    assert report.enqueued == 1
+    assert len(adapter_requests) == 1
+    assert adapter_requests[0].target_store == target_store
+    assert adapter_requests[0].operation == "reconcile"
+    operations = queue.list_operations()
+    assert len(operations) == 1
+    assert operations[0].target_store == target_store
+    assert operations[0].operation == "reconcile"
+    engine.dispose()
+
+
+def test_repair_dedup_namespace_isolated_between_milvus_and_custom_target(
+    tmp_path: Path,
+) -> None:
+    from core.projection_consistency_readers import (
+        ProjectionConsistencyReadRequest,
+        ProjectionConsistencyReadResult,
+        register_projection_consistency_reader,
+        unregister_projection_consistency_reader,
+    )
+    from core.projection_consistency_repairs import (
+        ProjectionConsistencyRepairRequest,
+        register_projection_consistency_repair_adapter,
+        unregister_projection_consistency_repair_adapter,
+    )
+
+    engine, _ = _state(tmp_path)
+    catalog = ChunkCatalog(engine)
+    _head(catalog, "shared-drift", text="authoritative", index=0)
+    queue = IndexOperationQueue(engine)
+    milvus = ReadOnlyMilvus([])
+
+    milvus_report = _reconcile(
+        catalog,
+        milvus,
+        queue,
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        repair=True,
+    )
+    assert milvus_report.enqueued == 1
+
+    target_store = "custom_repair_chunks"
+    adapter_requests: list[ProjectionConsistencyRepairRequest] = []
+
+    class EmptyReader:
+        def read_document(
+            self, request: ProjectionConsistencyReadRequest
+        ) -> ProjectionConsistencyReadResult:
+            return ProjectionConsistencyReadResult(
+                target_store=request.target_store,
+                tenant_id=request.tenant_id,
+                dataset_id=request.dataset_id,
+                document_id=request.document_id,
+                chunks=(),
+                completeness="best_effort",
+            )
+
+    class CustomRepairAdapter:
+        target_store = "custom_repair_chunks"
+        operation = "reconcile"
+
+        def enqueue(
+            self,
+            request: ProjectionConsistencyRepairRequest,
+            queue: IndexOperationQueue,
+            session,
+        ) -> None:
+            adapter_requests.append(request)
+            queue.enqueue_operation(
+                tenant_id=request.tenant_id,
+                dataset_id=request.dataset_id,
+                document_id=request.document_id,
+                attempt_id=request.attempt_id,
+                target_store=request.target_store,
+                operation=request.operation,
+                dedup_key=request.dedup_key,
+                target_revision=request.target_revision,
+                payload=request.payload,
+                session=session,
+            )
+
+    register_projection_consistency_reader(target_store, lambda _context: EmptyReader())
+    register_projection_consistency_repair_adapter(
+        target_store,
+        lambda _context: CustomRepairAdapter(),
+    )
+    try:
+        custom_report = _reconcile(
+            catalog,
+            object(),
+            queue,
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            target_store=target_store,
+            repair=True,
+        )
+    finally:
+        unregister_projection_consistency_repair_adapter(target_store)
+        unregister_projection_consistency_reader(target_store)
+
+    assert custom_report.enqueued == 1
+    assert len(adapter_requests) == 1
+    operations = queue.list_operations()
+    assert len(operations) == 2
+    assert {operation.target_store for operation in operations} == {
+        "milvus_chunks",
+        target_store,
+    }
+    assert len({operation.dedup_key for operation in operations}) == 2
+    engine.dispose()
+
+
+def test_capped_milvus_read_is_reported_incomplete_and_skipped_for_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core import projection_consistency_readers
+
+    engine, _ = _state(tmp_path)
+    catalog = ChunkCatalog(engine)
+    _head(catalog, "expected", text="expected", index=0)
+    milvus = ReadOnlyMilvus(
+        [
+            _chunk("observed-a", text="a"),
+            _chunk("observed-b", text="b"),
+        ]
+    )
+    queue = IndexOperationQueue(engine)
+    monkeypatch.setattr(projection_consistency_readers, "_MILVUS_DOCUMENT_READ_LIMIT", 2)
+
+    report = _reconcile(
+        catalog,
+        milvus,
+        queue,
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+    )
+    assert report.projection_read_incomplete_documents == 1
+    assert report.authoritative_heads == 0
+    assert report.projection_chunks == 0
+    assert report.missing_ids == report.orphaned_ids == ()
+    assert report.has_drift is False
+    summary = report.to_summary(ROLLOUT_SECRET)
+    assert summary["projection_read_incomplete_documents"] == 1
+    assert summary["projection_read_status"] == "incomplete"
+    assert summary["catalog_scan_complete"] is True
+
+    with pytest.raises(ValueError, match="repair mode refused.*incomplete"):
+        _reconcile(
+            catalog,
+            milvus,
+            queue,
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            repair=True,
+        )
+    assert queue.count_operations() == 0
+    engine.dispose()
+
+
 def test_repair_only_enqueues_deterministic_index_operation_and_is_idempotent(
     tmp_path: Path,
 ) -> None:
@@ -269,6 +910,64 @@ def test_repair_only_enqueues_deterministic_index_operation_and_is_idempotent(
         "manifest_hash": repaired.manifest_hash,
     }
     assert "source must stay private" not in json.dumps(operation.payload)
+    engine.dispose()
+
+
+def test_repair_reuses_pre_adapter_milvus_dedup_identity(tmp_path: Path) -> None:
+    engine, attempt = _state(tmp_path)
+    catalog = ChunkCatalog(engine)
+    _head(catalog, "legacy-missing", text="source must stay private", index=0)
+    queue = IndexOperationQueue(engine)
+
+    with Session(engine, expire_on_commit=False) as session:
+        document = session.get(Document, "doc-1")
+        heads = list(
+            session.scalars(
+                select(ChunkHead).where(
+                    ChunkHead.document_id == "doc-1",
+                    ChunkHead.tenant_id == "tenant-1",
+                    ChunkHead.dataset_id == "dataset-1",
+                )
+            )
+        )
+        assert document is not None
+        _missing, _stale, _orphaned, _reasons, legacy_manifest = reconcile_module._document_drift(
+            document,
+            heads,
+            [],
+        )
+        legacy_hash = reconcile_module._digest(legacy_manifest)
+        queue.enqueue_operation(
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            document_id="doc-1",
+            attempt_id=attempt.id,
+            target_store="milvus_chunks",
+            operation="reconcile",
+            dedup_key=f"knowledgeops:reconcile:doc-1:4:{legacy_hash}",
+            target_revision=4,
+            payload={
+                "missing_ids": ["legacy-missing"],
+                "orphaned_ids": [],
+                "stale_ids": [],
+                "stale_reasons": {},
+                "manifest_hash": legacy_hash,
+            },
+            session=session,
+        )
+        session.commit()
+
+    report = _reconcile(
+        catalog,
+        ReadOnlyMilvus([]),
+        queue,
+        tenant_id="tenant-1",
+        dataset_id="dataset-1",
+        repair=True,
+    )
+
+    assert report.enqueued == 0
+    assert len(queue.list_operations()) == 1
     engine.dispose()
 
 
@@ -526,7 +1225,7 @@ def test_reconcile_sqlite_snapshot_prevents_aba_document_loss(
 
     assert moved_during_snapshot == [False]
     assert report.documents_scanned == 1
-    assert milvus.queries == [("doc-2", "tenant-1")]
+    assert milvus.queries == [("doc-2", "tenant-1", "dataset-1", True)]
     assert report.complete is True
     assert writer_thread is not None
     writer_thread.join(timeout=2)
@@ -678,14 +1377,26 @@ def test_reconcile_rechecks_snapshot_after_batch_processing(
         writer_finished.set()
 
     class ConcurrentMutationMilvus(ReadOnlyMilvus):
-        def query_chunks_by_doc(self, doc_id: str, tenant_id: str = "") -> list[Chunk]:
+        def query_chunks_by_doc(
+            self,
+            doc_id: str,
+            tenant_id: str = "",
+            *,
+            dataset_id: str = "",
+            include_unscoped_scope: bool = False,
+        ) -> list[Chunk]:
             nonlocal writer_thread
             if not self.queries:
                 writer_thread = threading.Thread(target=writer, daemon=True)
                 writer_thread.start()
                 assert writer_attempting.wait(2)
                 assert not writer_finished.wait(0.2)
-            return super().query_chunks_by_doc(doc_id, tenant_id)
+            return super().query_chunks_by_doc(
+                doc_id,
+                tenant_id,
+                dataset_id=dataset_id,
+                include_unscoped_scope=include_unscoped_scope,
+            )
 
     original_postflight = reconcile_module._assert_scan_state_current
 
@@ -931,7 +1642,9 @@ def test_repair_scans_complete_snapshot_before_enqueueing_plan(
     original_enqueue = reconcile_module._enqueue_repair_plans
 
     def enqueue_after_complete_scan(*args, **kwargs):
-        assert [doc_id for doc_id, _tenant_id in milvus.queries] == ["doc-1", "doc-2"]
+        assert [
+            doc_id for doc_id, _tenant_id, _dataset_id, _include_unscoped in milvus.queries
+        ] == ["doc-1", "doc-2"]
         return original_enqueue(*args, **kwargs)
 
     monkeypatch.setattr(reconcile_module, "_enqueue_repair_plans", enqueue_after_complete_scan)

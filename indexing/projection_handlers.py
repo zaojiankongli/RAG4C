@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
+import re
+from collections.abc import Callable
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import text
@@ -11,12 +15,101 @@ from sqlalchemy.orm import Session
 from core.chunk_catalog import ChunkCatalog, ChunkRevisionConflict
 from core.document_deletion import DocumentDeletionRepository
 from core.index_operations import process_keyed_lock
+from core.providers import ProviderRegistry, UnknownProviderError
 from models.orm import Document, IndexOperation
 from models.schemas import Chunk
 
 
 class StaleProjectionOperation(RuntimeError):
     """Raised when an operation no longer targets current desired state."""
+
+
+class UnsupportedProjectionOperation(ValueError):
+    """Raised when a persisted operation is not valid for a projection handler."""
+
+
+class InvalidProjectionOperationKey(ValueError):
+    """A stored target/operation code is not in its canonical lowercase form."""
+
+
+@dataclass(frozen=True)
+class ProjectionOperationContext:
+    """Runtime context passed to a registered projection operation strategy."""
+
+    handler: "ProjectionHandlers"
+    operation: IndexOperation
+
+
+ProjectionOperationStrategy = Callable[[ProjectionOperationContext], None]
+PROJECTION_OPERATION_STRATEGIES: ProviderRegistry[
+    ProjectionOperationContext, None
+] = ProviderRegistry("projection operation")
+
+
+_PROJECTION_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
+def _projection_operation_key(target_store: str, operation: str) -> str:
+    if not isinstance(target_store, str) or _PROJECTION_CODE.fullmatch(target_store) is None:
+        raise InvalidProjectionOperationKey("projection target_store must be a lowercase code")
+    if not isinstance(operation, str) or _PROJECTION_CODE.fullmatch(operation) is None:
+        raise InvalidProjectionOperationKey("projection operation must be a lowercase code")
+    return f"{target_store}:{operation}"
+
+
+def register_projection_operation(
+    target_store: str,
+    operation: str,
+    strategy: ProjectionOperationStrategy,
+    *,
+    replace: bool = False,
+) -> None:
+    """Register one target-store/operation strategy without editing the handler."""
+
+    if not callable(strategy):
+        raise TypeError("projection operation strategy must be callable")
+    callable_methods = (strategy, getattr(strategy, "__call__", None))
+    if any(
+        inspect.iscoroutinefunction(method)
+        or inspect.isasyncgenfunction(method)
+        or inspect.isgeneratorfunction(method)
+        for method in callable_methods
+        if method is not None
+    ):
+        raise TypeError("projection operation strategy must be synchronous")
+    try:
+        inspect.signature(strategy).bind(object())
+    except (TypeError, ValueError) as exc:
+        raise TypeError(
+            "projection operation strategy must accept one positional context"
+        ) from exc
+    PROJECTION_OPERATION_STRATEGIES.register(
+        _projection_operation_key(target_store, operation),
+        strategy,
+        replace=replace,
+    )
+
+
+def unregister_projection_operation(target_store: str, operation: str) -> None:
+    PROJECTION_OPERATION_STRATEGIES.unregister(
+        _projection_operation_key(target_store, operation)
+    )
+
+
+def _close_deferred_strategy_result(result: Any) -> None:
+    cancel = getattr(result, "cancel", None)
+    if callable(cancel):
+        cancel()
+    close = getattr(result, "close", None)
+    if callable(close):
+        close()
+        return
+    aclose = getattr(result, "aclose", None)
+    if callable(aclose):
+        close_awaitable = aclose()
+        close_awaitable_sync = getattr(close_awaitable, "close", None)
+        if callable(close_awaitable_sync):
+            close_awaitable_sync()
 
 
 class ProjectionHandlers:
@@ -37,7 +130,17 @@ class ProjectionHandlers:
         mapping: dict[str, Any] = {"milvus_chunks": self.handle_milvus}
         if self.graph_builder is not None:
             mapping["graph_projection"] = self.handle_graph
+        registered_targets = {
+            key.split(":", 1)[0] for key in PROJECTION_OPERATION_STRATEGIES.names()
+        }
+        for target_store in registered_targets.difference(mapping):
+            if target_store == "graph_projection" and self.graph_builder is None:
+                continue
+            mapping[target_store] = self._handle_registered_projection
         return mapping
+
+    def _handle_registered_projection(self, operation: IndexOperation) -> None:
+        self._dispatch_operation(operation)
 
     @staticmethod
     def _head_signature(head: Any) -> tuple[Any, ...]:
@@ -204,10 +307,36 @@ class ProjectionHandlers:
             raise StaleProjectionOperation("projection chunk-head plan changed")
         return heads
 
+    def _dispatch_operation(self, operation: IndexOperation) -> None:
+        try:
+            key = _projection_operation_key(operation.target_store, operation.operation)
+        except InvalidProjectionOperationKey as exc:
+            raise UnsupportedProjectionOperation(
+                f"unsupported projection operation {operation.operation!r} "
+                f"for target store {operation.target_store!r}"
+            ) from exc
+        try:
+            strategy = PROJECTION_OPERATION_STRATEGIES.get_factory(key)
+        except UnknownProviderError as exc:
+            raise UnsupportedProjectionOperation(
+                f"unsupported projection operation {operation.operation!r} "
+                f"for target store {operation.target_store!r}"
+            ) from exc
+        result = strategy(ProjectionOperationContext(self, operation))
+        if (
+            inspect.isawaitable(result)
+            or inspect.isgenerator(result)
+            or inspect.isasyncgen(result)
+        ):
+            _close_deferred_strategy_result(result)
+            raise TypeError("projection operation strategy must be synchronous")
+        if result is not None:
+            raise TypeError("projection operation strategy must return None")
+
     def handle_milvus(self, operation: IndexOperation) -> None:
-        if operation.operation == "delete_document":
-            self._handle_milvus_document_delete(operation)
-            return
+        self._dispatch_operation(operation)
+
+    def _handle_milvus_projection(self, operation: IndexOperation) -> None:
 
         mutation_head = self._chunk_mutation_head(operation)
         mutation = None
@@ -265,11 +394,14 @@ class ProjectionHandlers:
                         raise StaleProjectionOperation(
                             "chunk mutation became stale after Milvus write"
                         )
-                    if mutation == "edit":
-                        self.chunk_catalog.mark_indexed(
-                            post_head.id,
-                            expected_revision=post_head.content_revision,
-                        )
+                    # delete 与 edit 一样推进 head：投影里"已无此 chunk"就是期望态，
+                    # 不推进会让墓碑头的 projection_pending 恒真，对账面永远显示未追上。
+                    # mark_indexed 的 CAS（desired == content_revision）防误推进；
+                    # CAS miss 时 head 保持 pending 属 fail-closed（对账会重排队）。
+                    self.chunk_catalog.mark_indexed(
+                        post_head.id,
+                        expected_revision=post_head.content_revision,
+                    )
                     self._mark_projection_revision_locked(operation)
                     return
 
@@ -455,11 +587,11 @@ class ProjectionHandlers:
                 raise RuntimeError("graph facts remain after durable document delete")
 
     def handle_graph(self, operation: IndexOperation) -> None:
+        self._dispatch_operation(operation)
+
+    def _handle_graph_projection(self, operation: IndexOperation) -> None:
         if self.graph_builder is None:
             raise RuntimeError("graph projection handler is not configured")
-        if operation.operation == "delete_document":
-            self._handle_graph_document_delete(operation)
-            return
 
         mutation_head = self._chunk_mutation_head(operation)
         mutation = None
@@ -518,6 +650,12 @@ class ProjectionHandlers:
                         raise StaleProjectionOperation(
                             "graph chunk mutation became stale after write"
                         )
+                    # 与 milvus 侧同理：delete 成功也推进 head，墓碑不再恒报
+                    # projection_pending；CAS 防并发窗口误推进。
+                    self.chunk_catalog.mark_indexed(
+                        post_head.id,
+                        expected_revision=post_head.content_revision,
+                    )
                     self._mark_projection_revision_locked(operation)
                     return
 
@@ -534,3 +672,39 @@ class ProjectionHandlers:
                         cleanup_ids, tenant_id=operation.tenant_id
                     )
                 raise
+
+
+def _dispatch_milvus_projection(context: ProjectionOperationContext) -> None:
+    context.handler._handle_milvus_projection(context.operation)
+
+
+def _dispatch_milvus_document_delete(context: ProjectionOperationContext) -> None:
+    context.handler._handle_milvus_document_delete(context.operation)
+
+
+def _dispatch_graph_projection(context: ProjectionOperationContext) -> None:
+    context.handler._handle_graph_projection(context.operation)
+
+
+def _dispatch_graph_document_delete(context: ProjectionOperationContext) -> None:
+    context.handler._handle_graph_document_delete(context.operation)
+
+
+for _target_store in ("milvus_chunks", "graph_projection"):
+    for _operation in ("upsert", "reconcile", "delete"):
+        register_projection_operation(
+            _target_store,
+            _operation,
+            _dispatch_milvus_projection
+            if _target_store == "milvus_chunks"
+            else _dispatch_graph_projection,
+        )
+    register_projection_operation(
+        _target_store,
+        "delete_document",
+        _dispatch_milvus_document_delete
+        if _target_store == "milvus_chunks"
+        else _dispatch_graph_document_delete,
+    )
+
+del _operation, _target_store
