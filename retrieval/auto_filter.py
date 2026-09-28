@@ -10,7 +10,7 @@
 
 用法::
 
-    af = AutoFilter(llm_client=create_client(settings.llm.metadata_filter))
+    af = AutoFilter(llm_client=create_client(settings.llm.metadata_filter, slot="metadata_filter"))
     expr = af.generate(query, user_fields)   # None = 不生成/失败
     # expr 已通过 validate_filter_expr 校验，可直接拼入 build_filters
 """
@@ -73,7 +73,7 @@ def create_auto_filter(settings: Any = None) -> Optional[AutoFilter]:
     if not getattr(s.catalog, "auto_filter_on", False):
         return None
     try:
-        return AutoFilter(llm_client=create_client(s.llm.metadata_filter))
+        return AutoFilter(llm_client=create_client(s.llm.metadata_filter, slot="metadata_filter"))
     except Exception:  # noqa: BLE001 - 槽位配置缺失静默降级
         return None
 

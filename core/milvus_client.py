@@ -966,15 +966,40 @@ class RagMilvusClient:
         """统计某个知识库下的 chunk 数。"""
         return self.count_chunks(f"dataset_id == {_quote_expr_str(dataset_id)}")
 
-    def query_chunks_by_doc(self, doc_id: str, tenant_id: str = "") -> list[Chunk]:
-        """按 doc_id（+ 租户）查询该文档的全部 chunk（增量重索引对比用）。
+    def query_chunks_by_doc(
+        self,
+        doc_id: str,
+        tenant_id: str = "",
+        *,
+        dataset_id: str = "",
+        include_unscoped_scope: bool = False,
+    ) -> list[Chunk]:
+        """按 doc_id（+ 租户 / 知识库）查询该文档的全部 chunk。
 
         返回全部字段（含 metadata / text_hash），上限 16384 条。
         """
+        if include_unscoped_scope and (not tenant_id or not dataset_id):
+            raise ValueError(
+                "unscoped document query requires both tenant_id and dataset_id"
+            )
         client = self._ensure_client()
         expr = f"doc_id == {_quote_expr_str(doc_id)}"
         if tenant_id:
-            expr += f" and tenant_id == {_quote_expr_str(tenant_id)}"
+            tenant_filter = f"tenant_id == {_quote_expr_str(tenant_id)}"
+            if include_unscoped_scope:
+                tenant_filter = (
+                    f"({tenant_filter} or tenant_id == {_quote_expr_str('')} "
+                    "or tenant_id is null)"
+                )
+            expr += f" and {tenant_filter}"
+        if dataset_id:
+            dataset_filter = f"dataset_id == {_quote_expr_str(dataset_id)}"
+            if include_unscoped_scope:
+                dataset_filter = (
+                    f"({dataset_filter} or dataset_id == {_quote_expr_str('')} "
+                    "or dataset_id is null)"
+                )
+            expr += f" and {dataset_filter}"
         try:
             res = client.query(
                 collection_name=self.config.collection_name,
@@ -987,6 +1012,76 @@ class RagMilvusClient:
         except Exception as exc:
             raise RagMilvusError(f"按文档查询 chunk 失败（doc_id={doc_id!r}）: {exc}") from exc
         return [self._row_to_chunk(row) for row in res]
+
+    def query_chunk_references_by_dataset(
+        self,
+        *,
+        tenant_id: str,
+        dataset_id: str,
+        limit: int = 16_384,
+        include_unscoped_scope: bool = False,
+    ) -> list[dict[str, str]]:
+        """Enumerate only chunk/document identity fields in one dataset scope.
+
+        This is an audit primitive, not a consistency authority. When
+        ``include_unscoped_scope`` is enabled, empty/null scope rows are
+        surfaced so the caller can mark the enumeration incomplete instead of
+        mistaking them for absence.
+        """
+        if not tenant_id or not dataset_id:
+            raise ValueError("tenant_id and dataset_id are required")
+        if not isinstance(limit, int) or not 1 <= limit <= 16_384:
+            raise ValueError("limit must be between 1 and 16384")
+        if include_unscoped_scope:
+            tenant_filter = (
+                f'(tenant_id == {_quote_expr_str(tenant_id)} '
+                f'or tenant_id == {_quote_expr_str("")} or tenant_id is null)'
+            )
+            dataset_filter = (
+                f'(dataset_id == {_quote_expr_str(dataset_id)} '
+                f'or dataset_id == {_quote_expr_str("")} or dataset_id is null)'
+            )
+        else:
+            tenant_filter = f"tenant_id == {_quote_expr_str(tenant_id)}"
+            dataset_filter = f"dataset_id == {_quote_expr_str(dataset_id)}"
+        expression = f"{tenant_filter} and {dataset_filter}"
+        client = self._ensure_client()
+        try:
+            rows = client.query(
+                collection_name=self.config.collection_name,
+                filter=expression,
+                output_fields=["chunk_id", "doc_id", "tenant_id", "dataset_id"],
+                limit=limit,
+            )
+        except RagMilvusError:
+            raise
+        except Exception as exc:
+            raise RagMilvusError(
+                f"按知识库枚举 chunk 引用失败（dataset_id={dataset_id!r}）: {exc}"
+            ) from exc
+        if not isinstance(rows, list):
+            raise RagMilvusError("按知识库枚举 chunk 引用返回了不可物化结果")
+        references: list[dict[str, str]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise RagMilvusError("按知识库枚举 chunk 引用返回了非法行")
+            for field in ("chunk_id", "doc_id"):
+                value = row.get(field)
+                if type(value) is not str or not value:
+                    raise RagMilvusError(f"按知识库枚举 chunk 引用返回了非法 {field}")
+            for field in ("tenant_id", "dataset_id"):
+                value = row.get(field)
+                if value is not None and type(value) is not str:
+                    raise RagMilvusError(f"按知识库枚举 chunk 引用返回了非法 {field}")
+            references.append(
+                {
+                    "chunk_id": row["chunk_id"],
+                    "doc_id": row["doc_id"],
+                    "tenant_id": row.get("tenant_id") or "",
+                    "dataset_id": row.get("dataset_id") or "",
+                }
+            )
+        return references
 
     # ------------------------------------------------------------------ #
     # 工具

@@ -33,6 +33,59 @@ def test_assembly_keys_come_from_the_registry() -> None:
     assert sorted(components) == sorted(OPTIONAL_STRATEGIES.names())
 
 
+def test_pipeline_construction_forwards_the_whole_components_dict(monkeypatch) -> None:
+    """S-RS 评审 P1-1：装配链的最后一环——整本字典必须到达管线。
+
+    只按六个写死键挑具名实参的旧写法，会让第 7 个可选策略被构造后被丢弃：
+    阶段侧永远看到 None、静默 skip "unavailable"，端到端"零改分支"断在最后
+    一步而全部测试照绿。这条钉住 `_build_pipeline` 传给 `RetrievalPipeline`
+    的 `components` 实参就是装配函数的返回对象（同一引用）。
+    """
+    built: dict[str, object] = {"graph_retriever": object()}
+    received: dict[str, object] = {}
+
+    class _Recorder:
+        def __init__(self, **kwargs):
+            received.update(kwargs)
+
+        def __getattr__(self, _name):
+            return lambda *_a, **_k: None
+
+    monkeypatch.setattr(rag, "_build_optional_components", lambda *a, **k: built)
+
+    import core.circuit as circuit
+
+    class _Anything:
+        def __init__(self, *a, **k):
+            pass
+
+        def __getattr__(self, _name):
+            return _Anything()
+
+        @classmethod
+        def _missing_classmethod(cls, *_a, **_k):
+            return None
+
+    class _ConfigWithFromSettings(_Anything):
+        @classmethod
+        def from_settings(cls, *_a, **_k):
+            return cls()
+
+    monkeypatch.setattr(rag, "RetrievalPipeline", _Recorder)
+    monkeypatch.setattr(rag, "QueryRewriter", _Anything)
+    monkeypatch.setattr(rag, "EmbeddingRouter", _Anything)
+    monkeypatch.setattr(rag, "LlmRouterFallback", _Anything)
+    monkeypatch.setattr(rag, "RouteResolver", _Anything)
+    monkeypatch.setattr(rag, "Generator", _Anything)
+    monkeypatch.setattr(rag, "CitationVerifier", _Anything)
+    monkeypatch.setattr(circuit, "CircuitBreaker", _Anything)
+    monkeypatch.setattr(circuit, "CircuitConfig", _ConfigWithFromSettings)
+
+    rag._build_pipeline(get_settings())
+
+    assert received.get("components") is built
+
+
 def test_enabled_strategies_build_and_the_rest_stay_none() -> None:
     settings = _enable(_BUILT_WHEN_ON)
 

@@ -184,6 +184,8 @@ def report_rerank_degraded(kind: str, detail: str) -> None:
         from core.observability import get_logger
 
         get_metrics().incr("retrieval.rerank.degraded")
+        # 同时走"总数 + 降级数"口径，/api/metrics 里直接给出降级率
+        get_metrics().record_outcome("reranker", degraded=True)
         get_logger(__name__).warning("重排降级（%s），改用召回顺序：%s", kind, detail)
     except Exception:  # noqa: BLE001 - 可观测性不得影响主链路
         pass
@@ -681,6 +683,9 @@ _REQUIRED_STAGE_MEMBERS: tuple[str, ...] = (
     "run",
 )
 
+#: 协议里必须可调用的成员（其余是声明性属性）。
+_CALLABLE_STAGE_MEMBERS: tuple[str, str, str] = ("eligible", "fatal_error", "run")
+
 
 def register_retrieval_stage(stage: RetrievalStage, *, replace: bool = False) -> None:
     """Register one retrieval stage under its own ``name`` key.
@@ -688,12 +693,24 @@ def register_retrieval_stage(stage: RetrievalStage, *, replace: bool = False) ->
     形状在这里判死，而不是等到那次真跑到它的检索：缺成员的阶段若被静默收下，
     ``retrieval_stage_order()`` 只按 ``order`` 排序所以照样通过，异常要等到
     ``StageRunner`` 真去调 ``eligible`` / ``run`` 时才炸——装配错误被推迟到线上。
+    可调用成员还要**真是可调用**：``run = "x"`` 这类非可调用赋值同样推迟爆炸
+    （S-RS 评审 P2-2）。
     """
     missing = [m for m in _REQUIRED_STAGE_MEMBERS if not hasattr(stage, m)]
     _require(
         not missing,
         f"检索阶段 {getattr(stage, 'name', '?')!r} 不符合 RetrievalStage 协议，"
         f"缺少成员：{missing}",
+    )
+    not_callable = [
+        m
+        for m in _REQUIRED_STAGE_MEMBERS
+        if m in _CALLABLE_STAGE_MEMBERS and not callable(getattr(stage, m))
+    ]
+    _require(
+        not not_callable,
+        f"检索阶段 {getattr(stage, 'name', '?')!r} 不符合 RetrievalStage 协议，"
+        f"成员不是可调用：{not_callable}",
     )
     RETRIEVAL_STAGES.register(
         stage.name, lambda _config, _s=stage: _s, replace=replace
@@ -1231,8 +1248,28 @@ class SearchFilterStage(_Stage):
         )
 
 
+def candidate_request_count(p: Any) -> int:
+    """混合检索向 Milvus 请求的候选条数（``top_k × 放大系数``）。
+
+    系数来自 ``pipeline.search_candidate_factor``，默认 2 —— 也就是这次配置化
+    之前的硬编码值，所以**不配置时行为与改造前完全一致**。
+
+    取值做兜底而不是让它炸在检索路径上：这个字段只影响"候选取多少"，是纯粹的
+    质量/成本旋钮，取不到（旧配置对象 / 测试里的替身）时退回默认值最安全，
+    不该因为一个旋钮让整条检索失败。非法值（0、负数、非整数）同样退回默认。
+    """
+    factor = getattr(p, "search_candidate_factor", 2)
+    try:
+        value = int(factor)
+    except (TypeError, ValueError):
+        return int(getattr(p, "top_k", 0) or 0) * 2
+    if value < 1:
+        value = 2
+    return int(getattr(p, "top_k", 0) or 0) * value
+
+
 class SearchStage(_Stage):
-    """6. 混合检索：候选放大到 ``top_k * 2``，给重排留余量。失败是致命的。"""
+    """6. 混合检索：候选按 ``search_candidate_factor`` 放大，给重排留余量。失败是致命的。"""
 
     name = "search"
     node_id = "search"
@@ -1242,7 +1279,7 @@ class SearchStage(_Stage):
     def eligible(self, state: RetrievalState, ctx: StageContext) -> Gate:
         return Gate.running(
             mode="hybrid" if ctx.p.hybrid_search_on else "dense",
-            requested_count=ctx.p.top_k * 2,
+            requested_count=candidate_request_count(ctx.p),
         )
 
     def fatal_error(
@@ -1265,7 +1302,7 @@ class SearchStage(_Stage):
         t0 = time.perf_counter()
         candidates = services.milvus.hybrid_search(
             query_dense=state.query_vec,
-            top_k=p.top_k * 2,
+            top_k=candidate_request_count(p),
             query_text=services._bm25_text(state.search_query),
             group_by_field=state.group_by_field,
             group_size=state.group_size,
@@ -1975,7 +2012,7 @@ def _build_hyde(deps: ComponentDeps) -> Any:
     from retrieval.query_enhance import HydeGenerator
 
     return HydeGenerator(
-        llm_client=create_client(deps.settings.llm.hyde),
+        llm_client=create_client(deps.settings.llm.hyde, slot="hyde"),
         template_path=_PROMPTS_ROOT / "hyde_v1.txt",
         enabled=True,
     )
@@ -1986,7 +2023,7 @@ def _build_subqueries(deps: ComponentDeps) -> Any:
     from retrieval.query_enhance import SubQueryGenerator
 
     return SubQueryGenerator(
-        llm_client=create_client(deps.settings.llm.subqueries),
+        llm_client=create_client(deps.settings.llm.subqueries, slot="subqueries"),
         template_path=_PROMPTS_ROOT / "subqueries_v1.txt",
         enabled=True,
     )
@@ -1997,7 +2034,7 @@ def _build_stepback(deps: ComponentDeps) -> Any:
     from retrieval.query_enhance import StepbackGenerator
 
     return StepbackGenerator(
-        llm_client=create_client(deps.settings.llm.stepback),
+        llm_client=create_client(deps.settings.llm.stepback, slot="stepback"),
         template_path=_PROMPTS_ROOT / "stepback_v1.txt",
         enabled=True,
     )
@@ -2022,7 +2059,7 @@ def _build_graph_retriever(deps: ComponentDeps) -> Any:
         # 图谱关系重排复用 judge 槽位（温度 0，确定性输出）；
         # graph.use_llm_rerank 关闭时不传 LLM，按检索分数排序。
         llm=(
-            create_client(deps.settings.llm.judge)
+            create_client(deps.settings.llm.judge, slot="judge")
             if deps.settings.graph.use_llm_rerank
             else None
         ),

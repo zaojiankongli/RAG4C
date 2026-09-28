@@ -42,8 +42,10 @@ class _ProbeStage:
     def fatal_error(self, exc, state, ctx):  # noqa: ANN001
         return None
 
-    def run(self, state, ctx):  # noqa: ANN001
-        return stages.Skip("probe")
+    def run(self, state, ctx):  # noqa: ANN001, ANN201
+        # S-RS 评审 P2-1：探针阶段必须真的可执行——返回驱动器认的记账单，
+        # 而不是裸 Skip（那种残件一旦被 StageRunner 驱到就 AttributeError）。
+        return stages.StageOutcome().complete()
 
 
 def _pipeline_source() -> bytes:
@@ -82,6 +84,19 @@ def test_registration_rejects_a_stage_that_does_not_fit_the_protocol() -> None:
 
     assert "eligible" in str(exc.value) and "run" in str(exc.value)
     assert "probe.incomplete" not in RETRIEVAL_STAGES.names()
+
+
+def test_registration_rejects_a_non_callable_protocol_member() -> None:
+    """S-RS 评审 P2-2：``run = "x"`` 这类非可调用赋值必须在注册期判死。"""
+    broken = _ProbeStage()
+    broken.name = "probe.broken-run"
+    broken.run = "not callable"  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match="不是可调用") as exc:
+        register_retrieval_stage(broken)
+
+    assert "run" in str(exc.value)
+    assert "probe.broken-run" not in RETRIEVAL_STAGES.names()
 
 
 def test_duplicate_stage_name_is_refused_unless_explicitly_replaced(
@@ -133,3 +148,149 @@ def test_hard_ordering_invariants_are_enforced_not_polite() -> None:
 
     assert truncate.order < too_late
     retrieval_stage_order()  # 还原后必须重新可用
+
+
+# --------------------------------------------------------------------------- #
+# S-RS 评审 P1-2/P2-1：驱动器三态直测
+#
+# 此前 ok/skipped/degraded 只被完整管线的观测 parity 套件间接覆盖，spec R2 的
+# 判据始终空着。这里构造 StageRunner 直驱一个带 node_id 的最小阶段，钉住
+# 驱动器把记账单翻译成 run 事件的三种主态（外加可恢复失败必伴 degraded）。
+# --------------------------------------------------------------------------- #
+
+
+class _RecordingObserver:
+    """把驱动器发出的事件按序收下来，供断言。
+
+    事件方法名以 ``retrieval.stages`` 的发射侧为准：``start_node`` /
+    ``complete_node`` / ``skip_node`` / ``fail_node`` / ``degraded``。
+    """
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict]] = []
+
+    def start_node(self, node_id, **kwargs):
+        self.events.append(("start_node", {"node_id": node_id, **kwargs}))
+
+    def complete_node(self, node_id, **kwargs):
+        self.events.append(("complete_node", {"node_id": node_id, **kwargs}))
+
+    def skip_node(self, node_id, **kwargs):
+        self.events.append(("skip_node", {"node_id": node_id, **kwargs}))
+
+    def fail_node(self, node_id, **kwargs):
+        self.events.append(("fail_node", {"node_id": node_id, **kwargs}))
+
+    def degraded(self, node_id, **kwargs):
+        self.events.append(("degraded_node", {"node_id": node_id, **kwargs}))
+
+    def __getattr__(self, _name):
+        return lambda *a, **k: None
+
+
+def _make_node_stage(outcome_factory):
+    """构造一个带 node_id、run 行为由 outcome_factory 决定的最小阶段。"""
+
+    class _NodeStage:
+        name = "probe.node"
+        node_id = "probe.node"
+        span_name = None
+        order = 10_001
+        prefetches = False
+        requires_flag = None
+        requires_component = None
+
+        def eligible(self, state, ctx):
+            return stages.Gate.running()
+
+        def fatal_error(self, exc, state, ctx):
+            return None
+
+        def run(self, state, ctx):
+            return outcome_factory()
+
+    return _NodeStage()
+
+
+def _drive(stage) -> list[tuple[str, dict]]:
+    from types import SimpleNamespace
+
+    import core.tracing as tracing
+    from models.schemas import RouteDecision
+    from retrieval.stages import RetrievalState
+
+    observer = _RecordingObserver()
+    state = RetrievalState(
+        query="q",
+        search_query="q",
+        rewritten="q",
+        rewrite_changed=False,
+        gate_skipped=False,
+        route=RouteDecision(target="hybrid"),
+        hyde_doc=None,
+        query_vec=None,
+        candidates=[],
+        filter_expr=None,
+        group_by_field=None,
+        group_size=None,
+        want_cosine=False,
+        reranked=False,
+        traces=[],
+        enhance_jobs={},
+        chunks=[],
+    )
+    ctx = SimpleNamespace(tenant="tenant-1", dataset="dataset-1", acl=None)
+    with tracing.trace_session("driver-test", observer=observer):
+        stages.StageRunner([stage]).run(state, ctx)
+    return observer.events
+
+
+def test_stage_runner_drives_the_three_primary_outcomes() -> None:
+    # ok：complete 记账单 → start + complete 两个事件
+    ok_events = _drive(_make_node_stage(lambda: stages.StageOutcome().complete(1.0)))
+    names = [name for name, _ in ok_events]
+    assert names == ["start_node", "complete_node"], ok_events
+
+    # skipped：Skip 记账单 → start + skip，绝无 complete
+    skip_events = _drive(
+        _make_node_stage(lambda: stages.StageOutcome().skip("not needed"))
+    )
+    names = [name for name, _ in skip_events]
+    assert names == ["start_node", "skip_node"], skip_events
+
+    # degraded：显式 Degrade 记账单 → start + degraded
+    degrade_events = _drive(
+        _make_node_stage(
+            lambda: stages.StageOutcome().degrade("partial failure")
+        )
+    )
+    names = [name for name, _ in degrade_events]
+    assert names == ["start_node", "degraded_node"], degrade_events
+
+
+def test_recoverable_failure_always_announces_degraded() -> None:
+    """驱动器规定可恢复失败必伴 degraded——阶段想漏也漏不掉。"""
+    events = _drive(
+        _make_node_stage(
+            lambda: stages.StageOutcome().fail(
+                "RuntimeError",
+                "boom",
+                recoverable=True,
+            )
+        )
+    )
+    names = [name for name, _ in events]
+    assert names == ["start_node", "fail_node", "degraded_node"], events
+    fail_payload = dict(events[1][1])
+    assert fail_payload["recoverable"] is True
+
+    # 不可恢复失败只发 fail，不降级
+    fatal_events = _drive(
+        _make_node_stage(
+            lambda: stages.StageOutcome().fail(
+                "RuntimeError", "boom", recoverable=False
+            )
+        )
+    )
+    names = [name for name, _ in fatal_events]
+    assert names == ["start_node", "fail_node"], fatal_events

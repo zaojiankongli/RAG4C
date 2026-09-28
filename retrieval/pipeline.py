@@ -15,8 +15,9 @@
 3. **意图路由**：改写结果参与路由（嵌入相似度为主，LLM 兜底），
    低置信度自动降级，全程不抛错。
 4. **嵌入**：BGE-M3 稠密嵌入；HyDE 可选增强在嵌入前生效（见 4a）。
-5. **混合检索**：BGE-M3 稠密 + Milvus 内置 BM25，按 ``top_k * 2`` 请求候选
-   给重排留余量；支持 ACL 过滤表达式与按 doc 分组。
+5. **混合检索**：BGE-M3 稠密 + Milvus 内置 BM25，按
+   ``top_k * search_candidate_factor`` 请求候选给重排留余量（系数可配置，
+   默认 2 = 改造前行为）；支持 ACL 过滤表达式与按 doc 分组。
 
    查询端可选增强（默认关闭；开关开启且注入对应组件时生效，失败一律
    静默降级、只记录 trace，绝不中断管线）：
@@ -410,6 +411,21 @@ class RetrievalPipeline:
             # The next orchestration step is generation.  No evidence may cross
             # that boundary if durable delete advanced the serving generation.
             ctx.serving_context.guard.assert_current(ctx.serving_context.snapshot)
+
+        # 降级率埋点：一次检索算一次"调用"，路由降级或"该重排却没重排成"
+        # 都算降级。记的是**比率**而不是次数——只知道降级了几次，分不清是
+        # 1/10 还是 1/1000，前者是故障、后者是抖动。
+        try:
+            from core.metrics import get_metrics
+
+            metrics = get_metrics()
+            metrics.record_outcome(
+                "retrieval", degraded=bool(state.route.degraded)
+            )
+            if ctx.p.rerank_on:
+                metrics.record_outcome("reranker", degraded=not state.reranked)
+        except Exception:  # noqa: BLE001 - 埋点不得影响检索结果
+            pass
 
         return RetrievalResult(
             query=state.query,
