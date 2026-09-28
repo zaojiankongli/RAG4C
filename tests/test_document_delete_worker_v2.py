@@ -261,20 +261,24 @@ def test_graph_delete_removes_deleted_passage_from_shared_facts() -> None:
         def get_relations_by_ids(self, ids, tenant_id=""):
             return [dict(self.relations[item]) for item in ids if item in self.relations]
 
-        def upsert_raw_relations(self, rows):
+        def upsert_raw_relations(self, rows, tenant_id=""):
+            del tenant_id
             for row in rows:
                 self.relations[row["id"]] = dict(row)
 
-        def upsert_raw_entities(self, rows):
+        def upsert_raw_entities(self, rows, tenant_id=""):
+            del tenant_id
             for row in rows:
                 self.entities[row["id"]] = dict(row)
 
-        def delete_relations_by_ids(self, ids):
+        def delete_relations_by_ids(self, ids, tenant_id=""):
+            del tenant_id
             for item in ids:
                 self.relations.pop(item, None)
             return len(ids)
 
-        def delete_entities_by_ids(self, ids):
+        def delete_entities_by_ids(self, ids, tenant_id=""):
+            del tenant_id
             for item in ids:
                 self.entities.pop(item, None)
             return len(ids)

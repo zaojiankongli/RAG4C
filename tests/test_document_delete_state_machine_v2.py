@@ -189,6 +189,220 @@ def test_request_delete_creates_generation_fence_manifest_attempt_children_and_a
     engine.dispose()
 
 
+def test_registered_delete_target_persists_and_remains_in_finalizer_barrier(
+    tmp_path: Path,
+) -> None:
+    from core.projection_attempt_lifecycle import (
+        ProjectionAttemptLifecyclePolicy,
+        register_projection_attempt_lifecycle_policy,
+        unregister_projection_attempt_lifecycle_policy,
+    )
+    from core.document_delete_targets import document_delete_projection_targets
+    from core.document_delete_targets import _unregister_document_delete_target
+    from core.projection_revision_strategies import (
+        register_projection_revision_strategy,
+        unregister_projection_revision_strategy,
+    )
+    from core.projection_target_producers import (
+        ProjectionTargetPolicy,
+        ProjectionTargetProductionContext,
+        projection_targets,
+        register_projection_target_policy,
+        unregister_projection_target_policy,
+    )
+    from core.projection_target_contract import (
+        ProjectionRequeuePolicy,
+        register_projection_requeue_policy,
+        unregister_projection_requeue_policy,
+    )
+    from core.index_operations import IndexOperationQueue
+    from indexing.projection_handlers import (
+        register_projection_operation,
+        unregister_projection_operation,
+    )
+    from indexing.projection_target_runtime import (
+        IncompleteProjectionTargetRuntime,
+        register_projection_delete_target_runtime,
+        retire_projection_delete_target_runtime,
+    )
+
+    engine = _engine(tmp_path, documents=2)
+    repository = DocumentDeletionRepository(engine)
+    target_store = "custom_vector"
+    operations = ("upsert", "reconcile", "delete", "delete_document")
+
+    def validate_requeue(_context) -> bool:
+        return True
+
+    requeue_operations = ("upsert", "delete", "delete_document")
+    for operation in requeue_operations:
+        family = "document_delete" if operation == "delete_document" else "ordinary"
+        register_projection_requeue_policy(
+            target_store,
+            operation,
+            ProjectionRequeuePolicy(family, validate_requeue),
+        )
+    for operation in operations:
+        register_projection_operation(target_store, operation, lambda _context: None)
+    register_projection_revision_strategy(target_store, lambda _context: None)
+    register_projection_attempt_lifecycle_policy(
+        target_store,
+        ProjectionAttemptLifecyclePolicy(
+            role="primary",
+            blocks_finalization=False,
+            is_ready=lambda _context: True,
+        ),
+    )
+    register_projection_target_policy(
+        target_store,
+        ProjectionTargetPolicy(
+            order=30,
+            dedup_key_component=target_store,
+            enabled=lambda _context: True,
+        ),
+    )
+    register_projection_delete_target_runtime(target_store, order=30)
+    retired = False
+    try:
+        assert document_delete_projection_targets() == (
+            "milvus_chunks",
+            "graph_projection",
+            "custom_vector",
+        )
+        with pytest.raises(ValueError, match="already registered"):
+            register_projection_delete_target_runtime(target_store, order=40)
+
+        unregister_projection_operation(target_store, "delete_document")
+        try:
+            with pytest.raises(IncompleteProjectionTargetRuntime, match="missing worker handlers"):
+                repository.request_delete(
+                    tenant_id="tenant-1",
+                    dataset_id="dataset-1",
+                    document_id="doc-1",
+                    expected_generation=0,
+                    idempotency_key="incomplete-delete-target",
+                    actor=_audit(),
+                    reason="must not partially enqueue",
+                    origin="operator",
+                )
+        finally:
+            register_projection_operation(target_store, "delete_document", lambda _context: None)
+        with Session(engine) as session:
+            document = session.get(Document, "doc-1")
+            assert document is not None
+            assert document.mutation_generation == 0
+            assert document.lifecycle_state == "active"
+            assert list(session.scalars(select(IndexOperation))) == []
+
+        result = repository.request_delete(
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            document_id="doc-1",
+            expected_generation=0,
+            idempotency_key="custom-delete-target",
+            actor=_audit(),
+            reason="remove all target projections",
+            origin="operator",
+        )
+        with Session(engine) as session:
+            parent = session.get(DocumentDeleteOperation, result.id)
+            children = list(
+                session.scalars(
+                    select(IndexOperation)
+                    .where(IndexOperation.delete_operation_id == result.id)
+                    .order_by(IndexOperation.created_at, IndexOperation.id)
+                )
+            )
+            assert parent is not None
+            assert parent.required_store_count == 3
+            assert {child.target_store for child in children} == {
+                "milvus_chunks",
+                "graph_projection",
+                "custom_vector",
+            }
+
+        queue = IndexOperationQueue(engine)
+        for _ in children:
+            claimed = queue.claim_operations("delete-target-worker", limit=1, lease_seconds=120)
+            assert len(claimed) == 1
+            repository.complete_projection_operation(
+                claimed[0].id, worker_id="delete-target-worker"
+            )
+
+        retire_projection_delete_target_runtime(target_store)
+        retired = True
+        assert document_delete_projection_targets() == (
+            "milvus_chunks",
+            "graph_projection",
+            "custom_vector",
+        )
+        assert {
+            target.target_store
+            for target in projection_targets(
+                ProjectionTargetProductionContext(include_graph=True)
+            )
+        } == {"milvus_chunks", "graph_projection"}
+
+        finalizer = queue.claim_operations("delete-target-worker", limit=1, lease_seconds=120)
+        assert len(finalizer) == 1
+        assert finalizer[0].operation == "finalize_document_delete"
+        completed = repository.finalize_document_delete(
+            finalizer[0].id, worker_id="delete-target-worker"
+        )
+        assert completed.status == "completed"
+        assert completed.completed_store_count == 3
+        next_delete = repository.request_delete(
+            tenant_id="tenant-1",
+            dataset_id="dataset-1",
+            document_id="doc-2",
+            expected_generation=0,
+            idempotency_key="retired-target-cleanup",
+            actor=_audit(),
+            reason="clean old target data",
+            origin="operator",
+        )
+        with Session(engine) as session:
+            next_parent = session.get(DocumentDeleteOperation, next_delete.id)
+            next_children = list(
+                session.scalars(
+                    select(IndexOperation).where(
+                        IndexOperation.delete_operation_id == next_delete.id
+                    )
+                )
+            )
+            assert next_parent is not None
+            assert next_parent.required_store_count == 3
+            assert "custom_vector" in {child.target_store for child in next_children}
+
+        for _ in next_children:
+            claimed = queue.claim_operations("delete-target-worker", limit=1, lease_seconds=120)
+            assert len(claimed) == 1
+            repository.complete_projection_operation(
+                claimed[0].id, worker_id="delete-target-worker"
+            )
+        next_finalizer = queue.claim_operations(
+            "delete-target-worker", limit=1, lease_seconds=120
+        )
+        assert len(next_finalizer) == 1
+        next_completed = repository.finalize_document_delete(
+            next_finalizer[0].id, worker_id="delete-target-worker"
+        )
+        assert next_completed.status == "completed"
+        assert next_completed.completed_store_count == 3
+    finally:
+        if not retired:
+            retire_projection_delete_target_runtime(target_store)
+        unregister_projection_target_policy(target_store)
+        for operation in requeue_operations:
+            unregister_projection_requeue_policy(target_store, operation)
+        for operation in operations:
+            unregister_projection_operation(target_store, operation)
+        unregister_projection_revision_strategy(target_store)
+        unregister_projection_attempt_lifecycle_policy(target_store)
+        engine.dispose()
+        _unregister_document_delete_target(target_store)
+
+
 def test_manifest_comes_from_all_chunk_heads_and_authority_must_be_complete(tmp_path: Path) -> None:
     engine = _engine(tmp_path)
     repository = DocumentDeletionRepository(engine)

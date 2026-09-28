@@ -21,6 +21,7 @@ pymilvus 为**可选依赖**（惰性导入），未安装时本模块可正常 
 """
 from __future__ import annotations
 
+import inspect
 from typing import Any, Optional, Sequence
 
 from config.settings import GraphSettings, MilvusSettings
@@ -65,6 +66,11 @@ class RagGraphStore:
         graph: GraphSettings。
         mode: ``"lite"`` 或 ``"server"``（由 uri 自动判定）。
     """
+
+    # MilvusClient receives a per-client timeout capped by the Graph API
+    # factory.  The outer route deadline remains a total request budget and
+    # does not pretend to interrupt arbitrary synchronous SDK calls.
+    graph_query_timeout_contract = "per_call"
 
     # 检索时返回的字段（实体 / 关系通用）；tenant_id 用于租户维度过滤
     _ENTITY_OUTPUT_FIELDS = ["id", "text", "relation_ids", "passage_ids", "tenant_id"]
@@ -160,6 +166,55 @@ class RagGraphStore:
         if not tenant_id:
             return None
         return f"tenant_id == {_quote_string(tenant_id)}"
+
+    def _call_with_timeout(
+        self,
+        operation: str,
+        *,
+        timeout_s: float | None,
+        **kwargs: Any,
+    ) -> Any:
+        """Call a query operation with an explicit per-call budget when given.
+
+        Legacy callers without a budget keep the historical SDK call shape.
+        Graph API callers pass a budget and therefore fail closed if the
+        selected Milvus client does not expose a timeout keyword; silently
+        dropping the budget would violate the graph timeout contract.
+        """
+
+        client = self._ensure_client()
+        method = getattr(client, operation)
+        if timeout_s is None:
+            return method(**kwargs)
+        try:
+            requested = float(timeout_s)
+        except (TypeError, ValueError) as exc:
+            raise RagGraphStoreError(
+                f"图查询 timeout 无效: {timeout_s!r}"
+            ) from exc
+        if requested <= 0:
+            raise RagGraphStoreError("图查询预算已耗尽")
+        try:
+            parameters = inspect.signature(method).parameters
+        except (TypeError, ValueError) as exc:
+            raise RagGraphStoreError(
+                f"Milvus {operation} 没有可验证的 timeout 签名"
+            ) from exc
+        accepts_timeout = "timeout" in parameters or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        if not accepts_timeout:
+            raise RagGraphStoreError(
+                f"Milvus {operation} 不支持 per-call timeout，拒绝绕过图查询预算"
+            )
+        configured = getattr(self.config, "timeout", requested)
+        try:
+            configured_timeout = float(configured)
+        except (TypeError, ValueError):
+            configured_timeout = requested
+        effective = min(requested, configured_timeout) if configured_timeout > 0 else requested
+        return method(timeout=effective, **kwargs)
 
     def _build_index_params(self, client: Any) -> Any:
         """构建稠密向量索引（与 chunks 集合一致：HNSW + COSINE）。"""
@@ -340,6 +395,7 @@ class RagGraphStore:
         tenant_id: str = "",
         *,
         include_vectors: bool = False,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
         """按 ID 取回实体（含邻接信息）。
 
@@ -354,10 +410,15 @@ class RagGraphStore:
             entity_ids,
             self._ENTITY_OUTPUT_FIELDS + (["vector"] if include_vectors else []),
             tenant_id,
+            timeout_s,
         )
 
     def get_relations_by_ids(
-        self, relation_ids: Sequence[str], tenant_id: str = ""
+        self,
+        relation_ids: Sequence[str],
+        tenant_id: str = "",
+        *,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
         """按 ID 取回关系（含结构化三元组与邻接信息）。"""
         return self._get_by_ids(
@@ -365,6 +426,7 @@ class RagGraphStore:
             relation_ids,
             self._RELATION_OUTPUT_FIELDS,
             tenant_id,
+            timeout_s,
         )
 
     def _get_by_ids(
@@ -373,17 +435,19 @@ class RagGraphStore:
         ids: Sequence[str],
         output_fields: list[str],
         tenant_id: str = "",
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
         if not ids:
             return []
-        client = self._ensure_client()
         ids_str = ", ".join(_quote_string(str(i)) for i in ids)
         expr = _and_filters(f"id in [{ids_str}]", self._tenant_clause(tenant_id))
         try:
-            results = client.query(
+            results = self._call_with_timeout(
+                "query",
                 collection_name=collection_name,
                 filter=expr,
                 output_fields=output_fields,
+                timeout_s=timeout_s,
             )
         except Exception as exc:
             raise RagGraphStoreError(f"按 id 查询失败（{collection_name}）: {exc}") from exc
@@ -604,6 +668,8 @@ class RagGraphStore:
         top_k: Optional[int] = None,
         threshold: Optional[float] = None,
         tenant_id: str = "",
+        *,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
         """实体向量检索，返回按相似度降序的命中列表。
 
@@ -629,6 +695,7 @@ class RagGraphStore:
             ),
             output_fields=self._ENTITY_OUTPUT_FIELDS,
             tenant_id=tenant_id,
+            timeout_s=timeout_s,
         )
 
     def search_relations(
@@ -637,6 +704,8 @@ class RagGraphStore:
         top_k: Optional[int] = None,
         threshold: Optional[float] = None,
         tenant_id: str = "",
+        *,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
         """关系向量检索，返回按相似度降序的命中列表。
 
@@ -662,6 +731,7 @@ class RagGraphStore:
             ),
             output_fields=self._RELATION_OUTPUT_FIELDS,
             tenant_id=tenant_id,
+            timeout_s=timeout_s,
         )
 
     def _search_params(self) -> dict[str, Any]:
@@ -702,17 +772,18 @@ class RagGraphStore:
         threshold: float,
         output_fields: list[str],
         tenant_id: str = "",
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
         if top_k < 1:
             raise RagGraphStoreError("top_k 必须 >= 1")
-        client = self._ensure_client()
         search_params = self._search_params()
         # ef 必须 >= limit（Milvus 约束），top_k 大于配置 ef 时自动抬高
         tune = search_params.get("params")
         if isinstance(tune, dict) and "ef" in tune:
             tune["ef"] = max(int(tune["ef"]), top_k)
         try:
-            results = client.search(
+            results = self._call_with_timeout(
+                "search",
                 collection_name=collection_name,
                 data=[list(query_vec)],
                 limit=top_k,
@@ -720,6 +791,7 @@ class RagGraphStore:
                 # 无租户约束时传空串而非 None：形参签名是 ``filter: str = ""``
                 filter=self._tenant_clause(tenant_id) or "",
                 search_params=search_params,
+                timeout_s=timeout_s,
             )
         except Exception as exc:
             raise RagGraphStoreError(f"图向量检索失败（{collection_name}）: {exc}") from exc
@@ -737,12 +809,22 @@ class RagGraphStore:
         return out
 
     def _upsert_raw_records(
-        self, collection_name: str, records: Sequence[dict[str, Any]]
+        self,
+        collection_name: str,
+        records: Sequence[dict[str, Any]],
+        tenant_id: str = "",
     ) -> int:
         if not records:
             return 0
-        client = self._ensure_client()
         rows = [dict(record) for record in records]
+        if tenant_id:
+            for row in rows:
+                row_tenant = str(row.get("tenant_id") or "")
+                if row_tenant != tenant_id:
+                    raise RagGraphStoreError(
+                        "图记录租户范围与当前操作不一致"
+                    )
+        client = self._ensure_client()
         batch_size = max(1, int(self.graph.batch_size))
         try:
             for start in range(0, len(rows), batch_size):
@@ -756,31 +838,47 @@ class RagGraphStore:
             ) from exc
         return len(rows)
 
-    def upsert_raw_entities(self, records: Sequence[dict[str, Any]]) -> int:
+    def upsert_raw_entities(
+        self, records: Sequence[dict[str, Any]], tenant_id: str = ""
+    ) -> int:
         """Rewrite queried entity rows while preserving their stored vectors."""
-        return self._upsert_raw_records(self.config.entity_collection, records)
+        return self._upsert_raw_records(self.config.entity_collection, records, tenant_id)
 
-    def upsert_raw_relations(self, records: Sequence[dict[str, Any]]) -> int:
+    def upsert_raw_relations(
+        self, records: Sequence[dict[str, Any]], tenant_id: str = ""
+    ) -> int:
         """Rewrite queried relation rows while preserving their stored vectors."""
-        return self._upsert_raw_records(self.config.relation_collection, records)
+        return self._upsert_raw_records(self.config.relation_collection, records, tenant_id)
 
     # ------------------------------------------------------------------ #
     # 删除
     # ------------------------------------------------------------------ #
-    def delete_entities_by_ids(self, entity_ids: Sequence[str]) -> int:
+    def delete_entities_by_ids(self, entity_ids: Sequence[str], tenant_id: str = "") -> int:
         """按 ID 删除实体，返回删除条数。"""
-        return self._delete_by_ids(self.config.entity_collection, entity_ids)
+        return self._delete_by_ids(self.config.entity_collection, entity_ids, tenant_id)
 
-    def delete_relations_by_ids(self, relation_ids: Sequence[str]) -> int:
+    def delete_relations_by_ids(self, relation_ids: Sequence[str], tenant_id: str = "") -> int:
         """按 ID 删除关系，返回删除条数。"""
-        return self._delete_by_ids(self.config.relation_collection, relation_ids)
+        return self._delete_by_ids(self.config.relation_collection, relation_ids, tenant_id)
 
-    def _delete_by_ids(self, collection_name: str, ids: Sequence[str]) -> int:
+    def _delete_by_ids(
+        self,
+        collection_name: str,
+        ids: Sequence[str],
+        tenant_id: str = "",
+    ) -> int:
         if not ids:
             return 0
         client = self._ensure_client()
+        ids_str = ", ".join(_quote_string(str(item)) for item in ids)
         try:
-            res = client.delete(collection_name=collection_name, ids=list(ids))
+            res = client.delete(
+                collection_name=collection_name,
+                filter=_and_filters(
+                    f"id in [{ids_str}]",
+                    self._tenant_clause(tenant_id),
+                ),
+            )
         except Exception as exc:
             raise RagGraphStoreError(f"按 id 删除失败（{collection_name}）: {exc}") from exc
         return int(res.get("delete_count", 0) or 0)

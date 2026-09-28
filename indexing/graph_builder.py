@@ -25,6 +25,13 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional, Sequence
 
 from core.embedding import EmbeddingService
+from core.graph_projection_adapters import (
+    GRAPH_BUILDER_COUNT_REQUIRED_METHODS,
+    GRAPH_BUILDER_DELETE_REQUIRED_METHODS,
+    GRAPH_BUILDER_WRITE_REQUIRED_METHODS,
+    GraphProjectionAdapter,
+    create_graph_projection_adapter,
+)
 from core.graph_store import RagGraphStore, RagGraphStoreError
 from models.schemas import GraphEntity, GraphRelation, Triplet
 
@@ -93,9 +100,13 @@ class GraphBuilder:
         extract_concurrency: int = 8,
     ) -> None:
         self.store = store
+        self.adapter: GraphProjectionAdapter = create_graph_projection_adapter(
+            store,
+            required_methods=(),
+        )
         self.embedder = embedder
         self.extractor = extractor
-        self.batch_size = batch_size or store.graph.batch_size
+        self.batch_size = batch_size or self.adapter.graph.batch_size
         # 三元组抽取的并发度：每个 chunk 一次 LLM 调用，彼此独立。
         # 上限不宜过高——远端限流与本地模型的并发能力都是瓶颈。
         self.extract_concurrency = max(1, extract_concurrency)
@@ -195,16 +206,17 @@ class GraphBuilder:
         """Merge and mutate graph storage from a lock-protected prepared plan."""
         if not plan.relations:
             return plan.result
+        self.adapter.require_methods(GRAPH_BUILDER_WRITE_REQUIRED_METHODS)
         entities = deepcopy(plan.entities)
         relations = deepcopy(plan.relations)
         self._merge_with_store(entities, relations, tenant_id)
         try:
             if entities:
-                self.store.upsert_entities(
+                self.adapter.upsert_entities(
                     entities, plan.entity_vectors, tenant_id=tenant_id
                 )
             if relations:
-                self.store.upsert_relations(
+                self.adapter.upsert_relations(
                     relations, plan.relation_vectors, tenant_id=tenant_id
                 )
         except RagGraphStoreError:
@@ -234,12 +246,13 @@ class GraphBuilder:
         chunk_ids = list(dict.fromkeys(str(item) for item in chunk_ids if str(item)))
         if not chunk_ids:
             return 0, 0
+        self.adapter.require_methods(GRAPH_BUILDER_DELETE_REQUIRED_METHODS)
         deleted_chunks = set(chunk_ids)
         try:
-            relations = self.store.get_relations_by_passage_ids(
+            relations = self.adapter.get_relations_by_passage_ids(
                 chunk_ids, tenant_id=tenant_id, include_vectors=True
             )
-            direct_entities = self.store.get_entities_by_passage_ids(
+            direct_entities = self.adapter.get_entities_by_passage_ids(
                 chunk_ids, tenant_id=tenant_id, include_vectors=True
             )
         except RagGraphStoreError as exc:
@@ -267,9 +280,12 @@ class GraphBuilder:
                 delete_relation_ids.append(str(relation["id"]))
 
         try:
-            self.store.upsert_raw_relations(update_relations)
-            deleted_relations = self.store.delete_relations_by_ids(delete_relation_ids)
-            related_entities = self.store.get_entities_by_ids(
+            self.adapter.upsert_raw_relations(update_relations, tenant_id=tenant_id)
+            deleted_relations = self.adapter.delete_relations_by_ids(
+                delete_relation_ids,
+                tenant_id=tenant_id,
+            )
+            related_entities = self.adapter.get_entities_by_ids(
                 affected_entity_ids, tenant_id=tenant_id, include_vectors=True
             )
         except RagGraphStoreError as exc:
@@ -289,7 +305,7 @@ class GraphBuilder:
         try:
             existing_relation_ids = {
                 str(row["id"])
-                for row in self.store.get_relations_by_ids(
+                for row in self.adapter.get_relations_by_ids(
                     referenced_relation_ids, tenant_id=tenant_id
                 )
             }
@@ -315,8 +331,11 @@ class GraphBuilder:
             entity["relation_ids"] = remaining_relations
             update_entities.append(entity)
         try:
-            self.store.upsert_raw_entities(update_entities)
-            deleted_entities = self.store.delete_entities_by_ids(delete_entity_ids)
+            self.adapter.upsert_raw_entities(update_entities, tenant_id=tenant_id)
+            deleted_entities = self.adapter.delete_entities_by_ids(
+                delete_entity_ids,
+                tenant_id=tenant_id,
+            )
         except RagGraphStoreError as exc:
             raise GraphBuilderError(f"级联删除更新实体失败: {exc}") from exc
         return int(deleted_relations or 0), int(deleted_entities or 0)
@@ -328,11 +347,12 @@ class GraphBuilder:
         unique_ids = list(dict.fromkeys(str(item) for item in chunk_ids if str(item)))
         if not unique_ids:
             return 0
+        self.adapter.require_methods(GRAPH_BUILDER_COUNT_REQUIRED_METHODS)
         try:
-            relations = self.store.get_relations_by_passage_ids(
+            relations = self.adapter.get_relations_by_passage_ids(
                 unique_ids, tenant_id=tenant_id
             )
-            entities = self.store.get_entities_by_passage_ids(
+            entities = self.adapter.get_entities_by_passage_ids(
                 unique_ids, tenant_id=tenant_id
             )
         except RagGraphStoreError as exc:
@@ -399,10 +419,10 @@ class GraphBuilder:
         库内已有 id，避免重复节点与孤引用。
         """
         try:
-            existing_entities = self.store.get_entities_by_texts(
+            existing_entities = self.adapter.get_entities_by_texts(
                 [e.name for e in entity_list], tenant_id=tenant_id
             )
-            existing_relations = self.store.get_relations_by_texts(
+            existing_relations = self.adapter.get_relations_by_texts(
                 [r.text for r in relation_list], tenant_id=tenant_id
             )
         except RagGraphStoreError as exc:

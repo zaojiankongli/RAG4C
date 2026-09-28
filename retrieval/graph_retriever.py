@@ -26,6 +26,11 @@ from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
 from core.embedding import EmbeddingService
+from core.graph_projection_adapters import (
+    GRAPH_RETRIEVER_REQUIRED_METHODS,
+    GraphProjectionAdapter,
+    create_graph_projection_adapter,
+)
 from core.graph_store import RagGraphStore, RagGraphStoreError
 from core.llm import LLMClient
 from models.schemas import GraphRetrievalDetail
@@ -77,6 +82,10 @@ class GraphRetriever:
         max_rerank_picks: int = 10,
     ) -> None:
         self.store = store
+        self.adapter: GraphProjectionAdapter = create_graph_projection_adapter(
+            store,
+            required_methods=GRAPH_RETRIEVER_REQUIRED_METHODS,
+        )
         self.embedder = embedder
         self.llm = llm
         self.max_rerank_candidates = max_rerank_candidates
@@ -104,12 +113,12 @@ class GraphRetriever:
                 跨租户图数据零可见。
         """
         tenant = tenant_id or ""
-        graph = self.store.graph
+        graph = self.adapter.graph
         try:
             query_vec = self.embedder.embed_query(query)
 
             # 2. 实体向量检索（限定租户）
-            entity_hits = self.store.search_entities(
+            entity_hits = self.adapter.search_entities(
                 query_vec,
                 top_k=graph.entity_top_k,
                 threshold=graph.entity_similarity_threshold,
@@ -125,7 +134,7 @@ class GraphRetriever:
             )
 
             # 4. 关系向量检索（限定租户）
-            relation_hits = self.store.search_relations(
+            relation_hits = self.adapter.search_relations(
                 query_vec,
                 top_k=graph.relation_top_k,
                 threshold=graph.relation_similarity_threshold,
@@ -222,7 +231,7 @@ class GraphRetriever:
         for hop in range(degree):
             if not current:
                 break
-            entities = entity_hits if hop == 0 else self.store.get_entities_by_ids(
+            entities = entity_hits if hop == 0 else self.adapter.get_entities_by_ids(
                 list(current), tenant_id=tenant_id
             )
             new_rels: dict[str, float] = {}
@@ -245,7 +254,7 @@ class GraphRetriever:
             if hop + 1 >= degree:
                 break
             next_entities: dict[str, float] = {}
-            for rel in self.store.get_relations_by_ids(
+            for rel in self.adapter.get_relations_by_ids(
                 list(new_rels), tenant_id=tenant_id
             ):
                 prior = new_rels.get(rel["id"], 0.0)
@@ -285,7 +294,7 @@ class GraphRetriever:
         # 扩展中尚未出现的关系，补读其完整记录
         missing = [rid for rid in expanded_priors if rid not in seen]
         if missing:
-            for record in self.store.get_relations_by_ids(missing, tenant_id=tenant_id):
+            for record in self.adapter.get_relations_by_ids(missing, tenant_id=tenant_id):
                 rid = record["id"]
                 if rid not in seen:
                     seen.add(rid)

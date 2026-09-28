@@ -20,6 +20,10 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from core.catalog import sanitize_error_message
+from core.document_delete_targets import (
+    DocumentDeleteTargetPolicy,
+    document_delete_projection_targets,
+)
 from core.knowledge_content import ContentConflict, ContentNotFound
 from core.knowledge_governance import AuditContext
 from models.orm import (
@@ -40,7 +44,6 @@ from models.orm import (
 
 _ALLOWED_ORIGINS = frozenset({"operator", "source_sync", "dataset_reset", "retention"})
 _DELETE_LIFECYCLE_STATES = frozenset({"delete_requested", "deleting", "delete_failed", "deleted"})
-_DELETE_STORES = ("milvus_chunks", "graph_projection")
 _ACTIVE_OPERATION_STATUSES = ("pending", "retry", "claimed")
 _PROJECTION_WRITER_OPERATIONS = ("upsert", "reconcile")
 _TERMINAL_ATTEMPT_STATES = ("completed", "failed", "cancelled", "superseded")
@@ -677,6 +680,7 @@ class DocumentDeletionRepository:
                 )
                 if replay is not None:
                     return replay
+                delete_targets = document_delete_projection_targets()
 
                 dataset = session.scalar(
                     select(Dataset)
@@ -978,7 +982,7 @@ class DocumentDeletionRepository:
                         chunk_manifest_hash=prepared_item.manifest.hash,
                         quota_chunk_count=prepared_item.quota_chunk_count,
                         required_store_count=(
-                            len(_DELETE_STORES) if prepared_item.status == "queued" else 0
+                            len(delete_targets) if prepared_item.status == "queued" else 0
                         ),
                         completed_store_count=0,
                         failed_store_count=0,
@@ -1065,7 +1069,7 @@ class DocumentDeletionRepository:
                         delete_generation=prepared_item.delete_generation,
                         now=now,
                     )
-                    for target_store in _DELETE_STORES:
+                    for target_store in delete_targets:
                         child = IndexOperation(
                             id=self._new_id("index-op"),
                             tenant_id=tenant_id,
@@ -1389,7 +1393,7 @@ class DocumentDeletionRepository:
         """Return a validated, detached plan before any external store call."""
         if operation.operation != "delete_document":
             raise DocumentDeletionConflict("operation is not a document projection delete")
-        if operation.target_store not in _DELETE_STORES:
+        if operation.target_store not in document_delete_projection_targets():
             raise DocumentDeletionConflict("unsupported document delete target store")
         with Session(self.engine) as session:
             item, parent, document, _attempt = self._delete_context(
@@ -1471,7 +1475,10 @@ class DocumentDeletionRepository:
             worker_id=worker_id,
             lock=True,
         )
-        if item.operation != "delete_document" or item.target_store not in _DELETE_STORES:
+        if (
+            item.operation != "delete_document"
+            or item.target_store not in document_delete_projection_targets()
+        ):
             raise DocumentDeletionConflict("operation is not a projection delete child")
         if parent.status not in {"queued", "projecting"}:
             raise DocumentDeletionConflict("document delete parent is no longer projecting")
@@ -1488,7 +1495,6 @@ class DocumentDeletionRepository:
                 select(func.count(IndexOperation.id)).where(
                     IndexOperation.delete_operation_id == parent.id,
                     IndexOperation.operation == "delete_document",
-                    IndexOperation.target_store.in_(_DELETE_STORES),
                     IndexOperation.status == "succeeded",
                 )
             )
@@ -1500,7 +1506,6 @@ class DocumentDeletionRepository:
                 select(func.count(IndexOperation.id)).where(
                     IndexOperation.delete_operation_id == parent.id,
                     IndexOperation.operation == "delete_document",
-                    IndexOperation.target_store.in_(_DELETE_STORES),
                     IndexOperation.status == "dead",
                 )
             )
@@ -1644,7 +1649,6 @@ class DocumentDeletionRepository:
                         select(func.count(IndexOperation.id)).where(
                             IndexOperation.delete_operation_id == parent.id,
                             IndexOperation.operation == "delete_document",
-                            IndexOperation.target_store.in_(_DELETE_STORES),
                             IndexOperation.status == "dead",
                         )
                     )
@@ -1747,7 +1751,6 @@ class DocumentDeletionRepository:
                 select(func.count(IndexOperation.id)).where(
                     IndexOperation.delete_operation_id == parent.id,
                     IndexOperation.operation == "delete_document",
-                    IndexOperation.target_store.in_(_DELETE_STORES),
                     IndexOperation.status == "succeeded",
                 )
             )
@@ -1872,9 +1875,11 @@ __all__ = [
     "ChunkManifest",
     "DeleteBatchItemRequest",
     "DatasetResetProjection",
+    "DocumentDeleteTargetPolicy",
     "DeleteProjectionPlan",
     "DeleteBatchProjection",
     "DeleteOperationProjection",
     "DocumentDeletionConflict",
     "DocumentDeletionRepository",
+    "document_delete_projection_targets",
 ]
