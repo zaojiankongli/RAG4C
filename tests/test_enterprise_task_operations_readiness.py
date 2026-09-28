@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from sqlalchemy.exc import NoInspectionAvailable
+
 
 def test_enterprise_task_operations_revision_is_head() -> None:
     from core import catalog_schema as api
@@ -63,6 +66,166 @@ def test_task_operations_capability_is_not_available_before_0034(tmp_path) -> No
         assert api.inspect_enterprise_task_operations_capability(engine) == ("not_available", ())
     finally:
         engine.dispose()
+
+
+def _task_revision_engine(path, revisions: tuple[str, ...], tables=()):
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(f"sqlite:///{path.as_posix()}")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)"))
+        for revision in revisions:
+            connection.execute(
+                text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
+                {"revision": revision},
+            )
+        for table in tables:
+            connection.execute(text(f'CREATE TABLE "{table}" (id INTEGER PRIMARY KEY)'))
+    return engine
+
+
+@pytest.mark.parametrize(
+    ("revisions", "tables", "uses_frozen_original"),
+    [
+        (("0033_enterprise_content_recovery",), (), True),
+        (
+            ("0033_enterprise_content_recovery",),
+            ("tenant_task_projections",),
+            True,
+        ),
+        (("0034_enterprise_task_operations",), (), False),
+        (
+            ("0034_enterprise_task_operations",),
+            ("tenant_task_projections",),
+            False,
+        ),
+        (("0036_enterprise_knowledge_serving_reliability",), (), False),
+        (
+            ("0036_enterprise_knowledge_serving_reliability",),
+            ("tenant_task_projections",),
+            False,
+        ),
+        (("unknown_catalog_revision",), (), True),
+        ((), (), True),
+        (
+            ("0033_enterprise_content_recovery", "0034_enterprise_task_operations"),
+            (),
+            True,
+        ),
+    ],
+)
+def test_task_operations_shared_policy_matches_frozen_compatibility_matrix(
+    tmp_path,
+    revisions: tuple[str, ...],
+    tables: tuple[str, ...],
+    uses_frozen_original: bool,
+) -> None:
+    from core import catalog_schema as api
+
+    engine = _task_revision_engine(
+        tmp_path / f"task-compat-{len(revisions)}-{len(tables)}.db",
+        revisions,
+        tables,
+    )
+    try:
+        frozen_compatibility = api._knowledge_serving_revision_compatible(
+            engine,
+            api._KNOWLEDGE_SERVING_ORIGINAL_TASK_CAPABILITY,
+            api.ENTERPRISE_TASK_OPERATIONS_TABLES,
+            api.ENTERPRISE_TASK_OPERATIONS_REVISION,
+            api._enterprise_task_operations_capability_issues,
+        )
+        active = api.inspect_enterprise_task_operations_capability(engine)
+        assert active == frozen_compatibility
+        assert api.inspect_catalog_capability("task_operations", engine) == active
+        if uses_frozen_original:
+            assert active == api._KNOWLEDGE_SERVING_ORIGINAL_TASK_CAPABILITY(engine)
+    finally:
+        engine.dispose()
+
+
+def test_task_operations_active_and_frozen_exception_contracts_remain_distinct() -> None:
+    from core import catalog_schema as api
+
+    with pytest.raises(NoInspectionAvailable):
+        api.inspect_enterprise_task_operations_capability(object())
+    assert api._KNOWLEDGE_SERVING_ORIGINAL_TASK_CAPABILITY(object()) == (
+        "unavailable",
+        ("Task Operations schema inspection failed: NoInspectionAvailable",),
+    )
+
+
+def test_task_operations_shared_policy_matches_no_revision_table_compatibility(tmp_path) -> None:
+    from sqlalchemy import create_engine
+
+    from core import catalog_schema as api
+
+    engine = create_engine(f"sqlite:///{(tmp_path / 'task-no-revision-table.db').as_posix()}")
+    try:
+        frozen_compatibility = api._knowledge_serving_revision_compatible(
+            engine,
+            api._KNOWLEDGE_SERVING_ORIGINAL_TASK_CAPABILITY,
+            api.ENTERPRISE_TASK_OPERATIONS_TABLES,
+            api.ENTERPRISE_TASK_OPERATIONS_REVISION,
+            api._enterprise_task_operations_capability_issues,
+        )
+        active = api.inspect_enterprise_task_operations_capability(engine)
+        assert active == frozen_compatibility
+        assert active == api._KNOWLEDGE_SERVING_ORIGINAL_TASK_CAPABILITY(engine)
+        assert active == api.inspect_catalog_capability("task_operations", engine)
+    finally:
+        engine.dispose()
+
+
+def test_task_operations_legacy_fallback_keeps_second_connection_error_handling(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from core import catalog_schema as api
+
+    def engine_with_failing_second_connect(name: str):
+        engine = _task_revision_engine(
+            tmp_path / name,
+            ("0033_enterprise_content_recovery",),
+        )
+        original_connect = engine.connect
+        calls = 0
+
+        def connect():
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("transient fallback connection failure")
+            return original_connect()
+
+        monkeypatch.setattr(engine, "connect", connect)
+        return engine, lambda: calls
+
+    compatibility_engine, compatibility_calls = engine_with_failing_second_connect(
+        "task-fallback-compatibility.db"
+    )
+    active_engine, active_calls = engine_with_failing_second_connect("task-fallback-active.db")
+    try:
+        expected = api._knowledge_serving_revision_compatible(
+            compatibility_engine,
+            api._KNOWLEDGE_SERVING_ORIGINAL_TASK_CAPABILITY,
+            api.ENTERPRISE_TASK_OPERATIONS_TABLES,
+            api.ENTERPRISE_TASK_OPERATIONS_REVISION,
+            api._enterprise_task_operations_capability_issues,
+        )
+        actual = api.inspect_enterprise_task_operations_capability(active_engine)
+        assert (
+            expected
+            == actual
+            == (
+                "unavailable",
+                ("Task Operations schema inspection failed: RuntimeError",),
+            )
+        )
+        assert compatibility_calls() == active_calls() == 2
+    finally:
+        compatibility_engine.dispose()
+        active_engine.dispose()
 
 
 def test_task_operations_capability_is_ready_and_preserves_0033_parents(tmp_path) -> None:

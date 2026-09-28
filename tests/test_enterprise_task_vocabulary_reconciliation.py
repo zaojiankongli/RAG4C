@@ -89,14 +89,21 @@ def test_the_projections_check_is_built_from_the_tuple_this_fence_compares() -> 
 
 
 def test_reconciliation_status_is_the_one_pair_that_currently_disagrees_on_record() -> None:
-    """**登记一个未裁的矛盾，而不是把它抹平。**
+    """**登记一个已查清、按裁定保留的双层词表，而不是把它抹平。**
 
     python 侧校验入参用的是 ``started``，而库里那一列的 ``CHECK`` 只认 ``running``
     （``_STATUS_ALIASES`` 里确实有 ``"started" -> "running"``，但它服务的是**投影**的
     normalized status，``_normalize_reconciliation_status`` 没走那张表）。
-    所以"送 started 的行能不能落库"取决于这份 canonical 结果是否真被写进那一列 ——
-    本轮没查到写路径（``list_reconciliation_runs`` 只读），因此**不下结论、不改语义**，
-    只把差异钉成字面事实：任何人只动一边，这条就红。
+
+    2026-09-27 写路径已查实（交接审查 §9 第 28 条裁定）：唯一的写入点
+    ``enterprise_task_operations_service._reconcile_in_session`` 硬编码 ``running``，
+    没有任何路径把 ``started`` 写进该列——不存在会被 CHECK 拒的真缺陷。
+    实际形状是**双层词表**：存储层 ``running``（CHECK/ORM/迁移三处一致），公开层
+    ``started``（门面词表 + 服务层 ``_run_body`` 出参把 ``running`` 映射回 ``started``、
+    ``list_reconciliation_runs`` 入参把两种拼法都归一到 ``running``）。这与
+    ``core/release_quality_gate_states.py`` 的 gate_state（存储 ``passing``、对外
+    ``passed``）同型，属企业 API 常见的内外词表分离。
+    本条继续把差异钉成字面事实：任何人只动一边，这条就红。
     """
     assert ops.TASK_RECONCILIATION_STATUSES == frozenset({"started", "completed", "failed"})
     assert schema.ENTERPRISE_TASK_RECONCILIATION_STATUSES == (

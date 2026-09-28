@@ -10,9 +10,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from core.catalog_schema import ENTERPRISE_TASK_SOURCE_KINDS, ENTERPRISE_TASK_STATUSES
+from core.catalog_schema import (
+    ENTERPRISE_TASK_CATEGORIES,
+    ENTERPRISE_TASK_SOURCE_KINDS,
+    ENTERPRISE_TASK_STATUSES,
+)
 from core.knowledge_permissions import KNOWLEDGE_READ
 from server.knowledge_auth import KnowledgeActor, require_knowledge_permission
+from core.task_vocabulary import TASK_CATEGORY_API_VALUES
 
 EngineProvider = Callable[[], Any]
 ServiceProvider = Any
@@ -34,11 +39,13 @@ _SOURCE_KINDS = (
     "release_recertification",
 )
 _STATUSES = ("queued", "running", "succeeded", "failed", "cancelled", "blocked", "unavailable")
+_CATEGORY_INPUTS = TASK_CATEGORY_API_VALUES
 TaskId = Annotated[str, Path(min_length=1, max_length=128, pattern=_SAFE_ID.pattern)]
 ViewId = Annotated[str, Path(min_length=1, max_length=128, pattern=_SAFE_ID.pattern)]
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)]
 SourceKind: TypeAlias = Literal[tuple(ENTERPRISE_TASK_SOURCE_KINDS)]
 TaskStatus: TypeAlias = Literal[tuple(ENTERPRISE_TASK_STATUSES)]
+TaskCategory: TypeAlias = Literal[_CATEGORY_INPUTS]
 
 
 class StrictModel(BaseModel):
@@ -75,14 +82,9 @@ class SavedViewFilters(StrictModel):
     statuses: list[TaskStatus] | None = Field(
         default=None, max_length=len(ENTERPRISE_TASK_STATUSES)
     )
-    categories: (
-        list[
-            Literal[
-                "content", "documents", "indexing", "source", "sources", "compliance", "quality"
-            ]
-        ]
-        | None
-    ) = Field(default=None, max_length=5)
+    categories: list[TaskCategory] | None = Field(
+        default=None, max_length=len(ENTERPRISE_TASK_CATEGORIES)
+    )
     dataset_id: str | None = Field(default=None, max_length=64, pattern=_SAFE_ID.pattern)
     workspace_id: str | None = Field(default=None, max_length=128, pattern=_SAFE_ID.pattern)
     action_required: bool | None = Field(default=None, strict=True)

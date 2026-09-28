@@ -951,3 +951,227 @@ def test_concurrent_materialization_has_one_canonical_notification_bundle(
         }
     finally:
         engine.dispose()
+
+
+def test_registered_notification_materializer_dispatches_through_real_quality_flow(
+    tmp_path: Path,
+) -> None:
+    module = _materializer()
+    from core.notification_materializers import (
+        NotificationMaterializationRequest,
+        NotificationMaterializerPolicy,
+        register_notification_materializer,
+        unregister_notification_materializer,
+    )
+
+    engine, alert_id = _seed_quality_engine(tmp_path)
+    revision, digest = _quality_source(engine, alert_id)
+    discovered_tenants: list[str] = []
+    materialized_kinds: list[str] = []
+
+    def materialize(request: NotificationMaterializationRequest) -> dict[str, Any]:
+        materialized_kinds.append(request.source_kind)
+        return module.materialize_quality_alert_notifications(
+            request.engine,
+            tenant_id=request.tenant_id,
+            dataset_id=request.source_scope["dataset_id"],
+            alert_id=request.source_id,
+            expected_source_revision=request.expected_source_revision,
+            expected_source_digest=request.expected_source_digest,
+            now=request.now,
+        )
+
+    def discover(context: Any) -> tuple[NotificationMaterializationRequest, ...]:
+        discovered_tenants.append(context.tenant_id)
+        return (
+            NotificationMaterializationRequest(
+                source_kind="quality_alert_alias",
+                engine=context.engine,
+                tenant_id=context.tenant_id,
+                source_id=alert_id,
+                expected_source_revision=revision,
+                expected_source_digest=digest,
+                now=context.now,
+                source_scope={"dataset_id": "dataset-a"},
+            ),
+        )
+
+    register_notification_materializer(
+        "quality_alert_alias",
+        NotificationMaterializerPolicy(
+            order=99,
+            materialize=materialize,
+            discover=discover,
+        ),
+    )
+    try:
+        request = NotificationMaterializationRequest(
+            source_kind="quality_alert_alias",
+            engine=engine,
+            tenant_id="tenant-a",
+            source_id=alert_id,
+            expected_source_revision=revision,
+            expected_source_digest=digest,
+            now=NOW,
+            source_scope={"dataset_id": "dataset-a"},
+        )
+        result = module.materialize_notification_source(request)
+        body = _body(result)
+        assert body["notification"]["source_kind"] == "quality_alert"
+        assert body["receipt_count"] > 0
+        assert materialized_kinds == ["quality_alert_alias"]
+
+        reconciled = module.reconcile_notification_sources(
+            engine, tenant_id="tenant-a", now=NOW
+        )
+        assert discovered_tenants == ["tenant-a"]
+        assert materialized_kinds == ["quality_alert_alias", "quality_alert_alias"]
+        assert reconciled["notification_count"] == 1
+    finally:
+        unregister_notification_materializer("quality_alert_alias")
+        engine.dispose()
+
+
+def test_materializer_reconciliation_has_no_source_kind_query_or_dispatch_branches() -> None:
+    import inspect
+
+    source = inspect.getsource(_materializer().reconcile_notification_sources)
+
+    assert "DatasetReleaseQualityAlert" not in source
+    assert "TenantApprovalRequest" not in source
+    assert "materialize_quality_alert_notifications" not in source
+    assert "materialize_pending_approval_notifications" not in source
+    assert "notification_materializer_snapshot" in source
+
+
+def test_notification_materializer_registration_rejects_duplicate_and_bad_callbacks() -> None:
+    from core.notification_materializers import (
+        NotificationMaterializerPolicy,
+        register_notification_materializer,
+        unregister_notification_materializer,
+    )
+
+    policy = NotificationMaterializerPolicy(
+        order=90,
+        materialize=lambda _request: {},
+        discover=lambda _context: (),
+    )
+    register_notification_materializer("custom_notice", policy)
+    try:
+        with pytest.raises(ValueError, match="already registered"):
+            register_notification_materializer("custom_notice", policy)
+        with pytest.raises(TypeError, match="accept one positional request"):
+            register_notification_materializer(
+                "invalid_notice",
+                NotificationMaterializerPolicy(
+                    order=91,
+                    materialize=lambda: {},
+                    discover=lambda _context: (),
+                ),
+            )
+        with pytest.raises(TypeError, match="accept one positional discovery context"):
+            register_notification_materializer(
+                "invalid_notice",
+                NotificationMaterializerPolicy(
+                    order=91,
+                    materialize=lambda _request: {},
+                    discover=lambda: (),
+                ),
+            )
+    finally:
+        unregister_notification_materializer("custom_notice")
+
+
+
+def test_notification_materializer_builtin_names_are_reserved_before_and_after_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.notification_materializers import (
+        InvalidNotificationMaterializer,
+        NotificationMaterializerPolicy,
+        register_notification_materializer,
+        unregister_notification_materializer,
+    )
+    from core.providers import ProviderRegistry
+    import core.notification_materializers as materializers
+
+    policy = NotificationMaterializerPolicy(
+        order=1,
+        materialize=lambda _request: {},
+        discover=lambda _context: (),
+    )
+    with pytest.raises(InvalidNotificationMaterializer, match="built-in.*immutable"):
+        register_notification_materializer("quality_alert", policy, replace=True)
+    with pytest.raises(InvalidNotificationMaterializer, match="built-in.*cannot be unregistered"):
+        unregister_notification_materializer("quality_alert")
+
+    # Simulate the pre-install state: built-in keys stay reserved before their
+    # schema-backed policies are registered during enterprise-module import.
+    monkeypatch.setattr(
+        materializers,
+        "_NOTIFICATION_MATERIALIZERS",
+        ProviderRegistry("notification materializer test"),
+    )
+    monkeypatch.setattr(materializers, "_BUILTIN_POLICIES", {})
+    with pytest.raises(InvalidNotificationMaterializer, match="built-in.*immutable"):
+        register_notification_materializer("quality_alert", policy)
+    assert "NOTIFICATION_MATERIALIZERS" not in materializers.__all__
+    assert "install_builtin_notification_materializers" not in materializers.__all__
+    assert not hasattr(materializers, "install_builtin_notification_materializers")
+
+
+def test_notification_materializer_direct_dispatch_fails_closed_if_builtin_is_replaced() -> None:
+    module = _materializer()
+    from core.notification_materializers import (
+        InvalidNotificationMaterializer,
+        NotificationMaterializationRequest,
+        NotificationMaterializerPolicy,
+        _NOTIFICATION_MATERIALIZERS,
+    )
+
+    original_factory = _NOTIFICATION_MATERIALIZERS.get_factory("quality_alert")
+    replacement = NotificationMaterializerPolicy(
+        order=10,
+        materialize=lambda _request: {"notification": {}, "receipt_count": 0},
+        discover=lambda _context: (),
+    )
+    _NOTIFICATION_MATERIALIZERS.register(
+        "quality_alert", lambda _context: replacement, replace=True
+    )
+    try:
+        request = NotificationMaterializationRequest(
+            source_kind="quality_alert",
+            engine=object(),
+            tenant_id="tenant-a",
+            source_id="alert-a",
+            expected_source_revision=1,
+            expected_source_digest="digest",
+            now=NOW,
+            source_scope={"dataset_id": "dataset-a"},
+        )
+        with pytest.raises(InvalidNotificationMaterializer, match="built-in.*replaced"):
+            module.materialize_notification_source(request)
+    finally:
+        _NOTIFICATION_MATERIALIZERS.register(
+            "quality_alert", original_factory, replace=True
+        )
+
+
+def test_notification_materialization_request_copies_and_freezes_scope() -> None:
+    from core.notification_materializers import NotificationMaterializationRequest
+
+    source_scope = {"dataset_id": "dataset-a"}
+    request = NotificationMaterializationRequest(
+        source_kind="quality_alert",
+        engine=object(),
+        tenant_id="tenant-a",
+        source_id="alert-a",
+        expected_source_revision=1,
+        expected_source_digest="digest",
+        now=NOW,
+        source_scope=source_scope,
+    )
+    source_scope["dataset_id"] = "dataset-b"
+    assert request.source_scope["dataset_id"] == "dataset-a"
+    with pytest.raises(TypeError):
+        request.source_scope["dataset_id"] = "dataset-c"  # type: ignore[index]

@@ -5,10 +5,21 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from hashlib import sha256
+import inspect
 import json
 import re
 from typing import Any
 from urllib.parse import urlencode
+
+from core.automation_rule_strategies import (
+    AUTOMATION_ACTION_CONTRACT_CODES,
+    AUTOMATION_CONDITION_CONTRACT_CODES,
+    AUTOMATION_SEVERITY_ORDER,
+    AUTOMATION_STATUS_CODES,
+    AutomationTargetReference,
+    resolve_action_strategy,
+    resolve_condition_strategy,
+)
 
 UTC = timezone.utc
 AUTOMATION_SCHEMA_VERSION = 1
@@ -21,19 +32,6 @@ AUTOMATION_TRIGGER_CODES = frozenset(
         "release_recertification_blocked",
         "approval_request_terminal",
     }
-)
-AUTOMATION_CONDITION_CODES = frozenset(
-    {
-        "always",
-        "status_is",
-        "action_required",
-        "severity_at_least",
-        "attempt_exhausted",
-        "source_is_stale",
-    }
-)
-AUTOMATION_ACTION_CODES = frozenset(
-    {"notify_operator", "request_approval", "open_task_attention", "pause_rule"}
 )
 AUTOMATION_EVENT_TYPES = frozenset(
     {
@@ -50,22 +48,10 @@ AUTOMATION_EVENT_TYPES = frozenset(
         "run_failed",
     }
 )
-_SEVERITIES = ("info", "warning", "error", "critical")
-_STATUSES = frozenset(
-    {
-        "queued",
-        "running",
-        "succeeded",
-        "failed",
-        "cancelled",
-        "blocked",
-        "unavailable",
-        "approved",
-        "rejected",
-        "expired",
-        "completed",
-    }
-)
+AUTOMATION_CONDITION_CODES = frozenset(AUTOMATION_CONDITION_CONTRACT_CODES)
+AUTOMATION_ACTION_CODES = frozenset(AUTOMATION_ACTION_CONTRACT_CODES)
+_SEVERITIES = AUTOMATION_SEVERITY_ORDER
+_STATUSES = AUTOMATION_STATUS_CODES
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$")
 _CODE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -333,72 +319,84 @@ def canonical_automation_run_digest(value: Mapping[str, Any]) -> str:
     return _canonical_digest("automation-run", value)
 
 
-def _condition_params(condition_code: str, value: Any) -> dict[str, Any]:
-    schemas: dict[str, tuple[set[str], dict[str, Any]]] = {
-        "always": (set(), {}),
-        "status_is": ({"status"}, {}),
-        "action_required": ({"value"}, {}),
-        "severity_at_least": ({"severity"}, {}),
-        "attempt_exhausted": ({"minimum_attempts"}, {}),
-        "source_is_stale": ({"value"}, {}),
-    }
-    allowed, _ = schemas[condition_code]
-    raw = _exact_keys(value, "condition_params", allowed)
-    if condition_code == "always":
-        return {}
-    if condition_code == "status_is":
-        status = _code(raw.get("status"), "condition_params.status")
-        if status not in _STATUSES:
-            raise _invalid("condition_params.status is not allowed")
-        return {"status": status}
-    if condition_code in {"action_required", "source_is_stale"}:
-        return {"value": _boolean(raw.get("value"), "condition_params.value")}
-    if condition_code == "severity_at_least":
-        severity = _code(raw.get("severity"), "condition_params.severity")
-        if severity not in _SEVERITIES:
-            raise _invalid("condition_params.severity is not allowed")
-        return {"severity": severity}
-    return {
-        "minimum_attempts": _integer(
-            raw.get("minimum_attempts"), "condition_params.minimum_attempts", 1, 100
+def _normalize_strategy_parameter(
+    parameter: Any,
+    value: Any,
+    field: str,
+) -> Any:
+    if parameter.kind == "boolean":
+        return _boolean(value, field)
+    if parameter.kind == "integer":
+        return _integer(
+            value,
+            field,
+            0 if parameter.minimum is None else parameter.minimum,
+            parameter.maximum,
         )
+    if parameter.kind == "identifier":
+        return _identifier(value, field)
+    if parameter.kind == "text":
+        return _safe_text(
+            value,
+            field,
+            512 if parameter.maximum_length is None else parameter.maximum_length,
+        )
+    allowed = (
+        frozenset(
+            item.casefold().replace("-", "_").replace(" ", "_")
+            for item in parameter.allowed_values
+        )
+        if parameter.allowed_values
+        else None
+    )
+    return _code(value, field, allowed)
+
+
+def _reject_deferred_result(value: Any, message: str) -> None:
+    if not inspect.isawaitable(value):
+        return
+    close = getattr(value, "close", None)
+    if callable(close):
+        close()
+    raise _invalid(message)
+
+
+def _condition_params(condition_code: str, value: Any) -> dict[str, Any]:
+    strategy = resolve_condition_strategy(condition_code)
+    if strategy is None:
+        raise _invalid("condition_code is not allowed")
+    parameters = strategy.parameters
+    raw = _exact_keys(value, "condition_params", {parameter.name for parameter in parameters})
+    return {
+        parameter.name: _normalize_strategy_parameter(
+            parameter,
+            raw.get(parameter.name),
+            f"condition_params.{parameter.name}",
+        )
+        for parameter in parameters
     }
 
 
 def _action_params(action_code: str, value: Any) -> dict[str, Any]:
-    allowed_by_action = {
-        "notify_operator": {"category", "severity", "title"},
-        "request_approval": {"action_type", "resource_type", "reason_code"},
-        "open_task_attention": {"task_id", "reason_code"},
-        "pause_rule": {"reason_code"},
-    }
+    strategy = resolve_action_strategy(action_code)
+    if strategy is None:
+        raise _invalid("action_code is not allowed")
     raw = _mapping(value, "action.params")
     if any(not isinstance(key, str) or _forbidden_key(key) for key in raw):
         raise _invalid("action.params contains a forbidden field")
-    extras = set(raw) - allowed_by_action[action_code]
+    parameters = strategy.parameters
+    allowed = {parameter.name for parameter in parameters}
+    extras = set(raw) - allowed
     if extras:
         raise _invalid("action.params contains unsupported fields")
-    if action_code == "notify_operator":
-        severity = _code(raw.get("severity"), "action.params.severity")
-        if severity not in _SEVERITIES:
-            raise _invalid("action.params.severity is not allowed")
-        return {
-            "category": _code(raw.get("category"), "action.params.category"),
-            "severity": severity,
-            "title": _safe_text(raw.get("title"), "action.params.title", 160),
-        }
-    if action_code == "request_approval":
-        return {
-            "action_type": _code(raw.get("action_type"), "action.params.action_type"),
-            "resource_type": _code(raw.get("resource_type"), "action.params.resource_type"),
-            "reason_code": _code(raw.get("reason_code"), "action.params.reason_code"),
-        }
-    if action_code == "open_task_attention":
-        return {
-            "task_id": _identifier(raw.get("task_id"), "action.params.task_id"),
-            "reason_code": _code(raw.get("reason_code"), "action.params.reason_code"),
-        }
-    return {"reason_code": _code(raw.get("reason_code"), "action.params.reason_code")}
+    return {
+        parameter.name: _normalize_strategy_parameter(
+            parameter,
+            raw.get(parameter.name),
+            f"action.params.{parameter.name}",
+        )
+        for parameter in parameters
+    }
 
 
 def canonical_automation_action_plan(value: Any) -> list[dict[str, Any]]:
@@ -520,25 +518,51 @@ def canonical_automation_trigger_event(
 def evaluate_automation_condition(
     condition_code: str, condition_params: Mapping[str, Any], event: Mapping[str, Any]
 ) -> bool:
-    code = _code(condition_code, "condition_code", AUTOMATION_CONDITION_CODES)
+    code = _code(condition_code, "condition_code")
+    strategy = resolve_condition_strategy(code)
+    if strategy is None:
+        raise _invalid("condition_code is not allowed")
     params = _condition_params(code, condition_params)
     canonical_event = canonical_automation_trigger_event(event)
-    if code == "always":
-        return True
-    if code == "status_is":
-        return canonical_event["status"] == params["status"]
-    if code == "action_required":
-        return canonical_event["action_required"] is params["value"]
-    if code == "severity_at_least":
-        return _SEVERITIES.index(canonical_event["severity"]) >= _SEVERITIES.index(
-            params["severity"]
-        )
-    if code == "attempt_exhausted":
-        return (
-            canonical_event["attempt_number"] >= canonical_event["max_attempts"]
-            and canonical_event["attempt_number"] >= params["minimum_attempts"]
-        )
-    return (not canonical_event["source_current"]) is params["value"]
+    try:
+        result = strategy.evaluator(params, canonical_event)
+    except AutomationAuthorityError:
+        raise
+    except Exception as exc:
+        raise _invalid("condition strategy is unavailable") from exc
+    _reject_deferred_result(result, "condition strategy must be synchronous")
+    if type(result) is not bool:
+        raise _invalid("condition strategy must return a boolean")
+    return result
+
+
+def resolve_automation_action_target(
+    event: Mapping[str, Any], action_code: str, rule_id: str
+) -> tuple[str, str, str | None]:
+    """Resolve an action target through its registered side-effect-free adapter."""
+
+    code = _code(action_code, "action_code")
+    strategy = resolve_action_strategy(code)
+    if strategy is None:
+        raise _invalid("action_code is not allowed")
+    canonical_event = canonical_automation_trigger_event(event)
+    try:
+        reference = strategy.target_resolver(canonical_event, rule_id)
+    except AutomationAuthorityError:
+        raise
+    except Exception as exc:
+        raise _invalid("action target strategy is unavailable") from exc
+    _reject_deferred_result(reference, "action target strategy must be synchronous")
+    if not isinstance(reference, AutomationTargetReference):
+        raise _invalid("action target strategy returned an invalid reference")
+    target_kind = _code(reference.target_kind, "target_kind")
+    target_id = _identifier(reference.target_id, "target_id")
+    task_id = (
+        None
+        if reference.task_id is None
+        else _identifier(reference.task_id, "task_id")
+    )
+    return target_kind, target_id, task_id
 
 
 def preview_automation_rule(
@@ -668,4 +692,5 @@ __all__ = [
     "evaluate_automation_condition",
     "preview_automation_rule",
     "project_automation_source_route",
+    "resolve_automation_action_target",
 ]

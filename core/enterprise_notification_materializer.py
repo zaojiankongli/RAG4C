@@ -30,6 +30,16 @@ from core.enterprise_notification_center import (
     project_notification_payload,
 )
 from core.knowledge_permissions import KNOWLEDGE_READ
+from core.notification_materializers import (
+    NotificationMaterializationRequest,
+    NotificationMaterializerPolicy,
+    NotificationSourceDiscoveryContext,
+    discover_notification_sources,
+    _install_builtin_notification_materializers,
+    invoke_notification_materializer,
+    materialize_notification_source,
+    notification_materializer_snapshot,
+)
 from models.orm import (
     Dataset,
     DatasetReleaseQualityAlert,
@@ -261,6 +271,10 @@ def _subscription_allows(
 ) -> bool:
     if row.status != "active" or row.minimum_severity not in _SEVERITY_RANK:
         return False
+    if severity not in _SEVERITY_RANK:
+        # 交接审查 §9 第 32 条裁定：这条守的是完整性——值不在声明词表里说明
+        # 词表与存储已脱钩，压成 False 会变成静默丢投递，必须显式报出来。
+        raise NotificationMaterializationUnavailable("notification severity is invalid")
     if _SEVERITY_RANK[severity] < _SEVERITY_RANK[row.minimum_severity]:
         return False
     if mandatory or row.preference == "subscribed":
@@ -569,7 +583,7 @@ def _persist_bundle(
     }
 
 
-def materialize_quality_alert_notifications(
+def _materialize_quality_alert_notifications_impl(
     engine: Any,
     *,
     tenant_id: str,
@@ -683,7 +697,7 @@ def materialize_quality_alert_notifications(
             return result
 
 
-def materialize_pending_approval_notifications(
+def _materialize_pending_approval_notifications_impl(
     engine: Any,
     *,
     tenant_id: str,
@@ -771,6 +785,163 @@ def materialize_pending_approval_notifications(
             return result
 
 
+def _materialize_quality_request(
+    request: NotificationMaterializationRequest,
+) -> dict[str, Any]:
+    dataset_id = request.source_scope.get("dataset_id")
+    if not isinstance(dataset_id, str):
+        raise NotificationMaterializationInvalid("quality request requires dataset_id scope")
+    return _materialize_quality_alert_notifications_impl(
+        request.engine,
+        tenant_id=request.tenant_id,
+        dataset_id=dataset_id,
+        alert_id=request.source_id,
+        expected_source_revision=request.expected_source_revision,
+        expected_source_digest=request.expected_source_digest,
+        now=request.now,
+    )
+
+
+def _materialize_approval_request(
+    request: NotificationMaterializationRequest,
+) -> dict[str, Any]:
+    return _materialize_pending_approval_notifications_impl(
+        request.engine,
+        tenant_id=request.tenant_id,
+        approval_request_id=request.source_id,
+        expected_source_revision=request.expected_source_revision,
+        expected_source_digest=request.expected_source_digest,
+        now=request.now,
+    )
+
+
+def _discover_quality_alerts(
+    context: NotificationSourceDiscoveryContext,
+) -> tuple[NotificationMaterializationRequest, ...]:
+    alerts = list(
+        context.session.execute(
+            select(
+                DatasetReleaseQualityAlert.dataset_id,
+                DatasetReleaseQualityAlert.id,
+                DatasetReleaseQualityAlert.revision,
+                DatasetReleaseQualityAlert.source_observation_digest,
+            )
+            .where(
+                DatasetReleaseQualityAlert.tenant_id == context.tenant_id,
+                DatasetReleaseQualityAlert.status.in_(_ACTIVE_ALERT_STATUSES),
+            )
+            .order_by(DatasetReleaseQualityAlert.dataset_id, DatasetReleaseQualityAlert.id)
+        )
+    )
+    return tuple(
+        NotificationMaterializationRequest(
+            source_kind="quality_alert",
+            engine=context.engine,
+            tenant_id=context.tenant_id,
+            source_id=str(alert_id),
+            expected_source_revision=int(revision),
+            expected_source_digest=str(source_digest),
+            now=context.now,
+            source_scope={"dataset_id": str(dataset_id)},
+        )
+        for dataset_id, alert_id, revision, source_digest in alerts
+    )
+
+
+def _discover_pending_approvals(
+    context: NotificationSourceDiscoveryContext,
+) -> tuple[NotificationMaterializationRequest, ...]:
+    approvals = list(
+        context.session.execute(
+            select(
+                TenantApprovalRequest.id,
+                TenantApprovalRequest.revision,
+                TenantApprovalRequest.payload_hash,
+            )
+            .where(
+                TenantApprovalRequest.tenant_id == context.tenant_id,
+                TenantApprovalRequest.status == "pending",
+                TenantApprovalRequest.expires_at > context.now,
+            )
+            .order_by(TenantApprovalRequest.id)
+        )
+    )
+    return tuple(
+        NotificationMaterializationRequest(
+            source_kind="approval_pending_for_me",
+            engine=context.engine,
+            tenant_id=context.tenant_id,
+            source_id=str(request_id),
+            expected_source_revision=int(revision),
+            expected_source_digest=str(source_digest),
+            now=context.now,
+            source_scope={},
+        )
+        for request_id, revision, source_digest in approvals
+    )
+
+
+_install_builtin_notification_materializers(
+    {
+        "quality_alert": NotificationMaterializerPolicy(
+            order=10,
+            materialize=_materialize_quality_request,
+            discover=_discover_quality_alerts,
+        ),
+        "approval_pending_for_me": NotificationMaterializerPolicy(
+            order=20,
+            materialize=_materialize_approval_request,
+            discover=_discover_pending_approvals,
+        ),
+    }
+)
+
+
+def materialize_quality_alert_notifications(
+    engine: Any,
+    *,
+    tenant_id: str,
+    dataset_id: str,
+    alert_id: str,
+    expected_source_revision: int,
+    expected_source_digest: str,
+    now: datetime,
+) -> dict[str, Any]:
+    request = NotificationMaterializationRequest(
+        source_kind="quality_alert",
+        engine=engine,
+        tenant_id=tenant_id,
+        source_id=alert_id,
+        expected_source_revision=expected_source_revision,
+        expected_source_digest=expected_source_digest,
+        now=now,
+        source_scope={"dataset_id": dataset_id},
+    )
+    return dict(materialize_notification_source(request))
+
+
+def materialize_pending_approval_notifications(
+    engine: Any,
+    *,
+    tenant_id: str,
+    approval_request_id: str,
+    expected_source_revision: int,
+    expected_source_digest: str,
+    now: datetime,
+) -> dict[str, Any]:
+    request = NotificationMaterializationRequest(
+        source_kind="approval_pending_for_me",
+        engine=engine,
+        tenant_id=tenant_id,
+        source_id=approval_request_id,
+        expected_source_revision=expected_source_revision,
+        expected_source_digest=expected_source_digest,
+        now=now,
+        source_scope={},
+    )
+    return dict(materialize_notification_source(request))
+
+
 def reconcile_notification_sources(
     engine: Any,
     *,
@@ -779,59 +950,30 @@ def reconcile_notification_sources(
 ) -> dict[str, Any]:
     tenant = _component(tenant_id, "tenant_id", 64)
     timestamp = _now(now)
+    policies = notification_materializer_snapshot()
+    discovered: list[tuple[Any, NotificationMaterializationRequest]] = []
     with Session(engine) as session:
-        alerts = list(
-            session.execute(
-                select(
-                    DatasetReleaseQualityAlert.dataset_id,
-                    DatasetReleaseQualityAlert.id,
-                    DatasetReleaseQualityAlert.revision,
-                    DatasetReleaseQualityAlert.source_observation_digest,
-                )
-                .where(
-                    DatasetReleaseQualityAlert.tenant_id == tenant,
-                    DatasetReleaseQualityAlert.status.in_(_ACTIVE_ALERT_STATUSES),
-                )
-                .order_by(DatasetReleaseQualityAlert.dataset_id, DatasetReleaseQualityAlert.id)
-            )
+        context = NotificationSourceDiscoveryContext(
+            engine=engine,
+            session=session,
+            tenant_id=tenant,
+            now=timestamp,
         )
-        approvals = list(
-            session.execute(
-                select(
-                    TenantApprovalRequest.id,
-                    TenantApprovalRequest.revision,
-                    TenantApprovalRequest.payload_hash,
-                )
-                .where(
-                    TenantApprovalRequest.tenant_id == tenant,
-                    TenantApprovalRequest.status == "pending",
-                    TenantApprovalRequest.expires_at > timestamp,
-                )
-                .order_by(TenantApprovalRequest.id)
-            )
-        )
+        for source_kind, policy in policies:
+            for request in discover_notification_sources(policy, context):
+                if (
+                    request.source_kind != source_kind
+                    or request.tenant_id != tenant
+                    or request.engine is not engine
+                    or request.now != timestamp
+                ):
+                    raise NotificationMaterializationInvalid(
+                        "notification discovery returned a request outside its source scope"
+                    )
+                discovered.append((policy, request))
     notifications: dict[str, dict[str, Any]] = {}
-    for dataset_id, alert_id, revision, source_digest in alerts:
-        result = materialize_quality_alert_notifications(
-            engine,
-            tenant_id=tenant,
-            dataset_id=str(dataset_id),
-            alert_id=str(alert_id),
-            expected_source_revision=int(revision),
-            expected_source_digest=str(source_digest),
-            now=timestamp,
-        )
-        notification = result["notification"]
-        notifications[notification["notification_key"]] = notification
-    for request_id, revision, source_digest in approvals:
-        result = materialize_pending_approval_notifications(
-            engine,
-            tenant_id=tenant,
-            approval_request_id=str(request_id),
-            expected_source_revision=int(revision),
-            expected_source_digest=str(source_digest),
-            now=timestamp,
-        )
+    for policy, request in discovered:
+        result = invoke_notification_materializer(policy, request)
         notification = result["notification"]
         notifications[notification["notification_key"]] = notification
     ordered = [notifications[key] for key in sorted(notifications)]

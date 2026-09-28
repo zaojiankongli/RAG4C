@@ -34,6 +34,16 @@ from core.enterprise_task_operations import (
     canonical_task_source,
     canonical_task_source_digest,
 )
+from core.task_source_kinds import (
+    task_source_kind,
+    task_source_kinds_for_category,
+    task_source_route_params,
+)
+from core.task_vocabulary import (
+    canonical_task_category,
+    canonical_task_status,
+    task_display_status,
+)
 from core.enterprise_tenant_idempotency import (
     TenantMutationIdempotencyConflict,
     TenantMutationIdempotencyInProgress,
@@ -150,79 +160,6 @@ _DEFAULT_LIMIT = 50
 _MAX_LIMIT = 200
 _ACTION_EXPIRY = timedelta(hours=24)
 
-_PUBLIC_CATEGORY_BY_SOURCE_KIND = {
-    "document_ingest": "documents",
-    "index_operation": "indexing",
-    "source_sync": "sources",
-    "document_delete": "documents",
-    "audit_export": "compliance",
-    "release_quality_scan": "quality",
-    "release_recertification": "quality",
-}
-_STORAGE_CATEGORY_BY_SOURCE_KIND = {
-    "document_ingest": "documents",
-    "index_operation": "documents",
-    "source_sync": "sources",
-    "document_delete": "documents",
-    "audit_export": "compliance",
-    "release_quality_scan": "quality",
-    "release_recertification": "quality",
-}
-_PUBLIC_ROUTE_BY_SOURCE_KIND = {
-    "document_ingest": "document_operations",
-    "index_operation": "index_operations",
-    "source_sync": "source_control",
-    "document_delete": "document_deletion",
-    "audit_export": "audit_compliance",
-    "release_quality_scan": "release_quality",
-    "release_recertification": "release_quality",
-}
-_STORAGE_ROUTE_BY_SOURCE_KIND = {
-    "document_ingest": "documents",
-    "index_operation": "documents",
-    "source_sync": "sources",
-    "document_delete": "documents",
-    "audit_export": "compliance",
-    "release_quality_scan": "quality",
-    "release_recertification": "quality",
-}
-_STATUS_ALIASES = {
-    "queued": "queued",
-    "pending": "queued",
-    "created": "queued",
-    "waiting": "queued",
-    "scheduled": "queued",
-    "running": "running",
-    "in_progress": "running",
-    "processing": "running",
-    "claimed": "running",
-    "started": "running",
-    "primary_ready": "running",
-    "finalizing": "running",
-    "succeeded": "succeeded",
-    "success": "succeeded",
-    "completed": "succeeded",
-    "complete": "succeeded",
-    "done": "succeeded",
-    "failed": "failed",
-    "failure": "failed",
-    "error": "failed",
-    "cancelled": "cancelled",
-    "canceled": "cancelled",
-    "aborted": "cancelled",
-    "blocked": "blocked",
-    "paused": "blocked",
-    "awaiting_evidence": "blocked",
-    "ready_to_certify": "blocked",
-    "unavailable": "unavailable",
-    "unknown": "unavailable",
-    "stale": "unavailable",
-    "expired": "unavailable",
-    "rejected": "blocked",
-    "superseded": "unavailable",
-}
-
-
 @dataclass(frozen=True)
 class _CollectedSources:
     sources: dict[tuple[str, str], dict[str, Any]]
@@ -327,16 +264,25 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def _normalize_kind(value: Any) -> str:
-    if not isinstance(value, str) or value not in TASK_SOURCE_KINDS:
+    if not isinstance(value, str) or value != value.strip().casefold():
+        raise EnterpriseTaskOperationsInvalid("source_kind is invalid")
+    if task_source_kind(value) is None and value not in TASK_SOURCE_KINDS:
         raise EnterpriseTaskOperationsInvalid("source_kind is invalid")
     return value
 
 
+def _source_spec(kind: str):
+    spec = task_source_kind(kind)
+    if spec is None:
+        raise EnterpriseTaskOperationsInvalid("source_kind is invalid")
+    return spec
+
+
 def _normalize_status(value: Any) -> str:
-    if not isinstance(value, str):
+    try:
+        return canonical_task_status(value)
+    except ValueError:
         return "unavailable"
-    normalized = value.strip().casefold().replace("-", "_").replace(" ", "_")
-    return _STATUS_ALIASES.get(normalized, "unavailable")
 
 
 def _normalize_action(value: Any) -> str:
@@ -444,21 +390,10 @@ def _validate_source_kinds(value: Any) -> tuple[str, ...]:
 
 
 def _normalize_filter_category(value: Any) -> str:
-    if not isinstance(value, str):
-        raise EnterpriseTaskOperationsInvalid("filters.categories is invalid")
-    normalized = value.strip().casefold().replace("-", "_").replace(" ", "_")
-    normalized = {
-        "document": "documents",
-        "content": "documents",
-        "ingest": "documents",
-        "index": "indexing",
-        "source": "sources",
-        "audit": "compliance",
-        "release_quality": "quality",
-    }.get(normalized, normalized)
-    if normalized not in {"documents", "indexing", "sources", "compliance", "quality"}:
-        raise EnterpriseTaskOperationsInvalid("filters.categories is invalid")
-    return normalized
+    try:
+        return canonical_task_category(value, field="filters.categories")
+    except ValueError as exc:
+        raise EnterpriseTaskOperationsInvalid("filters.categories is invalid") from exc
 
 
 def _cursor_encode(kind: str, values: Mapping[str, Any]) -> str:
@@ -522,7 +457,7 @@ def _source_fact(
         "source_revision": max(1, int(source_revision)),
         "dataset_id": dataset_id,
         "workspace_id": workspace_id,
-        "category": _PUBLIC_CATEGORY_BY_SOURCE_KIND[source_kind],
+        "category": _source_spec(source_kind).public_category,
         "normalized_status": _normalize_status(normalized_status),
         "action_required": bool(action_required),
         "progress_percent": progress_percent,
@@ -983,30 +918,10 @@ def _source_inventory_digest(
 
 
 def _route_params(source: Mapping[str, Any]) -> dict[str, str]:
-    tenant_id = str(source["tenant_id"])
-    kind = str(source["source_kind"])
-    source_id = str(source["source_id"])
-    params: dict[str, str] = {"tenant_id": tenant_id}
-    dataset_id = source.get("dataset_id")
-    if dataset_id is not None:
-        params["dataset_id"] = str(dataset_id)
-    facts = source.get("safe_facts") or {}
-    if not isinstance(facts, Mapping):
-        facts = {}
-    if kind in {"document_ingest", "document_delete"}:
-        params["document_id"] = str(facts.get("document_id") or source_id)
-    elif kind == "index_operation":
-        params["operation_id"] = source_id
-    elif kind == "source_sync":
-        params["source_id"] = str(facts.get("data_source_id") or source_id)
-        params["run_id"] = source_id
-    elif kind == "audit_export":
-        params["export_id"] = source_id
-    elif kind == "release_quality_scan":
-        params["scan_id"] = source_id
-    elif kind == "release_recertification":
-        params["job_id"] = source_id
-    return {key: params[key] for key in sorted(params)}
+    try:
+        return task_source_route_params(source)
+    except ValueError as exc:
+        raise EnterpriseTaskOperationsInvalid(str(exc)) from exc
 
 
 def _digest_ready_values(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -1067,7 +982,7 @@ def _projection_values(
         "workspace_id": str(source["workspace_id"])
         if source.get("workspace_id") is not None
         else None,
-        "category": _STORAGE_CATEGORY_BY_SOURCE_KIND[kind],
+        "category": _source_spec(kind).storage_category,
         "normalized_status": normalized_status,
         "action_required": action_required,
         "progress_percent": progress,
@@ -1077,7 +992,7 @@ def _projection_values(
         "lease_until": lease_until,
         "safe_error_code": error_code,
         "safe_error": error_text,
-        "target_route_code": _STORAGE_ROUTE_BY_SOURCE_KIND[kind],
+        "target_route_code": _source_spec(kind).storage_route_code,
         "target_route_params_json": route_params,
         "source_current": bool(source_current and not stale),
         "occurred_at": occurred_at,
@@ -1235,9 +1150,9 @@ def _reconcile_in_session(
     )
     session.add(run)
     session.flush()
-    for key in sorted(
-        collected.sources, key=lambda item: (SOURCE_ADAPTER_ORDER.index(item[0]), item[1])
-    ):
+    adapter_order = tuple(SOURCE_ADAPTER_REGISTRY)
+    order_index = {kind: index for index, kind in enumerate(adapter_order)}
+    for key in sorted(collected.sources, key=lambda item: (order_index[item[0]], item[1])):
         source = collected.sources[key]
         task_id = _task_id(tenant_id, key[0], key[1])
         row = session.scalar(
@@ -1302,7 +1217,7 @@ def _reconcile_in_session(
             "source_digest": str(row.source_digest),
             "dataset_id": row.dataset_id,
             "workspace_id": row.workspace_id,
-            "category": _PUBLIC_CATEGORY_BY_SOURCE_KIND[str(row.source_kind)],
+            "category": _source_spec(str(row.source_kind)).public_category,
             "normalized_status": "unavailable",
             "action_required": True,
             "progress_percent": row.progress_percent,
@@ -1432,9 +1347,9 @@ def _task_body(row: TenantTaskProjection) -> dict[str, Any]:
         "source_digest": str(row.source_digest),
         "dataset_id": str(row.dataset_id) if row.dataset_id is not None else None,
         "workspace_id": str(row.workspace_id) if row.workspace_id is not None else None,
-        "category": _PUBLIC_CATEGORY_BY_SOURCE_KIND[kind],
+        "category": _source_spec(kind).public_category,
         "normalized_status": status,
-        "status": "completed" if status == "succeeded" else status,
+        "status": task_display_status(status),
         "action_required": bool(row.action_required),
         "progress_percent": int(row.progress_percent) if row.progress_percent is not None else None,
         "progress": int(row.progress_percent) if row.progress_percent is not None else None,
@@ -1444,7 +1359,7 @@ def _task_body(row: TenantTaskProjection) -> dict[str, Any]:
         "lease_until": _iso(row.lease_until),
         "safe_error_code": str(row.safe_error_code) if row.safe_error_code is not None else None,
         "safe_error": str(row.safe_error) if row.safe_error is not None else None,
-        "target_route_code": _PUBLIC_ROUTE_BY_SOURCE_KIND[kind],
+        "target_route_code": _source_spec(kind).public_route_code,
         "target_route_params_json": _route_params_for_response(row),
         "source_current": bool(row.source_current),
         "projection_digest": str(row.projection_digest),
@@ -1738,21 +1653,11 @@ def list_tasks(
         if action_value is not None:
             query = query.where(TenantTaskProjection.action_required.is_(action_value))
         if category_value is not None:
-            if category_value == "indexing":
-                query = query.where(TenantTaskProjection.source_kind == "index_operation")
-            elif category_value == "documents":
-                query = query.where(
-                    TenantTaskProjection.source_kind.in_(("document_ingest", "document_delete"))
-                )
+            category_kinds = task_source_kinds_for_category(category_value)
+            if category_kinds:
+                query = query.where(TenantTaskProjection.source_kind.in_(category_kinds))
             else:
-                query = query.where(
-                    TenantTaskProjection.source_kind
-                    == {
-                        "sources": "source_sync",
-                        "compliance": "audit_export",
-                        "quality": "release_quality_scan",
-                    }[category_value]
-                )
+                query = query.where(TenantTaskProjection.source_kind == "__no_registered_kind__")
         if dataset_value is not None:
             query = query.where(TenantTaskProjection.dataset_id == dataset_value)
         if workspace_value is not None:
@@ -2399,7 +2304,7 @@ def _request_task_action(
                         "source_digest": str(row.source_digest),
                         "dataset_id": row.dataset_id,
                         "workspace_id": row.workspace_id,
-                        "category": _PUBLIC_CATEGORY_BY_SOURCE_KIND[str(row.source_kind)],
+                        "category": _source_spec(str(row.source_kind)).public_category,
                         "normalized_status": str(row.normalized_status),
                         "action_required": False,
                         "progress_percent": row.progress_percent,

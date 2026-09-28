@@ -1,4 +1,5 @@
 """Thread-safe provider registries used by pluggable backend services."""
+
 from __future__ import annotations
 
 import threading
@@ -7,6 +8,10 @@ from typing import Generic, TypeVar
 
 ConfigT = TypeVar("ConfigT")
 ServiceT = TypeVar("ServiceT")
+
+
+class UnknownProviderError(ValueError):
+    """A named provider is absent; errors inside a registered factory propagate unchanged."""
 
 
 class ProviderRegistry(Generic[ConfigT, ServiceT]):
@@ -46,21 +51,29 @@ class ProviderRegistry(Generic[ConfigT, ServiceT]):
         with self._lock:
             return tuple(sorted(self._factories))
 
-    def create(self, name: str, config: ConfigT) -> ServiceT:
+    def get_factory(self, name: str) -> Callable[[ConfigT], ServiceT]:
+        """Resolve a registered factory without invoking it.
+
+        Keeping lookup separate lets dispatchers distinguish a missing name from
+        exceptions raised by the selected implementation.
+        """
         key = name.strip().lower()
         with self._lock:
             factory = self._factories.get(key)
-        if factory is None:
-            # Only a refusal needs the menu. Building it on every hit costs a sort per
-            # lookup, which is invisible for "create a client once" and expensive for a
-            # registry someone reads on a per-event path.
-            with self._lock:
-                choices = tuple(sorted(self._factories))
-            available = " / ".join(choices) or "(none)"
-            raise ValueError(
-                f"unknown {self.kind} provider: {name!r} (available: {available})"
-            )
-        return factory(config)
+        if factory is not None:
+            return factory
+        # Only a refusal needs the menu. Building it on every hit costs a sort per
+        # lookup, which is invisible for "create a client once" and expensive for a
+        # registry someone reads on a per-event path.
+        with self._lock:
+            choices = tuple(sorted(self._factories))
+        available = " / ".join(choices) or "(none)"
+        raise UnknownProviderError(
+            f"unknown {self.kind} provider: {name!r} (available: {available})"
+        )
+
+    def create(self, name: str, config: ConfigT) -> ServiceT:
+        return self.get_factory(name)(config)
 
 
-__all__ = ["ProviderRegistry"]
+__all__ = ["ProviderRegistry", "UnknownProviderError"]

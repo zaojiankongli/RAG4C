@@ -20,6 +20,7 @@ from typing import get_args
 
 import core.catalog_schema as catalog_schema
 import server.enterprise_task_operations_api as task_api
+from core.task_vocabulary import TASK_CATEGORY_API_VALUES
 
 REPO = Path(__file__).resolve().parents[1]
 API_FILE = REPO / "server/enterprise_task_operations_api.py"
@@ -28,6 +29,7 @@ API_FILE = REPO / "server/enterprise_task_operations_api.py"
 def test_the_request_side_vocabularies_are_the_core_ones() -> None:
     assert get_args(task_api.SourceKind) == catalog_schema.ENTERPRISE_TASK_SOURCE_KINDS
     assert get_args(task_api.TaskStatus) == catalog_schema.ENTERPRISE_TASK_STATUSES
+    assert get_args(task_api.TaskCategory) == TASK_CATEGORY_API_VALUES
 
 
 def test_no_list_cap_is_a_copied_number() -> None:
@@ -75,15 +77,14 @@ def test_reconcile_and_saved_view_agree_with_the_core_predicate() -> None:
 
 
 def test_categories_keeps_its_deliberate_asymmetry() -> None:
-    """把这条钉住，防止下一位顺手"统一"掉：categories 的字面量有 7 个成员，上限却是 5。
+    """别名输入词表与 canonical storage 上限保持有意不对称。
 
-    那 5 == `len(ENTERPRISE_TASK_CATEGORIES)`，而多出来的 `content` / `source` 是**兼容别名**，
-    已存的用户视图里就有它们。所以这里刻意只派生上限、不派生字面量 —— 照 #6 其余两栏的写法
-    把字面量也收成 5，会让老视图直接 422。
+    `content` / `source` 等是兼容输入别名，数据库仍只写 canonical category。
     """
-    source = API_FILE.read_text(encoding="utf-8")
-    block = source.split("class SavedViewFilters", 1)[1].split("class ", 1)[0]
-    categories = re.search(r"categories:.*?= Field\(default=None, max_length=(\d+)\)", block, re.S)
-    assert categories, "categories 那一栏的形状变了，这条保护得跟着搬"
-    assert int(categories.group(1)) == len(catalog_schema.ENTERPRISE_TASK_CATEGORIES)
-    assert '"content"' in block and '"source"' in block, "别名被删了 —— 老视图会 422"
+    assert len(get_args(task_api.TaskCategory)) > len(catalog_schema.ENTERPRISE_TASK_CATEGORIES)
+    assert "content" in get_args(task_api.TaskCategory)
+    assert "source" in get_args(task_api.TaskCategory)
+    metadata = task_api.SavedViewFilters.model_fields["categories"].metadata
+    assert [item.max_length for item in metadata if hasattr(item, "max_length")] == [
+        len(catalog_schema.ENTERPRISE_TASK_CATEGORIES)
+    ]

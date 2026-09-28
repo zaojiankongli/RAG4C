@@ -37,6 +37,7 @@ from core.enterprise_automation_workflows import (
     canonical_automation_trigger_event,
     evaluate_automation_condition,
     preview_automation_rule as preview_automation_rule_pure,
+    resolve_automation_action_target,
 )
 from core.enterprise_tenant_idempotency import (
     TenantMutationIdempotencyConflict,
@@ -2318,25 +2319,10 @@ TRIGGER_ADAPTER_ORDER: tuple[str, ...] = tuple(TRIGGER_ADAPTER_REGISTRY)
 def _target_for_event(
     event: Mapping[str, Any], action_code: str, rule_id: str
 ) -> tuple[str, str, str | None]:
-    facts = event.get("safe_facts")
-    safe_facts = facts if isinstance(facts, Mapping) else {}
-    if action_code == "pause_rule":
-        return "automation_rule", rule_id, None
-    task_id = safe_facts.get("task_id")
-    if isinstance(task_id, str) and task_id:
-        clean_task = _id(task_id, "safe_facts.task_id", 128)
-        return "task", clean_task, clean_task
-    source_id = safe_facts.get("source_id")
-    if isinstance(source_id, str) and source_id:
-        return "source", _id(source_id, "safe_facts.source_id", 128), None
-    approval_id = safe_facts.get("approval_request_id")
-    if isinstance(approval_id, str) and approval_id:
-        return (
-            "approval_request",
-            _id(approval_id, "safe_facts.approval_request_id", 128),
-            None,
-        )
-    return "source_event", _id(event["source_event_id"], "source_event_id", 128), None
+    try:
+        return resolve_automation_action_target(event, action_code, rule_id)
+    except AutomationAuthorityError as exc:
+        raise EnterpriseAutomationWorkflowsInvalid(str(exc)) from exc
 
 
 def _safe_event_for_processing(

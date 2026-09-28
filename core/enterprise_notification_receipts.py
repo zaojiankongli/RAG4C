@@ -11,6 +11,7 @@ import math
 import re
 import uuid
 from typing import Any
+from urllib.parse import urlencode
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
@@ -27,6 +28,16 @@ from core.notification_receipt_kinds import (
     notification_receipt_kind,
     register_notification_receipt_kind,
 )
+from core.notification_route_adapters import (
+    InvalidNotificationRouteAdapterKey,
+    InvalidNotificationRouteAdapterResult,
+    NotificationRouteContext,
+    invoke_notification_route_adapter,
+    notification_route_adapter_key,
+    register_notification_route_adapter,
+    resolve_notification_route_adapter,
+)
+from core.providers import UnknownProviderError
 from core.enterprise_tenant_idempotency import (
     TenantMutationIdempotencyConflict,
     TenantMutationIdempotencyInProgress,
@@ -252,65 +263,175 @@ def _safe_facts(value: Any, field: str) -> dict[str, Any]:
     return {key: result[key] for key in sorted(result)}
 
 
-def _safe_route(row: TenantNotification, tenant_id: str) -> tuple[dict[str, str], dict[str, Any]]:
+def _safe_route(row: TenantNotification, tenant_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
     params = row.target_route_params_json
     if not isinstance(params, Mapping):
         raise NotificationReceiptUnavailable("notification route is unavailable")
     raw = dict(params)
     if any(not isinstance(key, str) for key in raw):
         raise NotificationReceiptUnavailable("notification route is unavailable")
+    source_kind = row.source_kind
     code = str(row.target_route_code)
-    if code == "knowledge_quality_operations" and row.source_kind == "quality_alert":
-        allowed_new = {"dataset_id", "section", "alert_id"}
-        allowed_old = {"tenant_id", "dataset_id", "release_id", "channel_id", "alert_id"}
-        if set(raw) == allowed_new:
-            if raw.get("dataset_id") != row.source_dataset_id or raw.get("section") != "releases":
-                raise NotificationReceiptUnavailable("notification route is unavailable")
-            dataset_id = _identifier(raw["dataset_id"], "route.dataset_id", 64)
-            section = _text(raw["section"], "route.section", 32)
-            alert_id = _identifier(raw["alert_id"], "route.alert_id")
-        elif set(raw) == allowed_old:
-            if raw.get("tenant_id") != tenant_id or raw.get("dataset_id") != row.source_dataset_id:
-                raise NotificationReceiptUnavailable("notification route is unavailable")
-            dataset_id = _identifier(raw["dataset_id"], "route.dataset_id", 64)
-            section = "releases"
-            alert_id = _identifier(raw["alert_id"], "route.alert_id")
-        else:
+    if not isinstance(source_kind, str):
+        raise NotificationReceiptUnavailable("notification route is unavailable")
+    context = NotificationRouteContext(
+        source_kind=source_kind,
+        route_code=code,
+        tenant_id=tenant_id,
+        row=row,
+        raw_params=raw,
+    )
+    try:
+        adapter_key = notification_route_adapter_key(
+            context.source_kind, context.route_code
+        )
+    except InvalidNotificationRouteAdapterKey as exc:
+        raise NotificationReceiptUnavailable(
+            "notification route is unavailable"
+        ) from exc
+    try:
+        adapter = resolve_notification_route_adapter(adapter_key)
+    except UnknownProviderError as exc:
+        raise NotificationReceiptUnavailable(
+            "notification route is unavailable"
+        ) from exc
+    try:
+        adapter_result = invoke_notification_route_adapter(adapter, context)
+    except InvalidNotificationRouteAdapterResult as exc:
+        raise NotificationReceiptUnavailable(
+            "notification route is unavailable"
+        ) from exc
+    if not isinstance(adapter_result, tuple) or len(adapter_result) != 2:
+        raise NotificationReceiptUnavailable("notification route is unavailable")
+    adapter_params, adapter_route = adapter_result
+    return _validate_notification_route_adapter_result(
+        context, adapter_params, adapter_route
+    )
+
+
+def _validate_notification_route_adapter_result(
+    context: NotificationRouteContext,
+    adapter_params: Any,
+    adapter_route: Any,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if not isinstance(adapter_params, Mapping) or not isinstance(adapter_route, Mapping):
+        raise NotificationReceiptUnavailable("notification route is unavailable")
+    if set(adapter_route) != {"code", "path", "query", "href"}:
+        raise NotificationReceiptUnavailable("notification route is unavailable")
+    if adapter_route.get("code") != context.route_code:
+        raise NotificationReceiptUnavailable("notification route is unavailable")
+
+    path = adapter_route.get("path")
+    if (
+        not isinstance(path, str)
+        or not re.fullmatch(r"/enterprise(?:/[A-Za-z0-9_-]+)+", path)
+        or ".." in path.split("/")
+    ):
+        raise NotificationReceiptUnavailable("notification route is unavailable")
+
+    query = adapter_route.get("query")
+    if not isinstance(query, Mapping):
+        raise NotificationReceiptUnavailable("notification route is unavailable")
+    safe_query: dict[str, str] = {}
+    for key, value in query.items():
+        if (
+            not isinstance(key, str)
+            or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", key) is None
+            or not isinstance(value, str)
+        ):
             raise NotificationReceiptUnavailable("notification route is unavailable")
-        if alert_id != str(row.source_id):
+        normalized = _safe_scalar(value, f"route.query.{key}")
+        if not isinstance(normalized, str):
             raise NotificationReceiptUnavailable("notification route is unavailable")
-        query = {"dataset": dataset_id, "section": section, "alert": alert_id}
-        route = {
-            "code": code,
-            "path": "/enterprise/knowledge-base",
-            "query": query,
-            "href": "/enterprise/knowledge-base?dataset="
-            + dataset_id
-            + "&section="
-            + section
-            + "&alert="
-            + alert_id,
-        }
-        return {"dataset_id": dataset_id, "section": section, "alert_id": alert_id}, route
-    if code == "enterprise_approval" and row.source_kind == "approval_pending_for_me":
-        if set(raw) == {"request_id"}:
-            request_id = _identifier(raw["request_id"], "route.request_id")
-        elif set(raw) == {"tenant_id", "approval_request_id"}:
-            if raw.get("tenant_id") != tenant_id:
-                raise NotificationReceiptUnavailable("notification route is unavailable")
-            request_id = _identifier(raw["approval_request_id"], "route.request_id")
-        else:
+        safe_query[key] = normalized
+
+    safe_href = path
+    if safe_query:
+        safe_href += "?" + urlencode(safe_query)
+    return _safe_facts(adapter_params, "notification route params"), {
+        "code": context.route_code,
+        "path": path,
+        "query": {key: safe_query[key] for key in sorted(safe_query)},
+        # Adapter-provided href is not authoritative; render a canonical relative URL.
+        "href": safe_href,
+    }
+
+
+def _adapt_quality_alert_route(
+    context: NotificationRouteContext,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    row = context.row
+    tenant_id = context.tenant_id
+    raw = context.raw_params
+    code = context.route_code
+    allowed_new = {"dataset_id", "section", "alert_id"}
+    allowed_old = {"tenant_id", "dataset_id", "release_id", "channel_id", "alert_id"}
+    if set(raw) == allowed_new:
+        if raw.get("dataset_id") != row.source_dataset_id or raw.get("section") != "releases":
             raise NotificationReceiptUnavailable("notification route is unavailable")
-        if request_id != str(row.source_id):
+        dataset_id = _identifier(raw["dataset_id"], "route.dataset_id", 64)
+        section = _text(raw["section"], "route.section", 32)
+        alert_id = _identifier(raw["alert_id"], "route.alert_id")
+    elif set(raw) == allowed_old:
+        if raw.get("tenant_id") != tenant_id or raw.get("dataset_id") != row.source_dataset_id:
             raise NotificationReceiptUnavailable("notification route is unavailable")
-        route = {
-            "code": code,
-            "path": "/enterprise/approvals",
-            "query": {"request": request_id},
-            "href": "/enterprise/approvals?request=" + request_id,
-        }
-        return {"request_id": request_id}, route
-    raise NotificationReceiptUnavailable("notification route is unavailable")
+        dataset_id = _identifier(raw["dataset_id"], "route.dataset_id", 64)
+        section = "releases"
+        alert_id = _identifier(raw["alert_id"], "route.alert_id")
+    else:
+        raise NotificationReceiptUnavailable("notification route is unavailable")
+    if alert_id != str(row.source_id):
+        raise NotificationReceiptUnavailable("notification route is unavailable")
+    query = {"dataset": dataset_id, "section": section, "alert": alert_id}
+    route = {
+        "code": code,
+        "path": "/enterprise/knowledge-base",
+        "query": query,
+        "href": "/enterprise/knowledge-base?dataset="
+        + dataset_id
+        + "&section="
+        + section
+        + "&alert="
+        + alert_id,
+    }
+    return {"dataset_id": dataset_id, "section": section, "alert_id": alert_id}, route
+
+
+def _adapt_approval_route(
+    context: NotificationRouteContext,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    row = context.row
+    tenant_id = context.tenant_id
+    raw = context.raw_params
+    code = context.route_code
+    if set(raw) == {"request_id"}:
+        request_id = _identifier(raw["request_id"], "route.request_id")
+    elif set(raw) == {"tenant_id", "approval_request_id"}:
+        if raw.get("tenant_id") != tenant_id:
+            raise NotificationReceiptUnavailable("notification route is unavailable")
+        request_id = _identifier(raw["approval_request_id"], "route.request_id")
+    else:
+        raise NotificationReceiptUnavailable("notification route is unavailable")
+    if request_id != str(row.source_id):
+        raise NotificationReceiptUnavailable("notification route is unavailable")
+    route = {
+        "code": code,
+        "path": "/enterprise/approvals",
+        "query": {"request": request_id},
+        "href": "/enterprise/approvals?request=" + request_id,
+    }
+    return {"request_id": request_id}, route
+
+
+def register_builtin_notification_route_adapters() -> None:
+    register_notification_route_adapter(
+        "quality_alert", "knowledge_quality_operations", _adapt_quality_alert_route,
+        replace=True,
+    )
+    register_notification_route_adapter(
+        "approval_pending_for_me", "enterprise_approval", _adapt_approval_route,
+        replace=True,
+    )
 
 
 def _notification_payload(
@@ -1485,3 +1606,4 @@ def register_builtin_notification_receipt_kinds() -> None:
 
 
 register_builtin_notification_receipt_kinds()
+register_builtin_notification_route_adapters()

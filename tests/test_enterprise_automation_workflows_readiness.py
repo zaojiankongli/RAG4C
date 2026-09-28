@@ -380,6 +380,56 @@ def test_0035_capability_is_not_available_before_0035_and_ready_at_0035(tmp_path
         engine.dispose()
 
 
+def test_capability_remains_ready_when_known_catalog_advances_to_0036(tmp_path: Path) -> None:
+    engine = _engine(tmp_path, "stage25-after-0036.db")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE alembic_version SET version_num=:revision"),
+                {"revision": manifest.ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION},
+            )
+        assert manifest.inspect_enterprise_automation_workflows_capability(engine) == (
+            "ready",
+            (),
+        )
+    finally:
+        engine.dispose()
+
+
+def test_capability_keeps_not_available_for_later_revision_without_automation_tables(
+    tmp_path: Path,
+) -> None:
+    engine = _engine(tmp_path, "stage34-after-0036.db", full=False)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE alembic_version SET version_num=:revision"),
+                {"revision": manifest.ENTERPRISE_KNOWLEDGE_SERVING_RELIABILITY_REVISION},
+            )
+        assert manifest.inspect_enterprise_automation_workflows_capability(engine) == (
+            "not_available",
+            (),
+        )
+    finally:
+        engine.dispose()
+
+
+def test_capability_keeps_exact_minimum_revision_missing_tables_error(tmp_path: Path) -> None:
+    engine = _engine(tmp_path, "stage25-missing-automation.db", full=False)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE alembic_version SET version_num=:revision"),
+                {"revision": REVISION},
+            )
+        assert manifest.inspect_enterprise_automation_workflows_capability(engine) == (
+            "not_available",
+            ("Automation tables are missing",),
+        )
+    finally:
+        engine.dispose()
+
+
 def test_capability_order_places_automation_after_task_operations() -> None:
     from server import enterprise_readiness_api as api
 

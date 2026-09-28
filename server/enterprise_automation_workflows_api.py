@@ -23,6 +23,11 @@ from pydantic import (
     model_validator,
 )
 
+from core.automation_rule_strategies import (
+    AutomationParameterSpec,
+    action_parameter_specs,
+    condition_parameter_specs,
+)
 from core.knowledge_permissions import KNOWLEDGE_READ
 from server.knowledge_auth import KnowledgeActor, require_knowledge_permission
 
@@ -30,6 +35,8 @@ EngineProvider = Callable[[], Any]
 ServiceProvider = Any
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_DECLARED_CODE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_DECLARED_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ERROR_CODE = re.compile(r"^[a-z][a-z0-9_]{1,127}$")
@@ -222,6 +229,51 @@ RuleId = Annotated[str, Path(min_length=1, max_length=128, pattern=_SAFE_ID.patt
 RunId = Annotated[str, Path(min_length=1, max_length=128, pattern=_SAFE_ID.pattern)]
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)]
 
+
+def _validate_declared_parameter(
+    spec: AutomationParameterSpec,
+    value: Any,
+    field: str,
+) -> None:
+    if spec.kind == "boolean":
+        if type(value) is not bool:
+            raise ValueError(f"{field} must be a boolean")
+        return
+    if spec.kind == "integer":
+        if (
+            type(value) is not int
+            or type(value) is bool
+            or value < (0 if spec.minimum is None else spec.minimum)
+            or (spec.maximum is not None and value > spec.maximum)
+        ):
+            raise ValueError(f"{field} is invalid")
+        return
+    if spec.kind == "text":
+        if type(value) is not str:
+            raise ValueError(f"{field} must be a string")
+        _safe_text(value, field, maximum=spec.maximum_length or 512)
+        return
+    if spec.kind == "identifier":
+        if type(value) is not str:
+            raise ValueError(f"{field} must be a string")
+        normalized = _safe_text(value, field, maximum=128)
+        if _DECLARED_IDENTIFIER.fullmatch(normalized) is None or ".." in normalized:
+            raise ValueError(f"{field} is invalid")
+        return
+    if type(value) is not str:
+        raise ValueError(f"{field} is not allowed")
+    normalized = _safe_text(value, field, maximum=128)
+    canonical = normalized.casefold().replace("-", "_").replace(" ", "_")
+    if _DECLARED_CODE.fullmatch(canonical) is None or (
+        spec.allowed_values
+        and canonical
+        not in {
+            item.casefold().replace("-", "_").replace(" ", "_")
+            for item in spec.allowed_values
+        }
+    ):
+        raise ValueError(f"{field} is not allowed")
+
 AutomationTriggerCode = Literal[
     "task_failed",
     "task_source_stale",
@@ -282,20 +334,16 @@ class ActionPlanStep(StrictModel):
 
     @model_validator(mode="after")
     def validate_params(self) -> "ActionPlanStep":
-        allowed_by_action: dict[str, frozenset[str]] = {
-            "notify_operator": frozenset({"category", "severity", "title"}),
-            "request_approval": frozenset({"action_type", "resource_type", "reason_code"}),
-            "open_task_attention": frozenset({"task_id", "reason_code"}),
-            "pause_rule": frozenset({"reason_code"}),
-        }
+        specs = action_parameter_specs(self.action_code)
+        allowed = frozenset(spec.name for spec in specs)
         _validate_safe_mapping(
-            self.params, "action.params", allowed=allowed_by_action[self.action_code]
+            self.params, "action.params", allowed=allowed
         )
-        required = allowed_by_action[self.action_code]
-        if set(self.params) != required:
+        if set(self.params) != set(allowed):
             raise ValueError("action.params must exactly match the selected action")
-        if any(type(value) is not str for value in self.params.values()):
-            raise ValueError("action.params values must be strings")
+        for spec in specs:
+            value = self.params[spec.name]
+            _validate_declared_parameter(spec, value, f"action.params.{spec.name}")
         return self
 
 
@@ -553,54 +601,17 @@ def _bound_trigger_event(event: TriggerEventRequest, tenant_id: str) -> dict[str
 def _validate_condition_params(
     condition_code: AutomationConditionCode, params: Mapping[str, SafeScalar]
 ) -> None:
-    allowed_by_condition: dict[str, frozenset[str]] = {
-        "always": frozenset(),
-        "status_is": frozenset({"status"}),
-        "action_required": frozenset({"value"}),
-        "severity_at_least": frozenset({"severity"}),
-        "attempt_exhausted": frozenset({"minimum_attempts"}),
-        "source_is_stale": frozenset({"value"}),
-    }
-    allowed = allowed_by_condition[condition_code]
+    specs = condition_parameter_specs(condition_code)
+    allowed = frozenset(spec.name for spec in specs)
     _validate_safe_mapping(params, "condition_params", allowed=allowed)
     if set(params) != allowed:
         raise ValueError("condition_params must exactly match the selected condition")
-    if condition_code == "always":
-        return
-    if (
-        condition_code in {"action_required", "source_is_stale"}
-        and type(params["value"]) is not bool
-    ):
-        raise ValueError("condition_params.value must be a boolean")
-    if condition_code == "status_is" and (
-        type(params["status"]) is not str
-        or params["status"]
-        not in {
-            "queued",
-            "running",
-            "succeeded",
-            "failed",
-            "cancelled",
-            "blocked",
-            "unavailable",
-            "approved",
-            "rejected",
-            "expired",
-            "completed",
-        }
-    ):
-        raise ValueError("condition_params.status is not allowed")
-    if condition_code == "severity_at_least" and (
-        type(params["severity"]) is not str
-        or params["severity"] not in {"info", "warning", "error", "critical"}
-    ):
-        raise ValueError("condition_params.severity is not allowed")
-    if condition_code == "attempt_exhausted" and (
-        type(params["minimum_attempts"]) is not int
-        or type(params["minimum_attempts"]) is bool
-        or not 1 <= params["minimum_attempts"] <= 100
-    ):
-        raise ValueError("condition_params.minimum_attempts is invalid")
+    for spec in specs:
+        _validate_declared_parameter(
+            spec,
+            params[spec.name],
+            f"condition_params.{spec.name}",
+        )
 
 
 def unavailable(message: str = _UNAVAILABLE_MESSAGE) -> HTTPException:

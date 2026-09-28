@@ -13,33 +13,28 @@ import json
 import re
 from typing import Any
 
+from core.task_source_kinds import (
+    TASK_SOURCE_KIND_NAMES,
+    task_route_codes,
+    task_route_schema,
+    task_route_source_kinds,
+    task_source_kind,
+    task_source_kind_names,
+)
+from core.task_vocabulary import (
+    TASK_CATEGORY_VALUES,
+    TASK_NORMALIZED_STATUS_VALUES,
+    canonical_task_category,
+    canonical_task_status,
+)
+
 UTC = timezone.utc
 TASK_OPERATIONS_SCHEMA_VERSION = 1
 TASK_SCHEMA_VERSION = TASK_OPERATIONS_SCHEMA_VERSION
 
-TASK_SOURCE_KINDS = frozenset(
-    {
-        "document_ingest",
-        "index_operation",
-        "source_sync",
-        "document_delete",
-        "audit_export",
-        "release_quality_scan",
-        "release_recertification",
-    }
-)
+TASK_SOURCE_KINDS = frozenset(TASK_SOURCE_KIND_NAMES)
 ALLOWED_SOURCE_KINDS = TASK_SOURCE_KINDS
-TASK_NORMALIZED_STATUSES = frozenset(
-    {
-        "queued",
-        "running",
-        "succeeded",
-        "failed",
-        "cancelled",
-        "blocked",
-        "unavailable",
-    }
-)
+TASK_NORMALIZED_STATUSES = frozenset(TASK_NORMALIZED_STATUS_VALUES)
 ALLOWED_NORMALIZED_STATUSES = TASK_NORMALIZED_STATUSES
 TASK_ACTIONS = frozenset({"retry", "cancel", "acknowledge"})
 ALLOWED_ACTIONS = TASK_ACTIONS
@@ -61,15 +56,11 @@ TASK_RECONCILIATION_STATUSES = frozenset({"started", "completed", "failed"})
 ALLOWED_RECONCILIATION_STATUSES = TASK_RECONCILIATION_STATUSES
 TASK_VIEW_STATUSES = frozenset({"active", "archived"})
 ALLOWED_VIEW_STATUSES = TASK_VIEW_STATUSES
-TASK_CATEGORIES = frozenset({"documents", "indexing", "sources", "compliance", "quality"})
+TASK_CATEGORIES = frozenset(TASK_CATEGORY_VALUES)
 _CATEGORY_BY_SOURCE_KIND = {
-    "document_ingest": "documents",
-    "index_operation": "indexing",
-    "source_sync": "sources",
-    "document_delete": "documents",
-    "audit_export": "compliance",
-    "release_quality_scan": "quality",
-    "release_recertification": "quality",
+    name: spec.public_category
+    for name in task_source_kind_names()
+    if (spec := task_source_kind(name)) is not None
 }
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -441,75 +432,36 @@ def _first_value(
 
 
 def _normalize_source_kind(value: Any) -> str:
-    if not isinstance(value, str) or value not in TASK_SOURCE_KINDS:
+    if (
+        not isinstance(value, str)
+        or value != value.strip().casefold()
+        or task_source_kind(value) is None
+    ):
         raise _invalid("source_kind is not allowed")
     return value
 
 
 def _normalize_category(value: Any, source_kind: str) -> str:
-    expected = _CATEGORY_BY_SOURCE_KIND[source_kind]
+    spec = task_source_kind(source_kind)
+    if spec is None:
+        raise _invalid("source_kind is not allowed")
+    expected = spec.public_category
     if value is None:
         return expected
-    if not isinstance(value, str):
-        raise _invalid("category must be a string")
-    aliases = {
-        "document": "documents",
-        "ingest": "documents",
-        "index": "indexing",
-        "source": "sources",
-        "audit": "compliance",
-        "release_quality": "quality",
-    }
-    normalized = aliases.get(
-        value.strip().casefold().replace("-", "_").replace(" ", "_"), value.strip().casefold()
-    )
-    if normalized not in TASK_CATEGORIES:
-        raise _invalid("category is not allowed")
+    try:
+        normalized = canonical_task_category(value)
+    except ValueError as exc:
+        raise _invalid(str(exc)) from exc
     if normalized != expected:
         raise _invalid("category does not match source_kind")
     return normalized
 
 
-_STATUS_ALIASES = {
-    "queued": "queued",
-    "queue": "queued",
-    "pending": "queued",
-    "created": "queued",
-    "waiting": "queued",
-    "scheduled": "queued",
-    "running": "running",
-    "in_progress": "running",
-    "inprogress": "running",
-    "processing": "running",
-    "claimed": "running",
-    "started": "running",
-    "succeeded": "succeeded",
-    "success": "succeeded",
-    "completed": "succeeded",
-    "complete": "succeeded",
-    "done": "succeeded",
-    "failed": "failed",
-    "failure": "failed",
-    "error": "failed",
-    "cancelled": "cancelled",
-    "canceled": "cancelled",
-    "aborted": "cancelled",
-    "blocked": "blocked",
-    "paused": "blocked",
-    "unavailable": "unavailable",
-    "unknown": "unavailable",
-    "stale": "unavailable",
-}
-
-
 def _normalize_status(value: Any, field: str = "normalized_status") -> str:
-    if not isinstance(value, str):
-        raise _invalid(f"{field} is not allowed")
-    normalized = value.strip().casefold().replace("-", "_").replace(" ", "_")
-    result = _STATUS_ALIASES.get(normalized)
-    if result not in TASK_NORMALIZED_STATUSES:
-        raise _invalid(f"{field} is not allowed")
-    return result
+    try:
+        return canonical_task_status(value, field=field)
+    except ValueError as exc:
+        raise _invalid(str(exc)) from exc
 
 
 def _normalize_filter_status(value: Any, field: str = "filters.normalized_statuses") -> str:
@@ -1261,22 +1213,10 @@ _FILTER_ALLOWED = {
 
 
 def _normalize_filter_category(value: Any) -> str:
-    if not isinstance(value, str):
-        raise _invalid("filters.categories contains an invalid category")
-    aliases = {
-        "document": "documents",
-        "ingest": "documents",
-        "index": "indexing",
-        "source": "sources",
-        "audit": "compliance",
-        "release_quality": "quality",
-    }
-    normalized = aliases.get(
-        value.strip().casefold().replace("-", "_").replace(" ", "_"), value.strip().casefold()
-    )
-    if normalized not in TASK_CATEGORIES:
-        raise _invalid("filters.categories contains an invalid category")
-    return normalized
+    try:
+        return canonical_task_category(value, field="filters.categories")
+    except ValueError as exc:
+        raise _invalid("filters.categories contains an invalid category") from exc
 
 
 def _string_list(value: Any, field: str, normalizer: Any) -> list[str]:
@@ -1426,11 +1366,11 @@ def canonical_task_reconciliation(
     if not isinstance(counts_value, Mapping):
         raise _invalid("source_counts must be an object")
     counts_raw = _merge_mapping_input(counts_value, {}, "task_reconciliation.source_counts")
-    if set(counts_raw) - TASK_SOURCE_KINDS:
+    if set(counts_raw) - frozenset(task_source_kind_names()):
         raise _invalid("source_counts contains an unknown source_kind")
     counts = {
         kind: _exact_integer(counts_raw.get(kind, 0), f"source_counts.{kind}", minimum=0)
-        for kind in sorted(TASK_SOURCE_KINDS)
+        for kind in sorted(task_source_kind_names())
     }
     result: dict[str, Any] = {
         "tenant_id": _safe_component(
@@ -1478,62 +1418,22 @@ def canonical_task_reconciliation(
 
 
 _ROUTE_DEFAULT_BY_SOURCE_KIND = {
-    "document_ingest": "knowledge_documents",
-    "index_operation": "enterprise_documents",
-    "source_sync": "knowledge_sources",
-    "document_delete": "enterprise_recycle_bin",
-    "audit_export": "enterprise_compliance",
-    "release_quality_scan": "knowledge_quality_operations",
-    "release_recertification": "knowledge_quality_operations",
+    name: spec.default_route_code
+    for name in task_source_kind_names()
+    if (spec := task_source_kind(name)) is not None
 }
 _ROUTE_SOURCE_KINDS = {
-    "knowledge_documents": frozenset({"document_ingest", "index_operation", "document_delete"}),
-    "enterprise_documents": frozenset({"document_ingest", "index_operation", "document_delete"}),
-    "knowledge_sources": frozenset({"source_sync"}),
-    "enterprise_sources": frozenset({"source_sync"}),
-    "enterprise_compliance": frozenset({"audit_export"}),
-    "enterprise_audit": frozenset({"audit_export"}),
-    "enterprise_audit_compliance": frozenset({"audit_export"}),
-    "knowledge_quality_operations": frozenset({"release_quality_scan", "release_recertification"}),
-    "enterprise_release_quality": frozenset({"release_quality_scan", "release_recertification"}),
-    "enterprise_recycle_bin": frozenset({"document_delete"}),
-    "enterprise_tasks": TASK_SOURCE_KINDS,
-    "enterprise_task_operations": TASK_SOURCE_KINDS,
+    route_code: task_route_source_kinds(route_code)
+    for route_code in task_route_codes()
 }
 _ROUTE_CODES = frozenset(_ROUTE_SOURCE_KINDS)
 
 
 def _route_schema(route_code: str, source_kind: str | None) -> tuple[set[str], set[str]]:
-    if route_code in {"knowledge_sources", "enterprise_sources"}:
-        return {"tenant_id", "source_id", "run_id"}, {"tenant_id", "source_id"}
-    if route_code in {"enterprise_compliance", "enterprise_audit", "enterprise_audit_compliance"}:
-        return {"tenant_id", "export_id", "job_id"}, {"tenant_id", "export_id"}
-    if route_code in {"knowledge_quality_operations", "enterprise_release_quality"}:
-        allowed = {"tenant_id", "dataset_id", "release_id", "scan_id", "job_id"}
-        required = {"tenant_id", "dataset_id", "release_id"}
-        if source_kind == "release_quality_scan":
-            required.add("scan_id")
-        elif source_kind == "release_recertification":
-            required.add("job_id")
-        return allowed, required
-    if route_code == "enterprise_recycle_bin":
-        return {"tenant_id", "dataset_id", "document_id", "entry_id", "batch_id", "operation_id"}, {
-            "tenant_id",
-            "dataset_id",
-            "document_id",
-        }
-    if route_code in {"knowledge_documents", "enterprise_documents"}:
-        return {
-            "tenant_id",
-            "dataset_id",
-            "document_id",
-            "attempt_id",
-            "operation_id",
-            "batch_id",
-        }, {"tenant_id", "dataset_id", "document_id"}
-    if route_code in {"enterprise_tasks", "enterprise_task_operations"}:
-        return {"tenant_id", "task_id"}, {"tenant_id", "task_id"}
-    raise _invalid("route code is not allowed")
+    try:
+        return task_route_schema(route_code, source_kind)
+    except ValueError as exc:
+        raise _invalid(str(exc)) from exc
 
 
 def _parse_route_arguments(args: tuple[Any, ...]) -> tuple[Any, Any, Any]:
@@ -1546,7 +1446,7 @@ def _parse_route_arguments(args: tuple[Any, ...]) -> tuple[Any, Any, Any]:
     if len(args) == 2:
         if (
             isinstance(args[0], str)
-            and args[0] in TASK_SOURCE_KINDS
+            and task_source_kind(args[0]) is not None
             and isinstance(args[1], Mapping)
         ):
             return args[0], args[1], None
@@ -1608,18 +1508,21 @@ def project_task_source_route(
     if selected_route is None:
         if selected_source_kind is None:
             raise _invalid("route code is required")
-        selected_route = _ROUTE_DEFAULT_BY_SOURCE_KIND[selected_source_kind]
+        spec = task_source_kind(selected_source_kind)
+        if spec is None:
+            raise _invalid("source_kind is not allowed")
+        selected_route = spec.default_route_code
     if (
         not isinstance(selected_route, str)
         or _CODE_RE.fullmatch(selected_route.strip().casefold()) is None
     ):
         raise _invalid("route code is invalid")
     selected_route = selected_route.strip().casefold()
-    if selected_route not in _ROUTE_CODES:
+    if selected_route not in task_route_codes():
         raise _invalid("route code is not allowed")
     if (
         selected_source_kind is not None
-        and selected_source_kind not in _ROUTE_SOURCE_KINDS[selected_route]
+        and selected_source_kind not in task_route_source_kinds(selected_route)
     ):
         raise _invalid("route source scope is invalid")
     parameter_value = _first_value(raw, "params", "route_params", "target_route_params")

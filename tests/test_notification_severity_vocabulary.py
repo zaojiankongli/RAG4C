@@ -90,3 +90,37 @@ def test_info_is_a_live_tier_rather_than_a_dead_value() -> None:
     assert rank["info"] == min(rank.values())
     assert rank["info"] < rank["warning"] < rank["critical"]
     assert "info" in center._ALLOWED_SEVERITIES  # noqa: SLF001
+
+
+def test_an_undeclared_severity_at_the_comparison_site_is_fail_closed() -> None:
+    """§9 第 32 条裁定：订阅过滤的比较点不再裸取 `_SEVERITY_RANK[severity]`。
+
+    `minimum_severity` 那一侧一直有守；这一侧原来裸取，词表一旦与存储脱钩，
+    表现是 KeyError——完整性故障被压成一个看不懂的栈。现在显式抛
+    `NotificationMaterializationUnavailable`；压成 `False` 返回等于静默丢
+    投递，那是更坏的出口，这条同时防住两种回潮。
+    """
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from core.enterprise_notification_materializer import (
+        NotificationMaterializationUnavailable,
+        _subscription_allows,  # noqa: SLF001
+    )
+
+    row = SimpleNamespace(
+        status="active",
+        minimum_severity="warning",
+        preference="subscribed",
+        muted_until=None,
+    )
+    now = datetime.now(timezone.utc)
+
+    assert _subscription_allows(row, "critical", False, now) is True
+    assert _subscription_allows(row, "info", False, now) is False
+    try:
+        _subscription_allows(row, "fatal", False, now)
+    except NotificationMaterializationUnavailable:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("未声明 severity 必须显式报完整性故障，而不是静默放行或丢投递")
