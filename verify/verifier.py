@@ -40,6 +40,7 @@ from core.milvus_client import RagMilvusClient
 from core.observability import get_logger
 from core.tracing import current_trace
 from models.schemas import Chunk, Citation, RetrievedChunk
+from retrieval.qa_matcher import parse_qa_chunk_id
 
 from verify.claims import split_claims
 
@@ -283,6 +284,7 @@ class CitationVerifier:
             metrics = get_metrics()
             metrics.incr("verify.total")
             failed_citations = sum(1 for c in citations if c.status != "ok")
+            metrics.incr("verify.citations.total", value=len(citations))
             if failed_citations:
                 metrics.incr("verify.citations.failed", value=failed_citations)
             if entailment_scores:
@@ -357,7 +359,10 @@ class CitationVerifier:
            真正要比的是"生成时看到的"和"现在是什么"这两个**不同时刻**的值。
         """
         t0 = time.perf_counter()
-        ids = sorted({c.chunk_id for c in citations})
+        # QA 权威证据由目录判定，从来就不在 Milvus 投影里：把它们送去查"当前记录"
+        # 只会让每条 FAQ 引用都被判成 stale。
+        qa_ids = {c.chunk_id for c in citations if parse_qa_chunk_id(c.chunk_id)}
+        ids = sorted({c.chunk_id for c in citations} - qa_ids)
         # 检索快照：答案实际依据的那一份文本的哈希。
         snapshot: dict[str, str] = {
             rc.chunk.chunk_id: rc.chunk.text_hash for rc in evidence
@@ -378,6 +383,8 @@ class CitationVerifier:
                 notes.append(f"L2 取回最新 chunk 失败（陈旧性本轮未校验）: {exc}")
                 fresh = {rc.chunk.chunk_id: rc.chunk for rc in evidence}
         for cit in citations:
+            if cit.chunk_id in qa_ids:
+                continue
             record = fresh.get(cit.chunk_id)
             if record is None:
                 # 引用存在但最新记录缺失（可能已删除）：同样视为不可信
@@ -665,7 +672,7 @@ def create_verifier(settings=None) -> CitationVerifier:
     mode, strict, ratio = resolve_verify_settings(settings)
     return CitationVerifier(
         milvus=RagMilvusClient(settings.milvus),
-        judge_llm=create_client(settings.llm.judge),
+        judge_llm=create_client(settings.llm.judge, slot="judge"),
         embedder=None,  # 事后指派按需显式注入（避免隐式加载模型）
         groundedness_template=None,
         entailment_mode=mode,

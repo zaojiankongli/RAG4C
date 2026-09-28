@@ -20,6 +20,8 @@
 | 9 | `query.qa_retrieval.catalog_error` 把"数据集未建/未授权"和"读目录失败"混成一个信号 | 监控页这张卡片的文案是"QA 目录读取失败"（warning 色），一次普通的全域问答就点亮它——本轮我就是被它误导，先去查了一遍 PG 方言 | `ContentNotFound` 归为预期空包（调用方记 `no_bundle`），`catalog_error` 只在真读失败时计数 |
 | 10 | 裸 SQL 拿布尔列跟整数**比较**：`WHERE ... AND retrieval_enabled=1`（`scripts/enterprise_catalog_upgrade.py:1604`） | MySQL/sqlite 收下，PG 直接 `operator does not exist: boolean = integer`；而同一份仓库在 CHECK 里本来就会写方言无关的 `NOT retrieval_enabled`（`models/orm.py:6034`） | 改成 `AND retrieval_enabled`；并补第三条通道的整类栅栏（见 §7 待办 1）——此前只扫了 DDL 默认值与 INSERT 值，比较这一类没人管 |
 | 11 | `RetrievalTrace` 的 stale 引用列表用 `key={link.chunkId}` 当 React key | 浏览器控制台刷 **363 次** `Warning: Encountered two children with the same key` —— 两条 stale 引用命中同一条证据时 key 就撞了（QA 权威打通后更容易出现：`qa::qa-…` 会被多个结论同时引用）。单测此前每条 stale 都取自不同 chunkId，所以一直全绿 | key 换成 `${link.chunkId}:${linkIndex}`（重复引用是合法数据，撞的是 key）；补一条会复现该警告的用例，并让**探针把控制台错误判红** |
+| 12 | L2 陈旧性检查把**所有**引用的 chunk_id 送去 Milvus 投影查"当前记录"，包括 `qa::…` | QA 权威证据来自目录、从来就不在投影里 → `fresh.get() is None` → **每一条 FAQ 引用都被判成 `stale`**，理由写着"chunk 记录已不存在（可能已删除）"。这是缺陷 8 打通 QA 权威之后才可达的，方向正好相反：最强的证据被自己的校验层贬成不可信 | `verify/verifier.py` 先把 `parse_qa_chunk_id` 认得的 id 摘出查询与判旧范围（FAQ 时效在装包时就由 approved+active+retrieval_enabled+生效窗口判过，文本也是同一请求里从目录取的）；配一对双向用例：QA 引用不判旧 / 普通文档 chunk 查不到**仍须**判旧 |
+| 13 | 监控页"引用失败率"的**分母是验证次数**：`verify.citations.failed.count / verify.total.count` | 两个 `count` 都是"调用次数"——`core/metrics.py:187-203` 的 `incr(value=N)` 记的是**一次值为 N 的采样**，条数在 `sum` 里。所以 2 次验证各出现一次失败就显示 **100.0 %**，而那一轮真实是 2/22 与 4/20 | 新增 `verify.citations.total`（按引用条数），前端两端都取 `sum`；卡片 hint 写明单位。`verifier.py:276` 注释里"按非 ok 引用数计数"点错了字段，一并更正 |
 
 缺陷 1 与 6 是**同一类**（布尔值写成整数），我第一遍只扫了 DDL 默认值，漏了运行期裸 SQL 里的 INSERT —— 整类扫描的范围当时判窄了，这条记在 §7 待办里。
 
@@ -289,6 +291,27 @@ QA 权威这一路的服务端计数器：`{"query.qa_retrieval.hit": 3.0, "quer
 组件栈直指 `RetrievalTrace.tsx` 的 `key={link.chunkId}`（§1 缺陷 11）。
 两处一起改：key 换成 `${link.chunkId}:${linkIndex}`，并让探针在 `console_errors` 非空时判红、
 按去重后的类别报前 3 条。
+
+### 5.4 缺陷 12/13 的实机前后对照
+
+`scripts/bench/probe_citation_statuses.py` 直接打 `/api/query`，按引用条数与 id 前缀分桶。
+同样两条问题：
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| Q1（24 条引用） | `stale 2 / ok 20`，理由都是"chunk 记录已不存在" | `ok/qa 5`、`ok/doc-* 18`、`unsupported/doc-* 1`，**stale 0** |
+| Q2（11 条引用） | `stale 3 / unsupported 1 / ok 16`（20 条那轮） | `ok/qa 2`、`ok/doc-* 7`、`unsupported/doc-* 2`，**stale 0** |
+| 卡片显示的"引用失败率" | 100.0 %（分母 = 2 次验证） | 4.2 %（1/24）与 18.2 %（2/11） |
+
+两处读数都变了：QA 引用不再被自己的 L2 判成陈旧（缺陷 12），
+比率改按引用条数算（缺陷 13）。剩下的 `unsupported` 是 L3 蕴含判定真不支撑，
+属质量而非观测问题。
+
+同一份数据还反证了缺陷 11：`doc-a55a8746f097::0001::d1` 以 `unsupported` **出现两次**——
+两条引用命中同一条 chunk 是合法形态，所以 key 不能只用 chunk_id。
+
+前端那条断言做过变异反打：把公式改回 `failed.count / verify.total.count`，
+用例读到的是 **200.0** 并判红（不是"没跑到"）。
 
 ## 6. 复现
 

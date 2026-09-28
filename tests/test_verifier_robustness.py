@@ -230,6 +230,35 @@ def test_l2_passes_when_text_is_unchanged() -> None:
     assert [c.status for c in r.citations] == ["ok"]
 
 
+def test_l2_does_not_call_catalog_qa_authority_stale() -> None:
+    """QA 权威证据来自目录，从来就不在 Milvus 投影里 —— 不能按"投影查不到"判它陈旧。
+
+    L2 的"当前记录"是从 `milvus.get_chunks_by_ids` 取的（本文件上一条用例就是这条路）。
+    QA 命中注入的 chunk_id 形如 `qa::qa-x`，Milvus 里必然没有，于是
+    **每一条 QA 权威引用都被标成 stale**，理由还写着"chunk 记录已不存在（可能已删除）"。
+    QA 的时效性在装载 FAQ 包时已经由目录判过了（approved + active +
+    retrieval_enabled + 生效窗口），文本也是同一请求里从目录取的。
+    """
+    qa = chunk("qa::qa-faq-1", "生产者注册表把算子标识与实现集中到一处声明。")
+    v = CitationVerifier(
+        milvus=FakeMilvus({}),
+        judge_llm=ScriptedJudge({"verdicts": [{"claim": "有个说法", "status": "supported"}]}),
+    )
+    r = v.verify("有个说法[1]。", evidence(qa))
+
+    assert [c.status for c in r.citations] == ["ok"]
+    assert not any("陈旧" in (c.reason or "") or "不存在" in (c.reason or "") for c in r.citations)
+
+
+def test_l2_still_flags_a_document_chunk_missing_from_the_projection() -> None:
+    """反向配对：上一条件只对 `qa::` 前缀放行，普通文档 chunk 查不到仍须判 stale。"""
+    doc = chunk("c9", "文档正文。")
+    v = CitationVerifier(milvus=FakeMilvus({}), judge_llm=ScriptedJudge({"verdicts": []}))
+    r = v.verify("有个说法[1]。", evidence(doc))
+
+    assert [c.status for c in r.citations] == ["stale"]
+
+
 def test_l2_self_consistent_record_is_never_stale() -> None:
     """一条自洽的记录不该被判 stale —— 这正是旧实现唯一会"触发"的条件。
 
