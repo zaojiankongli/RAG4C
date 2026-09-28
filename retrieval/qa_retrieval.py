@@ -49,7 +49,7 @@ def load_qa_bundle_best_effort(
         return []
     try:
         from core import catalog
-        from core.knowledge_content import KnowledgeContentRepository
+        from core.knowledge_content import ContentNotFound, KnowledgeContentRepository
         from core.metrics import get_metrics
         from core.observability import get_logger
     except Exception:  # noqa: BLE001
@@ -62,7 +62,9 @@ def load_qa_bundle_best_effort(
         return []
     try:
         repo = KnowledgeContentRepository(engine)
-        return repo.list_qa_retrieval_bundle(tenant_id, dataset_id or "default")
+        return repo.list_qa_retrieval_bundle(tenant_id, (dataset_id or "").strip())
+    except ContentNotFound:  # noqa: BLE001 - 数据集未建 = 本就没有 FAQ，调用方会记 no_bundle
+        return []
     except Exception:  # noqa: BLE001 - 生产失败可见，但不阻断问答
         try:
             get_metrics().incr("query.qa_retrieval.catalog_error")
@@ -94,6 +96,7 @@ def apply_qa_retrieval(
     dataset_id: str | None = None,
     settings: Any = None,
     bundle: Sequence[dict[str, Any]] | None = None,
+    acl: Sequence[str] | None = None,
 ) -> tuple[list[RetrievedChunk], list[str], bool]:
     """Merge QA evidence into retrieval chunks.
 
@@ -117,6 +120,12 @@ def apply_qa_retrieval(
         return list(chunks), traces, False
 
     if bundle is None:
+        # 全域包跨租户内所有知识库，而 qa_knowledge 没有 acl 列：带 acl 的请求
+        # 无法证明这条 FAQ 落在允许的切片里。按"不足即弃权"的姿态宁可不注入。
+        if acl and not (dataset_id or "").strip():
+            traces.append("QA 检索跳过：全域 + 限定资料范围（FAQ 无 acl 归属，无法证明在允许范围内）")
+            _qa_metric("query.qa_retrieval.acl_scope_skip")
+            return list(chunks), traces, False
         bundle = load_qa_bundle_best_effort(tenant_id, dataset_id)
     if not bundle:
         _qa_metric("query.qa_retrieval.no_bundle")

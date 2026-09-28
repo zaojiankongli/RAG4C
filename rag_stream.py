@@ -22,6 +22,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, Generator, Iterator
 
 from config.settings import Settings, get_settings, resolve_tenant
+from core.llm_usage import UsageLedger, iter_with_usage
 from core.observability import bind_query_id, setup_observability
 from core.tracing import current_trace, trace_session
 from models.schemas import QueryResult, RetrievedChunk
@@ -115,10 +116,14 @@ def _result_payload(result: QueryResult) -> dict[str, Any]:
         did = chunk.get("doc_id") if isinstance(chunk, dict) else chunk.doc_id
         text = chunk.get("text") if isinstance(chunk, dict) else chunk.text
         src = chunk.get("source") if isinstance(chunk, dict) else chunk.source
+        dsid = chunk.get("dataset_id") if isinstance(chunk, dict) else chunk.dataset_id
         evidence.append(
             {
                 "chunk_id": cid,
                 "doc_id": did,
+                # 证据自身声明的库归属（Chunk.dataset_id），前端 stale 深链据此
+                # 直达所在库；缺失时前端明确降级，不用查询作用域冒充出处。
+                "dataset_id": dsid,
                 "text": (text or "")[:400] + ("…" if text and len(text) > 400 else ""),
                 "score": round(score, 4),
                 "rank": rank,
@@ -130,6 +135,50 @@ def _result_payload(result: QueryResult) -> dict[str, Any]:
 
 
 def answer_query_stream(
+    query: str,
+    acl: list[str] | None = None,
+    retry: bool = True,
+    settings: Settings | None = None,
+    tenant_id: str | None = None,
+    dataset_id: str | None = None,
+    *,
+    query_id: str | None = None,
+    observer: RunObserver | None = None,
+    tenant_resolved: bool = False,
+) -> Iterator[dict[str, Any]]:
+    """流式回答：在 :func:`_answer_stream_inner` 外面套一层用量台账。
+
+    台账挂在 **done** 事件上（与非流式 ``QueryResult.usage`` 同构），
+    而不是散在内层 4 处 ``QueryResult`` 构造点里——流式生成器每一段
+    可能在不同上下文恢复，靠"每个构造点都记得挂"必然漏。
+    """
+    ledger = UsageLedger()
+    for event in iter_with_usage(
+        _answer_stream_inner(
+            query,
+            acl,
+            retry,
+            settings,
+            tenant_id,
+            dataset_id,
+            query_id=query_id,
+            observer=observer,
+            tenant_resolved=tenant_resolved,
+        ),
+        ledger,
+    ):
+        if event.get("type") == "done":
+            result = event.get("result")
+            if isinstance(result, dict):
+                try:
+                    prices = (settings or get_settings()).llm.price_table or {}
+                    result["usage"] = ledger.as_dict(prices)
+                except Exception:  # noqa: BLE001 - 台账失败不得影响答案
+                    result["usage"] = {}
+        yield event
+
+
+def _answer_stream_inner(
     query: str,
     acl: list[str] | None = None,
     retry: bool = True,
@@ -234,6 +283,7 @@ def answer_query_stream(
                 tenant_id=tenant,
                 dataset_id=dataset,
                 settings=settings or comp.get("settings") if isinstance(comp, dict) else settings,
+                acl=acl,
             )
             traces.extend(qa_traces)
         except Exception as exc:  # noqa: BLE001

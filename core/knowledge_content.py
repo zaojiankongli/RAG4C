@@ -1279,26 +1279,35 @@ class KnowledgeContentRepository:
         now: datetime | None = None,
         limit: int = 500,
     ) -> list[dict[str, Any]]:
-        """Effective QA plus alternatives/negatives for runtime retrieval matching."""
+        """Effective QA plus alternatives/negatives for runtime retrieval matching.
+
+        空 ``dataset_id`` 是**本租户全域**，与 ``QueryRequest.dataset_id`` 和
+        ``build_dataset_filter`` 的口径一致（空 = 不加知识库过滤），不是某个叫
+        ``default`` 的知识库。全域时 ``limit`` 是租户内的总量上限。
+        """
         moment = _naive_utc(now) or _utc_now()
         bounded = max(1, min(int(limit), 1000))
+        scoped = bool(dataset_id)
         with Session(self.engine, expire_on_commit=False) as session:
-            self._dataset(session, tenant_id, dataset_id)
+            if scoped:
+                self._dataset(session, tenant_id, dataset_id)
+            qa_filters = [
+                QAKnowledge.tenant_id == tenant_id,
+                QAKnowledge.review_status == "approved",
+                QAKnowledge.lifecycle_state == "active",
+                QAKnowledge.retrieval_enabled.is_(True),
+                or_(
+                    QAKnowledge.effective_from.is_(None),
+                    QAKnowledge.effective_from <= moment,
+                ),
+                or_(QAKnowledge.expires_at.is_(None), QAKnowledge.expires_at > moment),
+            ]
+            if scoped:
+                qa_filters.append(QAKnowledge.dataset_id == dataset_id)
             qa_rows = list(
                 session.scalars(
                     select(QAKnowledge)
-                    .where(
-                        QAKnowledge.tenant_id == tenant_id,
-                        QAKnowledge.dataset_id == dataset_id,
-                        QAKnowledge.review_status == "approved",
-                        QAKnowledge.lifecycle_state == "active",
-                        QAKnowledge.retrieval_enabled.is_(True),
-                        or_(
-                            QAKnowledge.effective_from.is_(None),
-                            QAKnowledge.effective_from <= moment,
-                        ),
-                        or_(QAKnowledge.expires_at.is_(None), QAKnowledge.expires_at > moment),
-                    )
+                    .where(*qa_filters)
                     .order_by(QAKnowledge.created_at, QAKnowledge.id)
                     .limit(bounded)
                 )
@@ -1307,23 +1316,26 @@ class KnowledgeContentRepository:
             alternatives: dict[str, list[str]] = {qid: [] for qid in qa_ids}
             negatives: dict[str, list[str]] = {qid: [] for qid in qa_ids}
             if qa_ids:
+                alt_filters = [
+                    QAAlternativeQuestion.tenant_id == tenant_id,
+                    QAAlternativeQuestion.qa_id.in_(qa_ids),
+                ]
+                neg_filters = [
+                    QANegativeQuestion.tenant_id == tenant_id,
+                    QANegativeQuestion.qa_id.in_(qa_ids),
+                ]
+                if scoped:
+                    alt_filters.append(QAAlternativeQuestion.dataset_id == dataset_id)
+                    neg_filters.append(QANegativeQuestion.dataset_id == dataset_id)
                 for alt in session.scalars(
                     select(QAAlternativeQuestion)
-                    .where(
-                        QAAlternativeQuestion.tenant_id == tenant_id,
-                        QAAlternativeQuestion.dataset_id == dataset_id,
-                        QAAlternativeQuestion.qa_id.in_(qa_ids),
-                    )
+                    .where(*alt_filters)
                     .order_by(QAAlternativeQuestion.created_at, QAAlternativeQuestion.id)
                 ):
                     alternatives.setdefault(alt.qa_id, []).append(alt.question)
                 for neg in session.scalars(
                     select(QANegativeQuestion)
-                    .where(
-                        QANegativeQuestion.tenant_id == tenant_id,
-                        QANegativeQuestion.dataset_id == dataset_id,
-                        QANegativeQuestion.qa_id.in_(qa_ids),
-                    )
+                    .where(*neg_filters)
                     .order_by(QANegativeQuestion.created_at, QANegativeQuestion.id)
                 ):
                     negatives.setdefault(neg.qa_id, []).append(neg.question)

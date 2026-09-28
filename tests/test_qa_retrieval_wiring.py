@@ -366,6 +366,76 @@ def test_stream_path_injects_qa_evidence(monkeypatch: pytest.MonkeyPatch) -> Non
     assert sgen.seen_chunks and sgen.seen_chunks[0].branch == "qa"
 
 
+def test_answer_sequential_blocks_acl_filtered_global_qa(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """钉住 rag.py 真把 acl 传下去了：没传的话这条路径会照常注入 FAQ。
+
+    单元级断言只覆盖 apply_qa_retrieval 自己的分支，入口忘传参数时仍然全绿。
+    """
+    from retrieval import qa_retrieval as qr
+
+    calls: list = []
+    monkeypatch.setattr(
+        qr, "load_qa_bundle_best_effort", lambda *a, **k: calls.append(a) or list(_QA_BUNDLE)
+    )
+    pipeline = PipelineSettings(
+        qa_retrieval_on=True,
+        complexity_gate_on=False,
+        rerank_on=False,
+        source_diversity="off",
+        top_k=2,
+        hyde_on=False,
+        subqueries_on=False,
+        stepback_on=False,
+    )
+    gen = _Generator()
+    comp = _comp(_MilvusEmpty(), gen, _Settings(pipeline))
+    result = rag._answer_sequential(
+        comp,
+        "How do I rotate credentials?",
+        ["hr"],
+        query_id="q-acl-1",
+        tenant_id="tenant-a",
+        dataset_id=None,
+        retry=False,
+    )
+    assert calls == [], "全域 + acl 不该去查 FAQ 包"
+    assert not [c for c in gen.seen_chunks if c.branch == "qa"]
+    assert any("QA 检索跳过" in t for t in result.traces)
+
+
+def test_answer_sequential_injects_global_qa_when_acl_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """反向证据：上一红的理由是 acl，不是全域本身或入口接线断了。"""
+    from retrieval import qa_retrieval as qr
+
+    monkeypatch.setattr(qr, "load_qa_bundle_best_effort", lambda *a, **k: list(_QA_BUNDLE))
+    pipeline = PipelineSettings(
+        qa_retrieval_on=True,
+        complexity_gate_on=False,
+        rerank_on=False,
+        source_diversity="off",
+        top_k=2,
+        hyde_on=False,
+        subqueries_on=False,
+        stepback_on=False,
+    )
+    gen = _Generator()
+    comp = _comp(_MilvusEmpty(), gen, _Settings(pipeline))
+    rag._answer_sequential(
+        comp,
+        "How do I rotate credentials?",
+        None,
+        query_id="q-global-1",
+        tenant_id="tenant-a",
+        dataset_id=None,
+        retry=False,
+    )
+    assert gen.seen_chunks and gen.seen_chunks[0].branch == "qa"
+
+
 def test_answer_evidence_repository_accepts_qa_chunk_ids(tmp_path: Path) -> None:
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session

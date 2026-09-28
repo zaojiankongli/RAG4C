@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from retrieval.qa_matcher import (
     QARecord,
     match_qa,
@@ -268,3 +270,68 @@ def test_apply_qa_retrieval_emits_metrics(monkeypatch):
         bundle=[{"qa_id": "qa-1", "question": "如何重置？", "answer": "A"}],
     )
     assert counts.get("query.qa_retrieval.hit") == 1
+
+
+class _OnPipeline:
+    pipeline = SimpleNamespace(qa_retrieval_on=True, qa_match_min_score=0.55, qa_match_top_k=3)
+
+
+_QUESTION = "如何重置？"
+_FAQ = [{"qa_id": "qa-1", "question": "如何重置？", "answer": "A",
+         "tenant_id": "t", "dataset_id": "kb-finance"}]
+
+
+def _bundle_loader(monkeypatch, calls: list):
+    import retrieval.qa_retrieval as qr
+
+    def _load(tenant_id, dataset_id):
+        calls.append((tenant_id, dataset_id))
+        return list(_FAQ)
+
+    monkeypatch.setattr(qr, "load_qa_bundle_best_effort", _load)
+
+
+def test_global_scope_with_acl_does_not_inject_faq(monkeypatch):
+    """全域 + 限定资料类型时不注入 FAQ。
+
+    ``qa_knowledge`` 没有 acl 列，全域包又跨租户内所有知识库，所以带 acl 的请求
+    无法证明这条 FAQ 在允许的切片里 —— 按本仓库"不足即弃权"的姿态宁可不用权威。
+    """
+    from retrieval.qa_retrieval import apply_qa_retrieval
+
+    calls: list = []
+    _bundle_loader(monkeypatch, calls)
+    chunks, traces, hit = apply_qa_retrieval(
+        _QUESTION, [], settings=_OnPipeline(), tenant_id="t", dataset_id=None, acl=["hr"]
+    )
+    assert hit is False
+    assert chunks == []
+    assert calls == []
+    assert any("acl" in t or "资料范围" in t for t in traces)
+
+
+def test_global_scope_without_acl_still_injects_faq(monkeypatch):
+    """反向证据：把全域一起关掉，上面那条就白测了。"""
+    from retrieval.qa_retrieval import apply_qa_retrieval
+
+    calls: list = []
+    _bundle_loader(monkeypatch, calls)
+    chunks, _traces, hit = apply_qa_retrieval(
+        _QUESTION, [], settings=_OnPipeline(), tenant_id="t", dataset_id=None, acl=None
+    )
+    assert hit is True
+    assert [c.chunk.chunk_id for c in chunks] == ["qa::qa-1"]
+    assert calls == [("t", None)]
+
+
+def test_named_scope_with_acl_still_loads_that_dataset_bundle(monkeypatch):
+    """具名知识库仍按原行为查包（acl 只在无法证明范围的全域口径下生效）。"""
+    from retrieval.qa_retrieval import apply_qa_retrieval
+
+    calls: list = []
+    _bundle_loader(monkeypatch, calls)
+    _chunks, _traces, hit = apply_qa_retrieval(
+        _QUESTION, [], settings=_OnPipeline(), tenant_id="t", dataset_id="kb-hr", acl=["hr"]
+    )
+    assert hit is True
+    assert calls == [("t", "kb-hr")]

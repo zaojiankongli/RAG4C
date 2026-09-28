@@ -38,6 +38,7 @@ from typing import Any
 from config.settings import Settings, get_settings
 from core.embedding import create_embedder
 from core.llm import create_client
+from core.llm_usage import usage_scope
 from core.metrics import get_metrics
 from core.milvus_client import RagMilvusClient
 from core.observability import bind_query_id, get_logger, setup_observability
@@ -129,14 +130,14 @@ def _build_pipeline(settings: Settings) -> dict[str, Any]:
     milvus = RagMilvusClient(settings.milvus)
     reranker = create_reranker(settings.reranker)
     rewriter = QueryRewriter(
-        llm_client=create_client(settings.llm.rewrite),
+        llm_client=create_client(settings.llm.rewrite, slot="rewrite"),
         template_path=_PROJECT_ROOT / "prompts" / "query_rewrite_v1.txt",
         gate_enabled=settings.pipeline.complexity_gate_on,
     )
     router = RouteResolver(
         embedding_router=EmbeddingRouter(embedder=embedder),
         llm_fallback=LlmRouterFallback(
-            llm_client=create_client(settings.llm.router_llm),
+            llm_client=create_client(settings.llm.router_llm, slot="router_llm"),
             template_path=_PROJECT_ROOT / "prompts" / "router_llm_v1.txt",
         ),
     )
@@ -158,20 +159,18 @@ def _build_pipeline(settings: Settings) -> dict[str, Any]:
         rewriter=rewriter,
         router=router,
         settings=settings,
-        graph_retriever=optional["graph_retriever"],
-        hyde=optional["hyde"],
-        subqueries=optional["subqueries"],
-        stepback=optional["stepback"],
-        sentence_window=optional["sentence_window"],
-        auto_filter=optional["auto_filter"],
+        # 整本注册表字典直传：新注册第 7 个可选策略时，构造出的组件必须能
+        # 到达管线的 _components，否则阶段侧永远看到 None、静默 skip
+        # "unavailable"（S-RS 评审 P1-1：此前只按六个写死键挑值，断在最后一环）。
+        components=optional,
         reranker_cb=reranker_cb,
     )
-    generator = Generator(llm_client=create_client(settings.llm.generation))
+    generator = Generator(llm_client=create_client(settings.llm.generation, slot="generation"))
     # 验证强度由 verify 段决定（非法值在 resolve_verify_settings 内兜底为最严格）
     entailment_mode, verify_strict, verify_sample_ratio = resolve_verify_settings(settings)
     verifier = CitationVerifier(
         milvus=milvus,
-        judge_llm=create_client(settings.llm.judge, circuit=judge_cb),
+        judge_llm=create_client(settings.llm.judge, circuit=judge_cb, slot="judge"),
         embedder=embedder,  # 启用事后引用指派（任务书 6.3）
         groundedness_template=None,
         entailment_mode=entailment_mode,
@@ -340,6 +339,7 @@ def _answer_sequential(
                 tenant_id=tenant_id,
                 dataset_id=dataset_id,
                 settings=comp.get("settings") or get_settings(),
+                acl=acl,
             )
             traces.extend(qa_traces)
         except Exception as exc:  # noqa: BLE001 - QA 增强失败不阻断主路径
@@ -503,28 +503,58 @@ def answer_query(
     # 以进程级单例配置为准，保证与调用方传入的 settings 无关。
     setup_observability((settings or get_settings()).observability)
 
-    if (settings or get_settings()).pipeline.graph_engine_on:
-        try:
-            from rag_graph import run_graph_answer  # 惰性导入：避免 import rag 即 import langgraph
+    # 用量台账：一次问答一个，contextvar 保证并发查询之间不串账。
+    # 两条编排路径（图 / 顺序）共用这一个 scope，图回退时账不会断。
+    with usage_scope() as ledger:
+        if (settings or get_settings()).pipeline.graph_engine_on:
+            try:
+                from rag_graph import run_graph_answer  # 惰性导入：避免 import rag 即 import langgraph
 
-            with bind_query_id(query_id):
-                result = run_graph_answer(
-                    comp, query, acl, retry, query_id,
-                    tenant_id=tenant, dataset_id=dataset,
-                )
-            if result is not None:
-                return result
-            # 图不可用（返回 None，最常见的回退路径）：累计回退指标
-            get_metrics().incr("graph.fallback")
-        except Exception:  # noqa: BLE001 - 图不可用一律回退顺序编排
-            get_logger(__name__).exception("图编排不可用，回退顺序管线")
-            get_metrics().incr("graph.fallback")
+                with bind_query_id(query_id):
+                    result = run_graph_answer(
+                        comp, query, acl, retry, query_id,
+                        tenant_id=tenant, dataset_id=dataset,
+                    )
+                if result is not None:
+                    return _attach_usage(result, ledger, settings)
+                # 图不可用（返回 None，最常见的回退路径）：累计回退指标
+                get_metrics().incr("graph.fallback")
+            except Exception:  # noqa: BLE001 - 图不可用一律回退顺序编排
+                get_logger(__name__).exception("图编排不可用，回退顺序管线")
+                get_metrics().incr("graph.fallback")
 
-    # 与图路径一致：回退路径也要有 query_id 上下文（日志 / span 可串联）
-    with bind_query_id(query_id):
-        return _answer_sequential(
-            comp, query, acl, retry, query_id, tenant_id=tenant, dataset_id=dataset
-        )
+        # 与图路径一致：回退路径也要有 query_id 上下文（日志 / span 可串联）
+        with bind_query_id(query_id):
+            return _attach_usage(
+                _answer_sequential(
+                    comp, query, acl, retry, query_id, tenant_id=tenant, dataset_id=dataset
+                ),
+                ledger,
+                settings,
+            )
+
+
+def _attach_usage(result: QueryResult, ledger: Any, settings: Settings | None) -> QueryResult:
+    """把用量台账挂到结果上（台账没开 / 取不到时保持空字典）。
+
+    挂在这里而不是各条返回分支里，是为了让"漏挂"这件事不可能发生：
+    QueryResult 有 5 处构造点，将来再加一处也不会忘。
+    """
+    try:
+        prices = (settings or get_settings()).llm.price_table or {}
+        payload = ledger.as_dict(prices) if ledger is not None else {}
+        result.usage = payload
+        # 顺带进进程指标：台账是"这一问"的视角，指标是"所有问"的视角，
+        # P50/P95 那类分布问题只能靠后者回答（比如"最近是不是变贵了"）。
+        if payload:
+            metrics = get_metrics()
+            metrics.observe("query.tokens.total", float(payload.get("total_tokens", 0) or 0))
+            metrics.observe("query.llm.calls", float(payload.get("calls", 0) or 0))
+            if payload.get("failures"):
+                metrics.incr("query.llm.failures", value=float(payload["failures"]))
+    except Exception:  # noqa: BLE001 - 台账失败绝不能影响答案本身
+        result.usage = {}
+    return result
 
 
 __all__ = ["answer_query", "get_pipeline", "reset_pipeline"]
