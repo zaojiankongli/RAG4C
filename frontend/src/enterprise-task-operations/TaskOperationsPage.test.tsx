@@ -154,6 +154,29 @@ function hookValue() {
           created_by: "account-a",
           updated_by: "account-a",
         },
+        {
+          id: "view-completed",
+          tenant_id: "tenant-a",
+          account_id: "account-a",
+          name: "已完成任务",
+          status: "active",
+          filters: {
+            source_kinds: [],
+            categories: [],
+            statuses: ["succeeded"],
+            action_required: null,
+            dataset_id: null,
+            workspace_id: null,
+            occurred_from: null,
+            occurred_to: null,
+          },
+          revision: 1,
+          created_at: "2026-08-29T08:00:00Z",
+          updated_at: "2026-08-29T08:00:00Z",
+          archived_at: null,
+          created_by: "account-a",
+          updated_by: "account-a",
+        },
       ],
       nextCursor: null,
       invalidItemCount: 0,
@@ -236,6 +259,10 @@ describe("TaskOperationsPage adapter", () => {
     expect(screen.getByRole("region", { name: "任务中心适配器" })).toBeTruthy();
     expect(screen.getByText("同步客户服务手册")).toBeTruthy();
     expect(screen.getByText("1")).toBeTruthy();
+    expect(
+      (center.props?.controller as { savedViews: { items: Array<{ id: string; filter: string }> } })
+        .savedViews.items.find((view) => view.id === "view-completed"),
+    ).toMatchObject({ id: "view-completed", filter: "completed" });
 
     fireEvent.click(screen.getByRole("button", { name: "重试映射" }));
     await waitFor(() => expect(retry).toHaveBeenCalledWith(projection));

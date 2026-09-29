@@ -1,15 +1,26 @@
-export type TaskSourceKind =
-  | "document_ingest"
-  | "index_operation"
-  | "source_sync"
-  | "document_delete"
-  | "audit_export"
-  | "release_quality_scan"
-  | "release_recertification";
-export type TaskCategory = "content" | "indexing" | "source" | "compliance" | "quality";
-export type TaskStatus =
-  "queued" | "running" | "succeeded" | "failed" | "cancelled" | "blocked" | "unavailable";
-export type TaskDisplayStatus = Exclude<TaskStatus, "succeeded"> | "completed";
+import {
+  displayTaskCategory,
+  displayTaskStatus,
+  isTaskSourceKind,
+  normalizeTaskStatus,
+  savedViewTaskCategory,
+} from "./taskVocabulary";
+import type {
+  TaskCategory,
+  TaskDisplayStatus,
+  TaskSourceKind,
+  TaskStatus,
+} from "./taskVocabulary";
+
+export type {
+  TaskApiCategory,
+  TaskCategory,
+  TaskDisplayStatus,
+  TaskFactCategory,
+  TaskSourceKind,
+  TaskStatus,
+} from "./taskVocabulary";
+
 export type TaskActionType = "retry" | "cancel" | "acknowledge";
 export type TaskActionStatus = "requested" | "dispatched" | "applied" | "rejected" | "expired";
 export type TaskEventType =
@@ -204,24 +215,6 @@ export interface TaskActionOutcome {
   retryable: boolean;
 }
 
-const SOURCE_KINDS = new Set<TaskSourceKind>([
-  "document_ingest",
-  "index_operation",
-  "source_sync",
-  "document_delete",
-  "audit_export",
-  "release_quality_scan",
-  "release_recertification",
-]);
-const STATUSES = new Set<TaskStatus>([
-  "queued",
-  "running",
-  "succeeded",
-  "failed",
-  "cancelled",
-  "blocked",
-  "unavailable",
-]);
 const ROUTES: Record<TaskRouteCode, { path: TaskRoute["path"]; allowed: readonly string[] }> = {
   document_operations: { path: "/documents", allowed: ["document_id"] },
   index_operations: { path: "/enterprise/knowledge-base", allowed: ["dataset_id", "operation_id"] },
@@ -336,41 +329,16 @@ function assertTenant(value: unknown, scope: TaskModelScope): string {
 }
 function sourceKind(value: unknown, field = "source_kind"): TaskSourceKind {
   const kind = requiredText(value, field, 48) as TaskSourceKind;
-  if (!SOURCE_KINDS.has(kind)) throw new Error(`${field} is not allowed`);
+  if (!isTaskSourceKind(kind)) throw new Error(`${field} is not allowed`);
   return kind;
 }
 function category(value: unknown, source: TaskSourceKind): TaskCategory {
-  const aliases: Record<string, TaskCategory> = {
-    content: "content",
-    documents: "content",
-    document: "content",
-    indexing: "indexing",
-    index: "indexing",
-    source: "source",
-    sources: "source",
-    compliance: "compliance",
-    audit: "compliance",
-    quality: "quality",
-  };
-  const result = aliases[requiredText(value, "category", 32)];
-  if (!result) throw new Error("category is not allowed");
-  const expected: Record<TaskSourceKind, TaskCategory> = {
-    document_ingest: "content",
-    index_operation: "indexing",
-    source_sync: "source",
-    document_delete: "content",
-    audit_export: "compliance",
-    release_quality_scan: "quality",
-    release_recertification: "quality",
-  };
-  if (result !== expected[source]) throw new Error("category does not match source_kind");
-  return result;
+  const normalized = requiredText(value, "category", 32);
+  return displayTaskCategory(normalized, source);
 }
 function normalizedStatus(value: unknown): TaskStatus {
-  const raw = requiredText(value, "normalized_status", 32);
-  const text = raw === "completed" ? "succeeded" : raw;
-  if (!STATUSES.has(text as TaskStatus)) throw new Error("normalized_status is not allowed");
-  return text as TaskStatus;
+  const normalized = requiredText(value, "normalized_status", 32);
+  return normalizeTaskStatus(normalized);
 }
 function safeMessage(value: unknown, field: string): string | null {
   if (value === null || value === undefined) return null;
@@ -613,7 +581,7 @@ export function projectTaskProjection(value: unknown, scope: TaskModelScope): Ta
     workspace_id: workspaceId,
     category: normalizedCategory,
     normalized_status: status,
-    status: status === "succeeded" ? "completed" : status,
+    status: displayTaskStatus(status),
     action_required: exactBoolean(source.action_required, "action_required"),
     progress_percent: progress,
     progress,
@@ -815,27 +783,12 @@ export function projectTaskEventPage(value: unknown, scope: TaskModelScope): Tas
 }
 
 function categoryFilter(value: unknown, field: string): TaskCategory {
-  const aliases: Record<string, TaskCategory> = {
-    content: "content",
-    documents: "content",
-    document: "content",
-    indexing: "indexing",
-    index: "indexing",
-    source: "source",
-    sources: "source",
-    compliance: "compliance",
-    audit: "compliance",
-    quality: "quality",
-  };
-  const result = aliases[requiredText(value, field, 32)];
-  if (!result) throw new Error(`${field} is not allowed`);
-  return result;
+  const normalized = requiredText(value, field, 32);
+  return savedViewTaskCategory(normalized, field);
 }
 function statusFilter(value: unknown, field: string): TaskStatus {
-  const raw = requiredText(value, field, 32);
-  const result = raw === "completed" ? "succeeded" : raw;
-  if (!STATUSES.has(result as TaskStatus)) throw new Error(`${field} is not allowed`);
-  return result as TaskStatus;
+  const normalized = requiredText(value, field, 32);
+  return normalizeTaskStatus(normalized, field);
 }
 function stringArray<T extends string>(
   value: unknown,

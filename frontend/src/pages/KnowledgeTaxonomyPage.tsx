@@ -20,6 +20,7 @@ import {
   resolveKnowledgeWorkspaceScope,
 } from "../knowledge/workspaceScope";
 import { navigationIntent } from "../run/appRoute";
+import { commitNavigationIntent } from "../run/navigationAdapter";
 import type {
   DocumentCatalogSummaryResponse,
   DocumentItem,
@@ -115,12 +116,7 @@ function paginationItems(current: number, total: number): PaginationItem[] {
 
 function navigateToDocuments() {
   const intent = navigationIntent(window.location, "documents");
-  if (intent.mode === "history") {
-    window.history.pushState(window.history.state, "", intent.url);
-  } else {
-    window.location.hash = intent.url;
-  }
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  commitNavigationIntent(intent, { dispatchPopStateAfterHash: true });
 }
 
 function formatUpdatedAt(value: string | null | undefined): string {

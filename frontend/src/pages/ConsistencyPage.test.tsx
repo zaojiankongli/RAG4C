@@ -34,11 +34,13 @@ vi.mock("../knowledge/KnowledgeWorkspaceContext", () => ({
 
 const summary: ConsistencySummaryResponse = {
   mode: "report-only",
+  projection_read_status: "best_effort",
   best_effort: true,
   counts: {
     documents_scanned: 6,
     authoritative_heads: 8,
     projection_chunks: 13,
+    projection_read_incomplete_documents: 0,
     missing_chunks: 3,
     stale_chunks: 2,
     orphaned_chunks: 4,
@@ -94,14 +96,20 @@ function deferred<T>() {
 }
 
 function deadLetterList(count: number): DeadLetterListResponse {
+  const pairs = [
+    ["milvus_chunks", "upsert"],
+    ["graph_projection", "delete"],
+    ["milvus_chunks", "reconcile"],
+    ["catalog_finalize", "finalize_document_delete"],
+  ] as const;
   return {
     count,
     items: Array.from({ length: count }, (_, index) => ({
       dead_letter_ref: `ref-dead-${index + 1}`,
       operation_ref: `ref-operation-${index + 1}`,
       document_ref: `ref-document-${index + 1}`,
-      target_store: `store-${index + 1}`,
-      operation: `operation-${index + 1}`,
+      target_store: pairs[index % pairs.length][0],
+      operation: pairs[index % pairs.length][1],
       retry_count: index,
       failed_at: `2026-08-24T08:${String(index).padStart(2, "0")}:10Z`,
       requeued_operation_ref: null,
@@ -180,6 +188,39 @@ describe("ConsistencyPage", () => {
     expect(screen.queryByRole("button", { name: /修复/ })).toBeNull();
   });
 
+  it("surfaces incomplete projection reads rather than labeling the report clean", async () => {
+    api.fetchConsistencySummary.mockResolvedValueOnce({
+      ...summary,
+      projection_read_status: "incomplete",
+      counts: {
+        ...summary.counts,
+        projection_read_incomplete_documents: 2,
+        missing_chunks: 0,
+        stale_chunks: 0,
+        orphaned_chunks: 0,
+        blocked_documents: 0,
+      },
+      drift_categories: {
+        ...summary.drift_categories,
+        missing: 0,
+        stale: 0,
+        orphaned: 0,
+        blocked: 0,
+      },
+      has_drift: false,
+    });
+    render(<ConsistencyPage />);
+
+    const authority = await screen.findByRole("alert", { name: /最佳努力目录报告/ });
+    expect(authority.textContent).toContain("2 份文档");
+    expect(screen.getByText("报告含未完整读取")).toBeTruthy();
+    expect(screen.queryByText("未检测到漂移")).toBeNull();
+    const lifeline = screen.getByRole("list", { name: "知识一致性生命线" });
+    expect(within(lifeline).getByText("漂移").parentElement?.classList.contains("is-incomplete")).toBe(
+      true,
+    );
+  });
+
   it("keeps full refs available by title and copy while visually truncating table cells", async () => {
     const writeText = installClipboard();
     render(<ConsistencyPage />);
@@ -217,6 +258,27 @@ describe("ConsistencyPage", () => {
     await waitFor(() => expect(api.fetchConsistencyDeadLetters).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("已入队")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /修复/ })).toBeNull();
+  });
+
+  it("keeps unknown historical projection pairs visible but without a requeue action", async () => {
+    const unknown = {
+      ...deadLetters,
+      items: [
+        {
+          ...deadLetters.items[0],
+          target_store: "custom_vector",
+          operation: "custom_reconcile",
+        },
+      ],
+    };
+    api.fetchConsistencyDeadLetters.mockResolvedValueOnce(unknown);
+    render(<ConsistencyPage />);
+
+    const table = await screen.findByRole("region", { name: "死信记录，可横向滚动" });
+    expect(within(table).getByText("custom_reconcile")).toBeTruthy();
+    expect(within(table).getByText("仅展示")).toBeTruthy();
+    expect(within(table).queryByRole("button", { name: /重放死信/ })).toBeNull();
+    expect(api.requeueConsistencyDeadLetter).not.toHaveBeenCalled();
   });
 
   it("does not fabricate data offline and retry refreshes connection before refetching", async () => {

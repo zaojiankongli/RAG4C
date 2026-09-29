@@ -13,20 +13,12 @@ import {
   parseChunkWorkbenchLocation,
   type PageKey,
 } from "../run/appRoute";
-
-function navigateTo(url: string, mode: "history" | "hash") {
-  if (mode === "history") {
-    window.history.pushState(window.history.state, "", url);
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  } else {
-    window.location.hash = url;
-  }
-}
+import { commitNavigationIntent } from "../run/navigationAdapter";
 
 /** 侧栏入口落在没有 doc 参数的路由上时不该是死路：就地选文档，不新造查询端点。 */
 function openDocuments() {
   const intent = navigationIntent(window.location, "documents");
-  navigateTo(intent.url, intent.mode);
+  commitNavigationIntent(intent);
 }
 
 function WorkbenchLauncher({
@@ -178,7 +170,7 @@ export default function ChunkWorkbenchPage({
 
   const goTo = useCallback((key: PageKey) => {
     const intent = navigationIntent(window.location, key);
-    navigateTo(intent.url, intent.mode);
+    commitNavigationIntent(intent);
   }, []);
 
   const leaveWorkspace = useCallback(
@@ -200,7 +192,7 @@ export default function ChunkWorkbenchPage({
             chunkId: "",
             datasetId,
           });
-          navigateTo(intent.url, intent.mode);
+          commitNavigationIntent(intent);
         }}
       />
     );

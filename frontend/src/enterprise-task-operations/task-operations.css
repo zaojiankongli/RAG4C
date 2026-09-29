@@ -412,7 +412,7 @@
 
 .task-operations__content-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(270px, 330px);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   min-width: 0;
   padding: 22px 24px 28px;
@@ -428,10 +428,10 @@
   border: 1px solid var(--to-line);
   border-radius: 10px;
   background: var(--to-surface);
-  box-shadow: var(--to-shadow);
+  box-shadow: none;
 }
 
-> [role="tablist"] {
+.task-operations__tabs > [role="tablist"] {
   padding: 0 16px;
   border-bottom: 1px solid var(--to-line);
   background: var(--to-surface);
@@ -447,12 +447,12 @@
 
 .task-operations__desktop-table {
   min-width: 0;
-  overflow-x: auto;
+  overflow: visible;
   padding: 0 14px 16px;
 }
 
-.task-operations__desktop-table .t-table {
-  min-width: 900px;
+.task-operations__desktop-table .rag-table-shell {
+  min-width: 0;
 }
 
 .task-operations__desktop-table:focus-visible,
@@ -670,7 +670,8 @@
   background: var(--to-primary-soft);
 }
 
-.task-operations__saved-view .t-button {
+.task-operations__saved-view .t-button,
+.task-operations__saved-view .rag-button {
   min-width: 0;
   overflow: hidden;
   text-align: left;
@@ -736,7 +737,8 @@
   white-space: nowrap;
 }
 
-.task-operations__reconciliation-copy .t-button {
+.task-operations__reconciliation-copy .t-button,
+.task-operations__reconciliation-copy .rag-button {
   justify-self: start;
   padding-left: 0;
 }
@@ -802,13 +804,22 @@
   font-size: 12px;
 }
 
-.task-operations .t-drawer__header {
+.task-operations__detail-drawer .t-drawer__header,
+.task-operations__detail-drawer .rag-drawer-header {
   padding: 18px 22px;
   border-bottom: 1px solid var(--to-line);
 }
 
-.task-operations .t-drawer__body,
+.task-operations__detail-drawer .t-drawer__body,
+.task-operations__detail-drawer .rag-drawer-body,
 .task-operations .t-dialog__body {
+  min-width: 0;
+  padding: 0;
+  background: var(--to-surface);
+}
+
+.task-operations__mutation-dialog .t-dialog__body,
+.task-operations__mutation-dialog .rag-dialog-body {
   min-width: 0;
   padding: 0;
   background: var(--to-surface);
@@ -841,6 +852,12 @@
   gap: 7px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.task-operations__drawer-close {
+  width: var(--control-min-h);
+  min-width: var(--control-min-h);
+  padding: 0 !important;
 }
 
 .task-operations__detail-shell {
@@ -1032,7 +1049,7 @@
   }
 
   .task-operations__content-grid {
-    grid-template-columns: minmax(0, 1fr) 290px;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -1159,7 +1176,7 @@
   /* 375px 下 6 个 tab 比视口宽 43px（历史实测见 frontend/output/visual-quality/baseline2.json：
    * 当时溢出发生在 TDesign 内层 nav-wrap 上，外层设 overflow 不生效）。
    * 迁到兼容层后 [role="tablist"] 自己就是那个 flex 容器，所以放开它就够了。 */
-  > [role="tablist"] {
+  .task-operations__tabs > [role="tablist"] {
     overflow-x: auto;
   }
 
@@ -1219,7 +1236,8 @@
     padding: 12px;
   }
 
-  .task-operations__row-actions .t-button {
+  .task-operations__row-actions .t-button,
+  .task-operations__row-actions .rag-button {
     flex: 1 1 auto;
   }
 
@@ -1258,4 +1276,105 @@ html[data-theme="dark"] .task-operations__header,
 html[data-theme="dark"] .task-operations__rail-stage--current,
 html[data-theme="dark"] .task-operations__rail-stage--warning {
   background: linear-gradient(135deg, var(--to-surface), #1b2c40);
+}
+
+/* Keep the task list primary; secondary information expands without nested cards. */
+.task-operations__header {
+  background: var(--to-surface);
+}
+
+.task-operations__list-title {
+  padding: 20px 20px 12px;
+  font-size: 18px;
+  line-height: 28px;
+}
+
+.task-operations__notices,
+.task-operations__exceptions {
+  display: grid;
+  gap: 12px;
+  margin: 20px 24px 0;
+}
+
+.task-operations__exceptions {
+  padding: 16px 20px;
+  border-left: 3px solid var(--to-warning);
+  background: var(--to-surface);
+}
+
+.task-operations__exceptions h2 {
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.task-operations__exception-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+}
+
+.task-operations__exceptions .task-operations__urgent-items {
+  display: grid;
+  gap: 8px;
+  padding-left: 20px;
+  color: var(--to-ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.task-operations__secondary {
+  min-width: 0;
+  border-top: 1px solid var(--to-line);
+}
+
+.task-operations__disclosure {
+  border-bottom: 1px solid var(--to-line);
+}
+
+.task-operations__disclosure > summary {
+  padding: 18px 4px;
+  color: var(--to-ink);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 24px;
+  cursor: pointer;
+}
+
+.task-operations__disclosure > summary:focus-visible {
+  outline: 2px solid var(--to-primary);
+  outline-offset: -2px;
+}
+
+.task-operations__disclosure[open] {
+  padding-bottom: 20px;
+}
+
+.task-operations__disclosure > .task-operations__side-panel {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.task-operations__disclosure > .task-operations__attention,
+.task-operations__disclosure > .task-operations__rail-wrap {
+  padding: 16px 0;
+}
+
+@media (max-width: 600px) {
+  .task-operations__notices,
+  .task-operations__exceptions {
+    margin-right: 16px;
+    margin-left: 16px;
+  }
+
+  .task-operations__exception-actions > .rag-button {
+    max-width: 100%;
+    height: auto;
+    white-space: normal;
+  }
+}
+.task-operations__resource-issues {
+  margin: 0 0 8px;
+  padding-inline-start: 18px;
+  line-height: 1.8;
 }

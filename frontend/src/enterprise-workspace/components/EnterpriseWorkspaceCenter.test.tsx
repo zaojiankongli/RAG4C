@@ -172,16 +172,37 @@ describe("Enterprise Workspace Center", () => {
 
   it("consumes direct workspace deep links and clears the workspace query when the drawer closes", async () => {
     window.history.replaceState(null, "", "/enterprise/workspaces?workspace=workspace-prod");
+    const pushState = vi.spyOn(window.history, "pushState");
     render(<EnterpriseWorkspaceCenter scope={scope} context={context} />);
 
     const drawer = await screen.findByRole("dialog", { name: "Workspace 详情：生产知识域" });
     expect(drawer).toBeTruthy();
+    expect(pushState).not.toHaveBeenCalled();
 
     fireEvent.click(within(drawer).getByRole("button", { name: "关闭" }));
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Workspace 详情：生产知识域" })).toBeNull(),
     );
     expect(window.location.pathname + window.location.search).toBe("/enterprise/workspaces");
+    pushState.mockRestore();
+  });
+
+  it("syncs browser back navigation and closes the detail without writing a new route", async () => {
+    window.history.replaceState(null, "", "/enterprise/workspaces?workspace=workspace-prod");
+    render(<EnterpriseWorkspaceCenter scope={scope} context={context} />);
+
+    const drawer = await screen.findByRole("dialog", { name: "Workspace 详情：生产知识域" });
+    expect(drawer).toBeTruthy();
+
+    const pushState = vi.spyOn(window.history, "pushState");
+    window.history.replaceState(null, "", "/enterprise/workspaces");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Workspace 详情：生产知识域" })).toBeNull(),
+    );
+    expect(pushState).not.toHaveBeenCalled();
+    pushState.mockRestore();
   });
 
   it("opens a tenant-scoped workspace deep link even when it is not in the first list page", async () => {

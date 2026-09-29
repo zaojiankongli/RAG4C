@@ -1,13 +1,12 @@
 import {
-  Alert,
   Button,
-  Loading,
   PrimaryTable,
   Tag,
   Timeline,
   type PrimaryTableCol,
 } from "tdesign-react";
 import { FileIcon, TimeIcon } from "tdesign-icons-react";
+import { Alert, Spin } from "../../ui";
 
 import type {
   AutomationActionRequest,
@@ -576,7 +575,7 @@ export function ActivitySurface({ activity }: ActivitySurfaceProps) {
 export function LoadingSurface({ label }: { label: string }) {
   return (
     <div className="automation-workflows__state automation-workflows__state--loading">
-      <Loading text={`正在读取${label}…`} />
+      <Spin tip={`正在读取${label}…`} />
     </div>
   );
 }

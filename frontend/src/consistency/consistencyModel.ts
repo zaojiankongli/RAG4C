@@ -2,6 +2,7 @@ export interface ConsistencyCounts {
   documents_scanned: number;
   authoritative_heads: number;
   projection_chunks: number;
+  projection_read_incomplete_documents: number;
   missing_chunks: number;
   stale_chunks: number;
   orphaned_chunks: number;
@@ -28,6 +29,7 @@ export interface ConsistencyQaAuthority {
 
 export interface ConsistencySummaryResponse {
   mode: "report-only";
+  projection_read_status: "best_effort" | "incomplete";
   best_effort: true;
   counts: ConsistencyCounts;
   drift_categories: ConsistencyDriftCategories;
@@ -79,6 +81,8 @@ export interface ConsistencySummaryProjection {
   complete: false;
   confirmable: false;
   qaAuthority: ConsistencyQaAuthority | null;
+  projectionReadIncompleteDocuments: number;
+  projectionReadStatus: "best_effort" | "incomplete";
 }
 
 function asNonNeg(value: unknown): number {
@@ -135,5 +139,9 @@ export function projectConsistencySummary(
     complete: summary.complete,
     confirmable: summary.confirmable,
     qaAuthority: normalizeQaAuthority(summary.qa_authority),
+    projectionReadIncompleteDocuments: asNonNeg(
+      summary.counts.projection_read_incomplete_documents,
+    ),
+    projectionReadStatus: summary.projection_read_status,
   };
 }

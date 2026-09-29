@@ -1,7 +1,7 @@
 import { useEffect, useState, type RefObject } from "react";
-import { Checkbox, Dialog, Tag } from "tdesign-react";
 import { CloseIcon, RefreshIcon, SecuredIcon } from "tdesign-icons-react";
 
+import { Checkbox, Dialog, Tag } from "../../ui";
 import type { TaskOperation } from "./taskOperationsTypes";
 
 export interface TaskMutationDialogProps {
@@ -27,7 +27,7 @@ export default function TaskMutationDialog({
 }: TaskMutationDialogProps) {
   const [confirmed, setConfirmed] = useState(false);
   useEffect(() => {
-    if (!visible) setConfirmed(false);
+    setConfirmed(false);
   }, [visible, task?.id]);
 
   const retry = kind === "retry";
@@ -46,8 +46,9 @@ export default function TaskMutationDialog({
     <Dialog
       visible={visible}
       header={title}
-      closeBtn
-      cancelBtn="取消"
+      className="task-operations__mutation-dialog"
+      closeBtn={!saving}
+      cancelBtn={{ content: "取消", disabled: saving }}
       confirmBtn={{ content: confirmLabel, theme: retry ? "primary" : "danger", disabled }}
       confirmLoading={saving}
       destroyOnClose
@@ -59,7 +60,11 @@ export default function TaskMutationDialog({
       onConfirm={() => {
         if (task && !disabled) void onSubmit(task);
       }}
-      {...({ role: "dialog", "aria-label": title } as Record<string, unknown>)}
+      {...({
+        role: "dialog",
+        "aria-label": title,
+        "aria-modal": "true",
+      } as Record<string, unknown>)}
     >
       <div className="task-operations__mutation-body" data-testid={`task-${kind}-dialog`}>
         {task ? (
@@ -94,7 +99,7 @@ export default function TaskMutationDialog({
             <Checkbox
               checked={confirmed}
               disabled={readOnly || saving || !actionAllowed}
-              onChange={(checked) => setConfirmed(Boolean(checked))}
+              onChange={(checked: boolean) => setConfirmed(Boolean(checked))}
             >
               {checkLabel}
             </Checkbox>

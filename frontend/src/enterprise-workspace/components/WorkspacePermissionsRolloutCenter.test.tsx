@@ -357,7 +357,12 @@ describe("Stage17 Workspace Permissions Rollout Center", () => {
 
   it("submits approval for shadow-to-enforced, deep-links the request, and never exposes tickets", async () => {
     const calls = installApi("shadow", true);
-    window.history.replaceState(null, "", "/enterprise/workspaces?workspace=workspace-prod");
+    const hostHistoryState = { source: "workspace-host" };
+    window.history.replaceState(
+      hostHistoryState,
+      "",
+      "/enterprise/workspaces?workspace=workspace-prod",
+    );
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
     render(
       <WorkspacePermissionsRolloutCenter
@@ -406,10 +411,20 @@ describe("Stage17 Workspace Permissions Rollout Center", () => {
       },
     });
 
+    const pushState = vi.spyOn(window.history, "pushState");
+    const dispatchEvent = vi.spyOn(window, "dispatchEvent");
     fireEvent.click(screen.getByRole("button", { name: "前往审批中心" }));
+    expect(pushState).toHaveBeenCalledWith(
+      hostHistoryState,
+      "",
+      "/enterprise/approvals?request=request-workspace-17",
+    );
+    expect(dispatchEvent.mock.calls.filter(([event]) => event.type === "popstate")).toHaveLength(1);
     expect(window.location.pathname + window.location.search).toBe(
       "/enterprise/approvals?request=request-workspace-17",
     );
+    pushState.mockRestore();
+    dispatchEvent.mockRestore();
     consoleLog.mockRestore();
   });
 

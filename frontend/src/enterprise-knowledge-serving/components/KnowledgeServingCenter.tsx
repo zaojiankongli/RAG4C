@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, Input, Select, Tag } from "tdesign-react";
+import { Button, Input, Select, Tag } from "tdesign-react";
 import { FilterIcon, RefreshIcon, SearchIcon } from "tdesign-icons-react";
+import { Alert } from "../../ui";
 import type {
   ServingHandoff,
   ServingPolicyRevision,

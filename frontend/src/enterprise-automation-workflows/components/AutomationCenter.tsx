@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Alert } from "tdesign-react";
-import { Tabs } from "../../ui/index";
+import { Alert, Tabs } from "../../ui/index";
 import { RefreshIcon } from "tdesign-icons-react";
 
 import type { AutomationRule, AutomationRuleRevision } from "../model/automationModel";
@@ -282,7 +281,7 @@ export default function AutomationCenter({
         onCreateRule={openCreateRule}
       />
       {!capabilityReady ? (
-        <div className="automation-workflows__capability-alert" role="alert">
+        <div className="automation-workflows__capability-alert">
           <Alert
             theme="warning"
             title="自动化能力尚未就绪"
@@ -291,7 +290,7 @@ export default function AutomationCenter({
         </div>
       ) : null}
       {mutationError ? (
-        <div className="automation-workflows__mutation-error" role="alert">
+        <div className="automation-workflows__mutation-error">
           <Alert theme="error" title="自动化变更未完成" message={mutationError} />
         </div>
       ) : null}

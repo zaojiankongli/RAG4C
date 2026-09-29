@@ -41,6 +41,7 @@ import {
   TimeIcon,
 } from "tdesign-icons-react";
 import PageTopbar from "../components/PageTopbar";
+import "./documents-focus.css";
 import PageState from "../components/PageState";
 import StatCard from "../components/StatCard";
 import {
@@ -82,6 +83,7 @@ import {
 } from "../documents/documentParseRoute";
 import { useConnection } from "../context/ConnectionContext";
 import { navigationIntent } from "../run/appRoute";
+import { commitNavigationIntent } from "../run/navigationAdapter";
 import { readKnowledgeActorToken } from "../knowledge/workspaceScope";
 import KnowledgeDocumentTable from "../documents/KnowledgeDocumentTable";
 import { buildDocumentFacets, filterDocuments } from "../documents/documentWorkspaceModel";
@@ -312,7 +314,10 @@ function replaceDocumentsFilter(
     route.mode === "history"
       ? `${routeUrl}${location.hash}`
       : `${location.pathname}${location.search}#${routeUrl}`;
-  window.history.replaceState(window.history.state, "", url);
+  commitNavigationIntent(
+    { mode: "history", url },
+    { historyAction: "replace", dispatchPopStateAfterHistory: false },
+  );
 }
 
 function projectSummaryFacets(facets: DocumentCatalogSummaryResponse["facets"] | null) {
@@ -336,8 +341,10 @@ function projectSummaryFacets(facets: DocumentCatalogSummaryResponse["facets"] |
     },
     types: Object.fromEntries(facets.types.map((item) => [item.value, item.count])),
     engines: Object.fromEntries(facets.engines.map((item) => [item.value, item.count])),
+    // 旧后端可能不带 chunking_reasons（后端先于前端上线的滚动窗口）。
+    // 缺键渲染成空分面而不是抛错；这里不用 0 或 unknown 伪造任何判定。
     chunkingReasons: Object.fromEntries(
-      facets.chunking_reasons.map((item) => [item.value, item.count]),
+      (facets.chunking_reasons ?? []).map((item) => [item.value, item.count]),
     ),
     categories: Object.fromEntries(
       facets.folders.map((item) => [item.path || "未分类", item.documents]),
@@ -578,7 +585,10 @@ export default function DocumentsPage({
   ).some((key) => documentFilterState[key] !== DEFAULT_DOCUMENT_FILTERS[key]);
   // 监听器要读"当下"的筛选值，但不能因此每次改筛选都重新挂一次监听：值放快照，
   // 依赖数组里就**一个筛选键都不需要**，"忘了加进 deps"这一类也没有落点了。
-  const documentFilterSnapshot = useRef({ state: documentFilterState, setters: documentFilterSetters });
+  const documentFilterSnapshot = useRef({
+    state: documentFilterState,
+    setters: documentFilterSetters,
+  });
   useEffect(() => {
     documentFilterSnapshot.current = { state: documentFilterState, setters: documentFilterSetters };
   });
@@ -601,9 +611,16 @@ export default function DocumentsPage({
               : { pathname: "/", search: "", hash: "#/documents" },
             parseRoute.docId,
           );
-          if (intent.mode === "history")
-            window.history.pushState({ [PARSE_ORIGIN_STATE]: true }, "", intent.url);
-          else window.history.pushState({ [PARSE_ORIGIN_STATE]: true }, "", `#${intent.url}`);
+          commitNavigationIntent(
+            {
+              mode: "history",
+              url: intent.mode === "history" ? intent.url : `#${intent.url}`,
+            },
+            {
+              historyState: { [PARSE_ORIGIN_STATE]: true },
+              dispatchPopStateAfterHistory: false,
+            },
+          );
           return;
         }
         setWorkspaceDirty(false);
@@ -633,18 +650,16 @@ export default function DocumentsPage({
       if (usingMock || (document.lifecycle_state ?? "active") !== "active") return;
       const intent = documentWorkspaceNavigationIntent(window.location, document.id);
       parseModeRef.current = intent.mode;
-      if (intent.mode === "history")
-        window.history.pushState(
-          { ...window.history.state, [PARSE_ORIGIN_STATE]: true },
-          "",
-          intent.url,
-        );
-      else
-        window.history.pushState(
-          { ...window.history.state, [PARSE_ORIGIN_STATE]: true },
-          "",
-          `#${intent.url}`,
-        );
+      commitNavigationIntent(
+        {
+          mode: "history",
+          url: intent.mode === "history" ? intent.url : `#${intent.url}`,
+        },
+        {
+          historyState: { ...window.history.state, [PARSE_ORIGIN_STATE]: true },
+          dispatchPopStateAfterHistory: false,
+        },
+      );
       setWorkspaceDirty(false);
       setParseRoute({ docId: document.id, chunkId: "", datasetId: "" });
     },
@@ -661,9 +676,13 @@ export default function DocumentsPage({
       return;
     }
     const intent = documentsReturnIntent(window.location);
-    if (intent.mode === "history")
-      window.history.replaceState(window.history.state, "", intent.url);
-    else window.history.replaceState(window.history.state, "", `#${intent.url}`);
+    commitNavigationIntent(
+      {
+        mode: "history",
+        url: intent.mode === "history" ? intent.url : `#${intent.url}`,
+      },
+      { historyAction: "replace", dispatchPopStateAfterHistory: false },
+    );
     setParseRoute(null);
   }, [parseDirty, setParseRoute, setWorkspaceDirty]);
 
@@ -1447,7 +1466,10 @@ export default function DocumentsPage({
           </small>
         ) : null}
         {diag.reason ? (
-          <small className="doc-parser-chunk-reason-detail" data-testid="doc-parser-chunk-reason-detail">
+          <small
+            className="doc-parser-chunk-reason-detail"
+            data-testid="doc-parser-chunk-reason-detail"
+          >
             {diag.reason}
           </small>
         ) : null}
@@ -1679,10 +1701,10 @@ export default function DocumentsPage({
             return;
           setWorkspaceDirty(false);
           const intent = navigationIntent(window.location, targetPage);
-          if (intent.mode === "history")
-            window.history.pushState(window.history.state, "", intent.url);
-          else window.location.hash = intent.url;
-          window.dispatchEvent(new PopStateEvent("popstate"));
+          commitNavigationIntent(intent, {
+            historyState: window.history.state,
+            dispatchPopStateAfterHash: true,
+          });
         }}
       />
     );
@@ -1749,191 +1771,8 @@ export default function DocumentsPage({
 
       <div className="page-shell">
         <div className="page-shell-inner">
-          <div className="documents-workbench-layout">
-            <aside className="documents-facet-rail" aria-label="文档分类与筛选">
-              <div className="facet-rail-title">
-                <FolderOpenIcon />
-                <div>
-                  <strong>文档导航</strong>
-                  <span>按状态、类型和解析引擎筛选</span>
-                </div>
-              </div>
-              <div className="facet-group">
-                <h3>处理状态</h3>
-                {[
-                  ["all", "全部文档", facets.statuses.all],
-                  ["processing", "处理中", facets.statuses.processing],
-                  ["completed", "已完成", facets.statuses.completed],
-                  ["error", "失败", facets.statuses.error],
-                ].map(([value, label, count]) => (
-                  <button
-                    type="button"
-                    key={String(value)}
-                    className={statusFilter === value ? "facet-item is-active" : "facet-item"}
-                    onClick={() => applyDocumentFilter("status", String(value))}
-                  >
-                    <span>{label}</span>
-                    <b>{count}</b>
-                  </button>
-                ))}
-              </div>
-              <div className="facet-group">
-                <h3>文档类型</h3>
-                <button
-                  type="button"
-                  className={typeFilter === "all" ? "facet-item is-active" : "facet-item"}
-                  onClick={() => applyDocumentFilter("type", "all")}
-                >
-                  <span>全部类型</span>
-                  <b>{stats.total}</b>
-                </button>
-                {Object.entries(facets.types).map(([value, count]) => (
-                  <button
-                    type="button"
-                    key={value}
-                    className={typeFilter === value ? "facet-item is-active" : "facet-item"}
-                    onClick={() => applyDocumentFilter("type", value)}
-                  >
-                    <span>{value}</span>
-                    <b>{count}</b>
-                  </button>
-                ))}
-              </div>
-              <div className="facet-group">
-                <h3>解析引擎</h3>
-                <button
-                  type="button"
-                  className={engineFilter === "all" ? "facet-item is-active" : "facet-item"}
-                  onClick={() => applyDocumentFilter("engine", "all")}
-                >
-                  <span>全部引擎</span>
-                  <b>{stats.total}</b>
-                </button>
-                {Object.entries(facets.engines).map(([value, count]) => (
-                  <button
-                    type="button"
-                    key={value}
-                    className={engineFilter === value ? "facet-item is-active" : "facet-item"}
-                    onClick={() => applyDocumentFilter("engine", value)}
-                  >
-                    <span>{ENGINE_LABELS[value] ?? (value === "unknown" ? "待记录" : value)}</span>
-                    <b>{count}</b>
-                  </button>
-                ))}
-              </div>
-              <div className="facet-group">
-                <h3>切分判定</h3>
-                <button
-                  type="button"
-                  className={
-                    chunkingReasonFilter === "all" ? "facet-item is-active" : "facet-item"
-                  }
-                  onClick={() => applyDocumentFilter("chunkingReason", "all")}
-                >
-                  <span>全部判定</span>
-                  <b>{stats.total}</b>
-                </button>
-                {Object.entries(facets.chunkingReasons).map(([value, count]) => (
-                  <button
-                    type="button"
-                    key={value}
-                    className={
-                      chunkingReasonFilter === value ? "facet-item is-active" : "facet-item"
-                    }
-                    onClick={() => applyDocumentFilter("chunkingReason", value)}
-                  >
-                    <span>
-                      {CHUNK_REASON_CODE_LABELS[value] ?? (value === "unknown" ? "待记录" : value)}
-                    </span>
-                    <b>{count}</b>
-                  </button>
-                ))}
-              </div>
-              <div className="facet-group">
-                <h3>文档分类</h3>
-                <button
-                  type="button"
-                  className={categoryFilter === "all" ? "facet-item is-active" : "facet-item"}
-                  onClick={() => applyDocumentFilter("category", "all")}
-                >
-                  <span>全部分类</span>
-                  <b>{stats.total}</b>
-                </button>
-                {Object.entries(facets.categories).map(([value, count]) => (
-                  <button
-                    type="button"
-                    key={value}
-                    className={categoryFilter === value ? "facet-item is-active" : "facet-item"}
-                    onClick={() => applyDocumentFilter("category", value)}
-                  >
-                    <span>{value}</span>
-                    <b>{count}</b>
-                  </button>
-                ))}
-              </div>
-              {Object.keys(facets.tags).length > 0 && (
-                <div className="facet-group">
-                  <h3>文档标签</h3>
-                  <button
-                    type="button"
-                    className={tagFilter === "all" ? "facet-item is-active" : "facet-item"}
-                    onClick={() => applyDocumentFilter("tag", "all")}
-                  >
-                    <span>全部标签</span>
-                    <b>{Object.keys(facets.tags).length}</b>
-                  </button>
-                  {Object.entries(facets.tags)
-                    .slice(0, 10)
-                    .map(([value, count]) => (
-                      <button
-                        type="button"
-                        key={value}
-                        className={tagFilter === value ? "facet-item is-active" : "facet-item"}
-                        onClick={() => applyDocumentFilter("tag", value)}
-                      >
-                        <span>#{value}</span>
-                        <b>{count}</b>
-                      </button>
-                    ))}
-                </div>
-              )}
-              {hasActiveDocumentFilter && (
-                <Button
-                  tag="button"
-                  variant="text"
-                  size="small"
-                  aria-label="清除全部文档筛选"
-                  onClick={clearAllDocumentFilters}
-                >
-                  清除筛选
-                </Button>
-              )}
-            </aside>
+          <div className="documents-workbench-layout documents-workbench--focused">
             <div className="documents-workbench-main">
-              {/* 概览 */}
-              <div className="stat-grid">
-                <StatCard labelIcon={<FolderIcon />} label="文档总数" value={stats.total} />
-                <StatCard
-                  tone="success"
-                  labelIcon={<CheckCircleIcon />}
-                  label="已完成入库"
-                  value={stats.completed}
-                  unit={"/ " + stats.total}
-                />
-                <StatCard
-                  tone="warning"
-                  labelIcon={stats.processing > 0 ? <LoadingIcon /> : <LoadingIcon />}
-                  label="处理中"
-                  value={stats.processing}
-                />
-                <StatCard
-                  tone="graph"
-                  labelIcon={<DataBaseIcon />}
-                  label="检索片段总数"
-                  value={stats.chunks.toLocaleString()}
-                />
-              </div>
-
               <Card size="small" bodyStyle={{ padding: 16 }} bordered>
                 {/* 工具条 */}
                 <div className="docs-toolbar">
@@ -1983,6 +1822,213 @@ export default function DocumentsPage({
                           " 个文件"}
                   </Text>
                 </div>
+
+                <details className="documents-tools-disclosure">
+                  <summary>
+                    <span>筛选与概况</span>
+                    <span className="documents-tools-hint">
+                      {hasActiveDocumentFilter ? "已应用筛选" : "类型、解析引擎与入库概况"}
+                    </span>
+                  </summary>
+                  <div className="documents-tools-body">
+                    {/* 概览 */}
+                    <div className="stat-grid">
+                      <StatCard labelIcon={<FolderIcon />} label="文档总数" value={stats.total} />
+                      <StatCard
+                        tone="success"
+                        labelIcon={<CheckCircleIcon />}
+                        label="已完成入库"
+                        value={stats.completed}
+                        unit={"/ " + stats.total}
+                      />
+                      <StatCard
+                        tone="warning"
+                        labelIcon={stats.processing > 0 ? <LoadingIcon /> : <LoadingIcon />}
+                        label="处理中"
+                        value={stats.processing}
+                      />
+                      <StatCard
+                        tone="graph"
+                        labelIcon={<DataBaseIcon />}
+                        label="检索片段总数"
+                        value={stats.chunks.toLocaleString()}
+                      />
+                    </div>
+
+                    <aside className="documents-facet-rail" aria-label="文档分类与筛选">
+                      <div className="facet-rail-title">
+                        <FolderOpenIcon />
+                        <div>
+                          <strong>文档导航</strong>
+                          <span>按状态、类型和解析引擎筛选</span>
+                        </div>
+                      </div>
+                      <div className="facet-group">
+                        <h3>处理状态</h3>
+                        {[
+                          ["all", "全部文档", facets.statuses.all],
+                          ["processing", "处理中", facets.statuses.processing],
+                          ["completed", "已完成", facets.statuses.completed],
+                          ["error", "失败", facets.statuses.error],
+                        ].map(([value, label, count]) => (
+                          <button
+                            type="button"
+                            key={String(value)}
+                            className={
+                              statusFilter === value ? "facet-item is-active" : "facet-item"
+                            }
+                            onClick={() => applyDocumentFilter("status", String(value))}
+                          >
+                            <span>{label}</span>
+                            <b>{count}</b>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="facet-group">
+                        <h3>文档类型</h3>
+                        <button
+                          type="button"
+                          className={typeFilter === "all" ? "facet-item is-active" : "facet-item"}
+                          onClick={() => applyDocumentFilter("type", "all")}
+                        >
+                          <span>全部类型</span>
+                          <b>{stats.total}</b>
+                        </button>
+                        {Object.entries(facets.types).map(([value, count]) => (
+                          <button
+                            type="button"
+                            key={value}
+                            className={typeFilter === value ? "facet-item is-active" : "facet-item"}
+                            onClick={() => applyDocumentFilter("type", value)}
+                          >
+                            <span>{value}</span>
+                            <b>{count}</b>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="facet-group">
+                        <h3>解析引擎</h3>
+                        <button
+                          type="button"
+                          className={engineFilter === "all" ? "facet-item is-active" : "facet-item"}
+                          onClick={() => applyDocumentFilter("engine", "all")}
+                        >
+                          <span>全部引擎</span>
+                          <b>{stats.total}</b>
+                        </button>
+                        {Object.entries(facets.engines).map(([value, count]) => (
+                          <button
+                            type="button"
+                            key={value}
+                            className={
+                              engineFilter === value ? "facet-item is-active" : "facet-item"
+                            }
+                            onClick={() => applyDocumentFilter("engine", value)}
+                          >
+                            <span>
+                              {ENGINE_LABELS[value] ?? (value === "unknown" ? "待记录" : value)}
+                            </span>
+                            <b>{count}</b>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="facet-group">
+                        <h3>切分判定</h3>
+                        <button
+                          type="button"
+                          className={
+                            chunkingReasonFilter === "all" ? "facet-item is-active" : "facet-item"
+                          }
+                          onClick={() => applyDocumentFilter("chunkingReason", "all")}
+                        >
+                          <span>全部判定</span>
+                          <b>{stats.total}</b>
+                        </button>
+                        {Object.entries(facets.chunkingReasons).map(([value, count]) => (
+                          <button
+                            type="button"
+                            key={value}
+                            className={
+                              chunkingReasonFilter === value ? "facet-item is-active" : "facet-item"
+                            }
+                            onClick={() => applyDocumentFilter("chunkingReason", value)}
+                          >
+                            <span>
+                              {CHUNK_REASON_CODE_LABELS[value] ??
+                                (value === "unknown" ? "待记录" : value)}
+                            </span>
+                            <b>{count}</b>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="facet-group">
+                        <h3>文档分类</h3>
+                        <button
+                          type="button"
+                          className={
+                            categoryFilter === "all" ? "facet-item is-active" : "facet-item"
+                          }
+                          onClick={() => applyDocumentFilter("category", "all")}
+                        >
+                          <span>全部分类</span>
+                          <b>{stats.total}</b>
+                        </button>
+                        {Object.entries(facets.categories).map(([value, count]) => (
+                          <button
+                            type="button"
+                            key={value}
+                            className={
+                              categoryFilter === value ? "facet-item is-active" : "facet-item"
+                            }
+                            onClick={() => applyDocumentFilter("category", value)}
+                          >
+                            <span>{value}</span>
+                            <b>{count}</b>
+                          </button>
+                        ))}
+                      </div>
+                      {Object.keys(facets.tags).length > 0 && (
+                        <div className="facet-group">
+                          <h3>文档标签</h3>
+                          <button
+                            type="button"
+                            className={tagFilter === "all" ? "facet-item is-active" : "facet-item"}
+                            onClick={() => applyDocumentFilter("tag", "all")}
+                          >
+                            <span>全部标签</span>
+                            <b>{Object.keys(facets.tags).length}</b>
+                          </button>
+                          {Object.entries(facets.tags)
+                            .slice(0, 10)
+                            .map(([value, count]) => (
+                              <button
+                                type="button"
+                                key={value}
+                                className={
+                                  tagFilter === value ? "facet-item is-active" : "facet-item"
+                                }
+                                onClick={() => applyDocumentFilter("tag", value)}
+                              >
+                                <span>#{value}</span>
+                                <b>{count}</b>
+                              </button>
+                            ))}
+                        </div>
+                      )}
+                      {hasActiveDocumentFilter && (
+                        <Button
+                          tag="button"
+                          variant="text"
+                          size="small"
+                          aria-label="清除全部文档筛选"
+                          onClick={clearAllDocumentFilters}
+                        >
+                          清除筛选
+                        </Button>
+                      )}
+                    </aside>
+                  </div>
+                </details>
 
                 {selectedIds.length > 0 ? (
                   <div className="docs-batch-bar" role="region" aria-label="批量文档操作">

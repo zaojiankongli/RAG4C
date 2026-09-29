@@ -1,6 +1,6 @@
-import { Button, Empty, Tag } from "tdesign-react";
 import { StarIcon, TimeIcon } from "tdesign-icons-react";
 
+import { Button, Empty, Tag } from "../../ui";
 import type { TaskSavedViewsController } from "./taskOperationsTypes";
 
 export interface SavedViewsPanelProps {
@@ -9,6 +9,11 @@ export interface SavedViewsPanelProps {
 }
 
 export default function SavedViewsPanel({ controller, readOnly = false }: SavedViewsPanelProps) {
+  const countLabel =
+    controller.status === "ready" || controller.status === "empty"
+      ? String(controller.items.length)
+      : "未返回";
+
   return (
     <section className="task-operations__side-panel" aria-labelledby="task-saved-views-title">
       <div className="task-operations__side-heading">
@@ -17,17 +22,28 @@ export default function SavedViewsPanel({ controller, readOnly = false }: SavedV
           <h2 id="task-saved-views-title">Saved Views</h2>
         </div>
         <Tag theme="primary" variant="light-outline">
-          <StarIcon aria-hidden="true" /> {controller.items.length}
+          <StarIcon aria-hidden="true" /> {countLabel}
         </Tag>
       </div>
       {controller.status === "unavailable" ? (
         <div role="alert">
-          <Tag theme="warning">Saved Views 暂不可用</Tag>
+          <Tag theme="warning" variant="light-outline">
+            Saved Views 暂不可用
+          </Tag>
         </div>
       ) : null}
       {controller.status === "partial" ? (
         <div role="alert">
-          <Tag theme="warning">部分 Saved Views 无法读取</Tag>
+          <Tag theme="warning" variant="light-outline">
+            部分 Saved Views 无法读取
+          </Tag>
+        </div>
+      ) : null}
+      {controller.status === "error" ? (
+        <div role="alert">
+          <Tag theme="danger" variant="light-outline">
+            Saved Views 读取失败
+          </Tag>
         </div>
       ) : null}
       {controller.items.length ? (
@@ -38,10 +54,11 @@ export default function SavedViewsPanel({ controller, readOnly = false }: SavedV
               key={view.id}
             >
               <Button
-                variant="text"
+                type="text"
                 size="small"
                 icon={<TimeIcon />}
                 aria-label={`打开视图 ${view.label}`}
+                aria-pressed={view.id === controller.activeId}
                 onClick={() => controller.onSelect?.(view)}
               >
                 {view.label}

@@ -40,6 +40,7 @@ import {
   enterpriseWorkspaceIdFromLocation,
   enterpriseWorkspaceNavigationUrl,
 } from "../workspaceRoute";
+import { commitNavigationIntent } from "../../run/navigationAdapter";
 import {
   firstWorkspaceValidationField,
   validateWorkspaceDialog,
@@ -141,16 +142,7 @@ function canManageMembers(context: EnterpriseContext, workspace: EnterpriseWorks
 function syncWorkspaceRoute(workspaceId: string | null, replace: boolean): void {
   if (typeof window === "undefined") return;
   const intent = enterpriseWorkspaceNavigationUrl(window.location, workspaceId);
-  if (intent.mode === "history") {
-    if (replace) {
-      window.history.replaceState(window.history.state, "", intent.url);
-    } else {
-      window.history.pushState(window.history.state, "", intent.url);
-    }
-    window.dispatchEvent(new PopStateEvent("popstate"));
-    return;
-  }
-  if (window.location.hash !== `#${intent.url}`) window.location.hash = intent.url;
+  commitNavigationIntent(intent, { historyAction: replace ? "replace" : "push" });
 }
 
 function WorkspaceEvidenceStrip({
@@ -545,6 +537,7 @@ export default function EnterpriseWorkspaceCenter({ scope, context }: Props) {
 
   const openWorkspaceDetail = useCallback(
     (workspaceId: string) => {
+      deepLinkOpenRef.current = workspaceId;
       setDetailTab("overview");
       setRequestedWorkspaceId(workspaceId);
       syncWorkspaceRoute(workspaceId, false);
@@ -554,6 +547,7 @@ export default function EnterpriseWorkspaceCenter({ scope, context }: Props) {
   );
 
   const closeWorkspaceDetail = useCallback(() => {
+    deepLinkOpenRef.current = null;
     setRequestedWorkspaceId(null);
     closeWorkspace();
     syncWorkspaceRoute(null, true);
@@ -586,15 +580,31 @@ export default function EnterpriseWorkspaceCenter({ scope, context }: Props) {
     return () => observer.disconnect();
   }, [detailTab, syncDrawerAccessibility]);
 
-  useEffect(() => {
-    if (workspace.status !== "ready" || !workspace.page || selected || workspace.selectedLoading) {
+  const applyWorkspaceRoute = useCallback(() => {
+    const workspaceId = enterpriseWorkspaceIdFromLocation(window.location);
+    if (!workspaceId) {
+      deepLinkOpenRef.current = null;
+      setRequestedWorkspaceId(null);
+      closeWorkspace();
       return;
     }
-    const workspaceId = enterpriseWorkspaceIdFromLocation(window.location);
-    if (!workspaceId || deepLinkOpenRef.current === workspaceId) return;
+    if (deepLinkOpenRef.current === workspaceId) return;
     deepLinkOpenRef.current = workspaceId;
-    openWorkspaceDetail(workspaceId);
-  }, [openWorkspaceDetail, selected, workspace.page, workspace.selectedLoading, workspace.status]);
+    setDetailTab("overview");
+    setRequestedWorkspaceId(workspaceId);
+    void openWorkspace(workspaceId);
+  }, [closeWorkspace, openWorkspace]);
+
+  useEffect(() => {
+    if (workspace.status !== "ready" || !workspace.page) return;
+    applyWorkspaceRoute();
+    window.addEventListener("popstate", applyWorkspaceRoute);
+    window.addEventListener("hashchange", applyWorkspaceRoute);
+    return () => {
+      window.removeEventListener("popstate", applyWorkspaceRoute);
+      window.removeEventListener("hashchange", applyWorkspaceRoute);
+    };
+  }, [applyWorkspaceRoute, workspace.page, workspace.status]);
 
   const resetForm = () => {
     setCode("");

@@ -440,6 +440,8 @@ export default function ConfigPage() {
         return;
       }
       const resp = await updateConfig(updates);
+      // Only an actual health check may transition the shell to ready.
+      if (resp.saved.length > 0) void refresh();
       const savedPaths = new Set(resp.saved.map((item) => item.path));
       const savedUpdates = updates.filter((item) => savedPaths.has(item.path));
       setSnapshot((current) => (current ? applySnapshotUpdates(current, savedUpdates) : current));
@@ -473,7 +475,7 @@ export default function ConfigPage() {
     } finally {
       setSaving(false);
     }
-  }, [edits, online, snapshot]);
+  }, [edits, online, refresh, snapshot]);
 
   const sections = snapshot?.sections ?? {};
 

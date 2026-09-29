@@ -19,6 +19,7 @@ import KnowledgeWorkspacePageState from "../knowledge/KnowledgeWorkspacePageStat
 import { useKnowledgeDocuments } from "../knowledge/useKnowledgeDocuments";
 import { projectKnowledgeOverview } from "../knowledge/knowledgeModel";
 import { navigationIntent, type PageKey } from "../run/appRoute";
+import { commitNavigationIntent } from "../run/navigationAdapter";
 import type { DocumentCatalogSummaryResponse, DocumentItem } from "../types/rag";
 import "./knowledge-overview.css";
 
@@ -248,12 +249,7 @@ function projectSummaryLifeline(
 
 function navigateTo(target: PageKey) {
   const intent = navigationIntent(window.location, target);
-  if (intent.mode === "history") {
-    window.history.pushState(window.history.state, "", intent.url);
-  } else {
-    window.location.hash = intent.url;
-  }
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  commitNavigationIntent(intent, { dispatchPopStateAfterHash: true });
 }
 
 export default function KnowledgeOverviewPage() {

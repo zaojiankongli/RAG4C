@@ -1,5 +1,5 @@
 import { useCallback, type RefObject } from "react";
-import { Alert, Button, Drawer, Empty, Loading, Tag } from "tdesign-react";
+import { Button, Drawer, Tag } from "tdesign-react";
 import {
   ArrowRightIcon,
   CheckCircleIcon,
@@ -20,6 +20,7 @@ import {
   recoveryStatusTheme,
   safeSnapshotEntries,
 } from "./recoveryUi";
+import { Alert, Empty, Spin } from "../../ui";
 
 export interface RecoveryDetailDrawerProps {
   visible: boolean;
@@ -362,11 +363,11 @@ export default function RecoveryDetailDrawer({
     >
       {state.status === "loading" ? (
         <div className="content-recovery__state content-recovery__state--loading">
-          <Loading text="正在读取回收条目详情…" />
+          <Spin tip="正在读取回收条目详情…" />
         </div>
       ) : null}
       {state.status === "unavailable" ? (
-        <div role="alert">
+        <div>
           <Alert
             theme="warning"
             title="详情权威暂不可用"
@@ -375,7 +376,7 @@ export default function RecoveryDetailDrawer({
         </div>
       ) : null}
       {state.status === "error" ? (
-        <div role="alert">
+        <div>
           <Alert theme="error" title="详情读取失败" message="当前无法读取回收条目详情，请重试。" />
         </div>
       ) : null}

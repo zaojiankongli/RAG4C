@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -87,6 +87,7 @@ const detail = {
 
 beforeEach(() => {
   state.mobile = false;
+  state.workspace.workspaceScopeStatus = "verified";
   state.fetchDetail.mockReset();
   state.fetchDetail.mockResolvedValue(detail);
   Object.defineProperty(window, "matchMedia", {
@@ -116,11 +117,164 @@ describe("Stage19 Knowledge Base resource shell", () => {
 
     expect(await screen.findByRole("heading", { name: "客服知识库" })).toBeTruthy();
     expect(screen.getAllByRole("heading", { name: "客服知识库" })).toHaveLength(1);
-    expect(screen.getByText("生产知识域")).toBeTruthy();
+    expect(screen.queryByText("生产知识域")).toBeNull();
     expect(screen.getByRole("tablist", { name: "知识库资源导航" })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Documents" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "文档" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "嵌入式文档内容" })).toBeTruthy();
     expect(state.fetchDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])(
+    "keeps a single identity and moves technical facts into the existing drawer (mobile=%s)",
+    async (mobile) => {
+      state.mobile = mobile;
+      render(
+        <KnowledgeBaseResourceShell active section="documents">
+          <section aria-label="嵌入式文档内容" />
+        </KnowledgeBaseResourceShell>,
+      );
+      await screen.findByRole("heading", { name: "客服知识库" });
+      expect(screen.getAllByText("客服知识库")).toHaveLength(1);
+      expect(
+        within(screen.getByRole("status", { name: "知识库状态" })).getByText("运行中"),
+      ).toBeTruthy();
+      if (mobile) {
+        expect(screen.getAllByDisplayValue("文档")).toHaveLength(1);
+        expect(screen.queryByText("文档")).toBeNull();
+      } else {
+        expect(screen.getAllByText("文档")).toHaveLength(1);
+      }
+      for (const fact of [
+        "KNOWLEDGE BASE WORKSPACE",
+        "统一管理知识资产、治理事实与后续发布工作面",
+        "文档与解析处理",
+        "Owning Workspace",
+        "Authority",
+        "Revision",
+        "Release",
+        "Registry 已验证",
+        "生产知识域",
+        "R12",
+      ]) {
+        expect(screen.queryByText(fact)).toBeNull();
+      }
+
+      const trigger = screen.getByRole("button", { name: "查看权威事实" });
+      expect(trigger.getAttribute("aria-haspopup")).toBe("dialog");
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+      fireEvent.click(trigger);
+      const facts = within(await screen.findByRole("dialog", { name: "Knowledge Base 权威事实" }));
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+      for (const fact of [
+        "Authority",
+        "Registry 已验证",
+        "Owning Workspace",
+        "生产知识域",
+        "Profile Revision",
+        "R12",
+        "Ownership Revision",
+        "Catalog Revision",
+        "Release / Channel",
+        "发布权威未返回",
+      ]) {
+        expect(facts.getByText(fact)).toBeTruthy();
+      }
+      expect(facts.getAllByText("R7")).toHaveLength(2);
+    },
+  );
+
+  it("uses Chinese navigation labels without changing route values", async () => {
+    const onSectionChange = vi.fn();
+    render(
+      <KnowledgeBaseResourceShell active section="documents" onSectionChange={onSectionChange}>
+        <section aria-label="嵌入式文档内容" />
+      </KnowledgeBaseResourceShell>,
+    );
+    await screen.findByRole("heading", { name: "客服知识库" });
+    const resources = [
+      ["概览", "overview"],
+      ["文档", "documents"],
+      ["目录与标签", "taxonomy"],
+      ["数据来源", "sources"],
+      ["服务状态", "serving"],
+      ["内容治理", "governance"],
+      ["发布版本", "releases"],
+    ];
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(
+      resources.map(([label]) => label),
+    );
+    for (const [label, value] of resources) {
+      const tab = screen.getByRole("tab", { name: label });
+      fireEvent.click(tab);
+      if (value !== "documents") expect(onSectionChange).toHaveBeenLastCalledWith(value, tab);
+    }
+    expect(onSectionChange).toHaveBeenCalledTimes(6);
+  });
+
+  it.each([
+    ["archived", "已归档"],
+    ["disabled", "已停用"],
+    ["pending_review", "pending_review"],
+    [null, "未返回"],
+  ])("preserves the actual lifecycle %s instead of implying readiness", async (status, label) => {
+    state.fetchDetail.mockResolvedValue({
+      ...detail,
+      knowledge_base: { ...detail.knowledge_base, status },
+    });
+    render(
+      <KnowledgeBaseResourceShell active section="documents">
+        内容
+      </KnowledgeBaseResourceShell>,
+    );
+    await screen.findByRole("heading", { name: "客服知识库" });
+    expect(
+      within(screen.getByRole("status", { name: "知识库状态" })).getByText(label!),
+    ).toBeTruthy();
+    expect(screen.queryByText("运行中")).toBeNull();
+  });
+
+  it.each([false, true])(
+    "keeps loading and unavailable authority visible (mobile=%s)",
+    async (mobile) => {
+      state.mobile = mobile;
+      let rejectRequest!: (reason: Error) => void;
+      state.fetchDetail.mockReturnValue(
+        new Promise((_, reject) => {
+          rejectRequest = reject;
+        }),
+      );
+      render(
+        <KnowledgeBaseResourceShell active section="documents">
+          内容
+        </KnowledgeBaseResourceShell>,
+      );
+      const status = within(screen.getByRole("status", { name: "知识库状态" }));
+      expect(status.getByText("权威事实读取中")).toBeTruthy();
+      expect(status.getByText("未返回")).toBeTruthy();
+      rejectRequest(new Error("403 Forbidden"));
+      expect(await status.findByText("权威事实不可用")).toBeTruthy();
+      expect(screen.queryByText("运行中")).toBeNull();
+      expect(screen.queryByText("Registry 已验证")).toBeNull();
+      expect(screen.queryByRole("heading", { name: "客服知识库" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "查看权威事实" }));
+      const facts = within(await screen.findByRole("dialog", { name: "Knowledge Base 权威事实" }));
+      expect(facts.getByText("权威事实不可用")).toBeTruthy();
+      expect(facts.queryByText("生产知识域")).toBeNull();
+      expect(facts.queryByText("R12")).toBeNull();
+      expect(state.fetchDetail).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not request registry facts before workspace scope is verified", () => {
+    state.workspace.workspaceScopeStatus = "unverified";
+    render(
+      <KnowledgeBaseResourceShell active section="documents">
+        内容
+      </KnowledgeBaseResourceShell>,
+    );
+    expect(state.fetchDetail).not.toHaveBeenCalled();
+    expect(screen.queryByText("Registry 已验证")).toBeNull();
+    expect(screen.queryByText("运行中")).toBeNull();
   });
 
   /**
@@ -207,7 +361,7 @@ describe("Stage19 Knowledge Base resource shell", () => {
     );
 
     await screen.findByRole("heading", { name: "客服知识库" });
-    const trigger = screen.getByRole("tab", { name: "Sources" });
+    const trigger = screen.getByRole("tab", { name: "数据来源" });
     fireEvent.click(trigger);
     await waitFor(() => expect(document.activeElement).toBe(trigger));
     expect(onSectionChange).toHaveBeenCalledWith("sources", expect.any(HTMLElement));
@@ -221,11 +375,11 @@ describe("Stage19 Knowledge Base resource shell", () => {
       </KnowledgeBaseResourceShell>,
     );
     await screen.findByRole("heading", { name: "客服知识库" });
-    const documents = screen.getByRole("tab", { name: "Documents" });
+    const documents = screen.getByRole("tab", { name: "文档" });
     fireEvent.keyDown(documents, { key: "ArrowRight" });
     expect(onSectionChange).toHaveBeenCalledWith("taxonomy", expect.any(HTMLElement));
     await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Taxonomy" })),
+      expect(document.activeElement).toBe(screen.getByRole("tab", { name: "目录与标签" })),
     );
   });
 
@@ -238,7 +392,7 @@ describe("Stage19 Knowledge Base resource shell", () => {
       </KnowledgeBaseDrawerCoordinatorProvider>,
     );
     await screen.findByRole("heading", { name: "客服知识库" });
-    expect(screen.getByText(/UAT 验证 · 发布 40/)).toBeTruthy();
+    expect(screen.queryByText(/UAT 验证/)).toBeNull();
     const factsTrigger = screen.getByRole("button", { name: "查看权威事实" });
     fireEvent.click(factsTrigger);
     const facts = await screen.findByRole("dialog", { name: "Knowledge Base 权威事实" });
@@ -300,7 +454,7 @@ describe("Stage26 Knowledge Serving resource shell", () => {
     expect(screen.queryByRole("heading", { name: "客服知识库" })).toBeNull();
   });
 
-  it("exposes the Serving resource with an enterprise reliability label", async () => {
+  it("exposes the serving route with a single Chinese resource label", async () => {
     render(
       <KnowledgeBaseResourceShell active section={"serving" as KnowledgeBaseResourceSection}>
         <section aria-label="知识服务可靠性内容" />
@@ -308,8 +462,8 @@ describe("Stage26 Knowledge Serving resource shell", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "客服知识库" })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Serving" })).toBeTruthy();
-    expect(screen.getByText("知识服务可靠性")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "服务状态" })).toBeTruthy();
+    expect(screen.queryByText("知识服务可靠性")).toBeNull();
     expect(screen.getByRole("region", { name: "知识服务可靠性内容" })).toBeTruthy();
   });
 });

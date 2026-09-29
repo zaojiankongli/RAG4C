@@ -1,5 +1,9 @@
 import { ApiError, request } from "../../api/client";
 import {
+  TASK_SOURCE_KIND_VALUES,
+  TASK_STATUS_FACT_VALUES,
+} from "../model/taskVocabulary";
+import {
   projectTaskActionOutcome,
   projectTaskDetail,
   projectTaskEventPage,
@@ -9,7 +13,7 @@ import {
   projectTaskSavedViewPage,
   projectTaskSummary,
   type TaskActionOutcome,
-  type TaskCategory,
+  type TaskApiCategory,
   type TaskDetail,
   type TaskEvent,
   type TaskModelScope,
@@ -28,6 +32,7 @@ export type {
   TaskActionOutcome,
   TaskActionStatus,
   TaskActionType,
+  TaskApiCategory,
   TaskCategory,
   TaskDetail,
   TaskDisplayStatus,
@@ -63,11 +68,8 @@ export interface TaskPageQuery {
   cursor?: string | null;
   limit?: number;
   status?: TaskStatus | "all";
-  sourceKinds?: TaskSourceKind[];
-  category?: TaskCategory;
+  sourceKind?: TaskSourceKind;
   actionRequired?: boolean;
-  datasetId?: string;
-  workspaceId?: string;
 }
 export interface TaskEventQuery {
   cursor?: string | null;
@@ -90,13 +92,19 @@ export interface TaskActionInput {
 }
 export interface TaskSavedViewInput {
   name: string;
-  filters: Partial<TaskSavedViewFilters>;
+  filters: TaskSavedViewFilterInput;
   reason: string;
 }
+export type TaskSavedViewFilterInput = Omit<
+  Partial<TaskSavedViewFilters>,
+  "categories"
+> & {
+  categories?: TaskApiCategory[];
+};
 export interface UpdateTaskSavedViewInput {
   expectedRevision: number;
   name?: string;
-  filters?: Partial<TaskSavedViewFilters>;
+  filters?: TaskSavedViewFilterInput;
   status?: "active" | "archived";
   reason: string;
 }
@@ -121,25 +129,8 @@ export interface TaskApi {
   reconcile: typeof reconcileTasks;
 }
 
-const SOURCE_KINDS = new Set<TaskSourceKind>([
-  "document_ingest",
-  "index_operation",
-  "source_sync",
-  "document_delete",
-  "audit_export",
-  "release_quality_scan",
-  "release_recertification",
-]);
-const STATUS = new Set<TaskStatus>([
-  "queued",
-  "running",
-  "succeeded",
-  "failed",
-  "cancelled",
-  "blocked",
-  "unavailable",
-]);
-const CATEGORY = new Set<TaskCategory>(["content", "indexing", "source", "compliance", "quality"]);
+const SOURCE_KINDS = new Set<TaskSourceKind>(TASK_SOURCE_KIND_VALUES);
+const STATUS = new Set<TaskStatus>(TASK_STATUS_FACT_VALUES);
 function hasControlCharacters(value: string): boolean {
   for (const character of value) {
     const code = character.charCodeAt(0);
@@ -242,11 +233,6 @@ function queryStatus(value: unknown): TaskStatus | "all" {
   if (normalized !== "all" && !STATUS.has(normalized)) throw new Error("status is not allowed");
   return normalized;
 }
-function queryCategory(value: unknown): TaskCategory {
-  const normalized = text(value, "category", 32) as TaskCategory;
-  if (!CATEGORY.has(normalized)) throw new Error("category is not allowed");
-  return normalized;
-}
 function safeRequest<T>(path: string, init: RequestInit, fallback: string): Promise<T> {
   return request<T>(path, init).catch((error: unknown) => {
     if (error instanceof ApiError && error.kind === "aborted") throw error;
@@ -254,30 +240,23 @@ function safeRequest<T>(path: string, init: RequestInit, fallback: string): Prom
   });
 }
 function queryString(query: TaskPageQuery = {}): string {
+  const input = inputKeys(query, "taskQuery", [
+    "cursor",
+    "limit",
+    "status",
+    "sourceKind",
+    "actionRequired",
+  ]);
   const params = new URLSearchParams();
-  if (query.actionRequired !== undefined)
-    params.set("action_required", String(exactBoolean(query.actionRequired, "actionRequired")));
-  if (query.category !== undefined) params.set("category", queryCategory(query.category));
-  const nextCursor = cursor(query.cursor);
+  if (input.actionRequired !== undefined)
+    params.set("action_required", String(exactBoolean(input.actionRequired, "actionRequired")));
+  const nextCursor = cursor(input.cursor);
   if (nextCursor) params.set("cursor", nextCursor);
-  if (query.datasetId !== undefined)
-    params.set("dataset_id", identifier(query.datasetId, "datasetId"));
-  params.set("limit", String(pageLimit(query.limit ?? 50)));
-  if (query.sourceKinds !== undefined) {
-    if (!Array.isArray(query.sourceKinds) || query.sourceKinds.length > 7)
-      throw new Error("sourceKinds is invalid");
-    const seen = new Set<string>();
-    for (const value of query.sourceKinds) {
-      const kind = sourceKind(value);
-      if (seen.has(kind)) throw new Error("sourceKinds must be unique");
-      seen.add(kind);
-      params.append("source_kind", kind);
-    }
-  }
-  if (query.status !== undefined && query.status !== "all")
-    params.set("status", queryStatus(query.status));
-  if (query.workspaceId !== undefined)
-    params.set("workspace_id", identifier(query.workspaceId, "workspaceId"));
+  params.set("limit", String(pageLimit(input.limit ?? 50)));
+  if (input.sourceKind !== undefined)
+    params.set("source_kind", sourceKind(input.sourceKind));
+  if (input.status !== undefined && input.status !== "all")
+    params.set("status", queryStatus(input.status));
   const queryText = params.toString();
   return queryText ? `?${queryText}` : "";
 }

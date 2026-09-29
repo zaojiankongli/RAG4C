@@ -6,6 +6,7 @@ import {
   projectTaskProjection,
   projectTaskReconciliationRun,
   projectTaskSavedView,
+  projectTaskSavedViewFilters,
   projectTaskSummary,
   projectTaskRoute,
   type TaskModelScope,
@@ -268,6 +269,36 @@ describe("Stage 24 task projectors", () => {
         scope,
       ),
     ).toThrow(/time|range|order/i);
+  });
+
+  it("normalizes Saved View category and status aliases through the shared vocabulary", () => {
+    expect(
+      projectTaskSavedViewFilters({
+        source_kinds: [],
+        categories: ["ingest", "index", "sources", "audit", "release-quality"],
+        statuses: ["completed"],
+        action_required: null,
+        dataset_id: null,
+        workspace_id: null,
+        occurred_from: null,
+        occurred_to: null,
+      }),
+    ).toMatchObject({
+      categories: ["content", "indexing", "source", "compliance", "quality"],
+      statuses: ["succeeded"],
+    });
+    expect(() =>
+      projectTaskSavedViewFilters({
+        source_kinds: [],
+        categories: ["content", "documents"],
+        statuses: [],
+        action_required: null,
+        dataset_id: null,
+        workspace_id: null,
+        occurred_from: null,
+        occurred_to: null,
+      }),
+    ).toThrow(/unique/i);
   });
 
   it("projects reconciliation run lifecycle and exact summary states", () => {

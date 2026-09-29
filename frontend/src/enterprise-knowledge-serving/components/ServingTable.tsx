@@ -1,7 +1,8 @@
-import { Button, Loading, PrimaryTable, type PrimaryTableCol } from "tdesign-react";
+import { Button, PrimaryTable, type PrimaryTableCol } from "tdesign-react";
 import { FileSearchIcon, LinkIcon } from "tdesign-icons-react";
 import type { ServingSnapshot } from "../model/servingModel";
 import { dateLabel, numberLabel, shortDigest, StateTag } from "./servingUi";
+import { Spin } from "../../ui";
 
 export interface ServingTableProps {
   snapshots: ServingSnapshot[];
@@ -95,7 +96,7 @@ export default function ServingTable({
   if (loading && snapshots.length === 0)
     return (
       <div className="knowledge-serving__table-loading">
-        <Loading text="正在读取服务快照…" />
+        <Spin tip="正在读取服务快照…" />
       </div>
     );
   if (mobile)

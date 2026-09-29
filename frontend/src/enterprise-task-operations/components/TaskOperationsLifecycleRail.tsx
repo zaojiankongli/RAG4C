@@ -1,4 +1,3 @@
-import { Tag } from "tdesign-react";
 import {
   ArrowRightIcon,
   CheckCircleIcon,
@@ -7,6 +6,7 @@ import {
   TimeIcon,
 } from "tdesign-icons-react";
 
+import { Tag } from "../../ui";
 import type { TaskOperationsSummary } from "./taskOperationsTypes";
 import { formatTaskCount } from "./taskOperationsUi";
 
@@ -15,6 +15,8 @@ export interface TaskOperationsLifecycleRailProps {
 }
 
 export default function TaskOperationsLifecycleRail({ summary }: TaskOperationsLifecycleRailProps) {
+  const authorityReady = summary?.state === "ready";
+  const authorityUnavailable = summary !== null && summary.state !== "ready";
   const stages = [
     {
       key: "source",
@@ -30,7 +32,7 @@ export default function TaskOperationsLifecycleRail({ summary }: TaskOperationsL
       title: "队列",
       value: `${formatTaskCount(summary?.queued_count)} 等待`,
       icon: <TimeIcon />,
-      status: summary ? "current" : "pending",
+      status: authorityUnavailable ? "warning" : summary ? "current" : "pending",
     },
     {
       key: "attempt",
@@ -38,7 +40,7 @@ export default function TaskOperationsLifecycleRail({ summary }: TaskOperationsL
       title: "尝试",
       value: `${formatTaskCount(summary?.running_count)} 活跃`,
       icon: <LoadingIcon />,
-      status: summary ? "current" : "pending",
+      status: authorityUnavailable ? "warning" : summary ? "current" : "pending",
     },
     {
       key: "outcome",
@@ -46,7 +48,7 @@ export default function TaskOperationsLifecycleRail({ summary }: TaskOperationsL
       title: "结果",
       value: `${formatTaskCount(summary?.completed_count)} 完成 · ${formatTaskCount(summary?.failed_count)} 失败`,
       icon: summary?.failed_count ? <ErrorCircleIcon /> : <CheckCircleIcon />,
-      status: summary?.failed_count ? "warning" : "complete",
+      status: !authorityReady || summary?.failed_count ? "warning" : "complete",
     },
   ] as const;
 

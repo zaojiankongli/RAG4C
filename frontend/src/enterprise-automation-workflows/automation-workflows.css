@@ -251,8 +251,11 @@
 }
 
 .automation-workflows__attention .t-alert,
+.automation-workflows__attention .rag-alert,
 .automation-workflows__capability-alert .t-alert,
+.automation-workflows__capability-alert .rag-alert,
 .automation-workflows__mutation-error .t-alert,
+.automation-workflows__mutation-error .rag-alert,
 .automation-workflows__detail-content > .t-alert,
 .automation-workflows__preview > .t-alert {
   margin-top: 12px;
@@ -693,7 +696,8 @@
   color: var(--aw-muted);
 }
 
-.automation-workflows__state-alert > .t-alert {
+.automation-workflows__state-alert > .t-alert,
+.automation-workflows__state-alert > .rag-alert {
   margin-bottom: 12px;
 }
 
@@ -702,7 +706,8 @@
 }
 
 .automation-workflows__activity-panel > .automation-workflows__state-alert,
-.automation-workflows__activity-panel > .t-empty {
+.automation-workflows__activity-panel > .t-empty,
+.automation-workflows__activity-panel > .rag-empty {
   margin-bottom: 14px;
 }
 

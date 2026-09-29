@@ -8,6 +8,7 @@ import {
   createApprovalRequest,
 } from "../../enterprise-approval/api/enterpriseApprovalApi";
 import { approvalCenterNavigationUrl } from "../../enterprise-admin/memberRoleApprovalNavigation";
+import { commitNavigationIntent } from "../../run/navigationAdapter";
 import type { EnterpriseWorkspace } from "../enterpriseWorkspaceModel";
 import {
   createWorkspaceAuthorizationIdempotencyKey,
@@ -189,12 +190,12 @@ function navigateToApprovalRequest(requestId: string): void {
   if (typeof window === "undefined") return;
   const base = approvalCenterNavigationUrl(window.location);
   const separator = base.includes("?") ? "&" : "?";
-  window.history.pushState(
-    window.history.state,
-    "",
-    `${base}${separator}request=${encodeURIComponent(requestId)}`,
+  commitNavigationIntent(
+    {
+      mode: "history",
+      url: `${base}${separator}request=${encodeURIComponent(requestId)}`,
+    },
   );
-  window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
 export default function WorkspacePermissionsRolloutCenter({ scope, context, workspace }: Props) {

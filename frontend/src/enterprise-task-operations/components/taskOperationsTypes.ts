@@ -1,5 +1,6 @@
-export type TaskOperationStatus =
-  "queued" | "running" | "failed" | "completed" | "cancelled" | "blocked" | "unavailable";
+import type { TaskDisplayStatus } from "../model/taskVocabulary";
+
+export type TaskOperationStatus = TaskDisplayStatus;
 
 export type TaskOperationsTab = "all" | "running" | "failed" | "completed" | "activity";
 

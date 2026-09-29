@@ -112,7 +112,7 @@ describe("Stage 24 task API", () => {
       scope,
       {
         status: "failed",
-        sourceKinds: ["source_sync"],
+        sourceKind: "source_sync",
         cursor: "cursor-a",
         limit: 20,
         actionRequired: true,
@@ -170,7 +170,11 @@ describe("Stage 24 task API", () => {
     );
     await createTaskSavedView(
       scope,
-      { name: "失败任务", filters: { statuses: ["failed"] }, reason: "save view" },
+      {
+        name: "失败任务",
+        filters: { categories: ["documents", "sources"], statuses: ["failed"] },
+        reason: "save view",
+      },
       options,
     );
     await updateTaskSavedView(
@@ -213,6 +217,22 @@ describe("Stage 24 task API", () => {
         reason: "retry controlled task",
       }),
     );
+    expect(mockedRequest.mock.calls[3]?.[1]?.body).toBe(
+      JSON.stringify({
+        name: "失败任务",
+        filters: {
+          source_kinds: [],
+          categories: ["content", "source"],
+          statuses: ["failed"],
+          action_required: null,
+          dataset_id: null,
+          workspace_id: null,
+          occurred_from: null,
+          occurred_to: null,
+        },
+        reason: "save view",
+      }),
+    );
   });
 
   it("rejects missing idempotency keys, malformed inputs, unsupported source kinds, and unsafe reasons before network calls", () => {
@@ -243,7 +263,11 @@ describe("Stage 24 task API", () => {
         { idempotencyKey: "key" },
       ),
     ).toThrow(/revision|integer/i);
-    expect(() => fetchTasks(scope, { sourceKinds: ["arbitrary" as never] })).toThrow(/source/i);
+    expect(() => fetchTasks(scope, { sourceKind: "arbitrary" as never })).toThrow(/source/i);
+    expect(() => fetchTasks(scope, { category: "source" } as never)).toThrow(/category/i);
+    expect(() => fetchTasks(scope, { sourceKinds: ["source_sync"] } as never)).toThrow(/sourceKinds/i);
+    expect(() => fetchTasks(scope, { datasetId: "dataset-a" } as never)).toThrow(/datasetId/i);
+    expect(() => fetchTasks(scope, { workspaceId: "workspace-a" } as never)).toThrow(/workspaceId/i);
     expect(() =>
       createTaskSavedView(
         scope,
@@ -259,6 +283,11 @@ describe("Stage 24 task API", () => {
         { idempotencyKey: "key" },
       ),
     ).toThrow(/unsafe|reason/i);
+    expect(mockedRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not send the display-only completed status as a fact-status query", () => {
+    expect(() => fetchTasks(scope, { status: "completed" as never })).toThrow(/status/i);
     expect(mockedRequest).not.toHaveBeenCalled();
   });
 

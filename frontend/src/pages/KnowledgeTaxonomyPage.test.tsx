@@ -298,6 +298,20 @@ describe("KnowledgeTaxonomyPage enterprise governance workspace", () => {
     window.removeEventListener("popstate", onPopState);
   });
 
+  it("preserves the legacy synthetic popstate contract in hash deployment mode", async () => {
+    window.history.replaceState({}, "", "/#/taxonomy");
+    const user = userEvent.setup();
+    const onPopState = vi.fn();
+    window.addEventListener("popstate", onPopState);
+
+    render(<KnowledgeTaxonomyPage />);
+    await user.click(screen.getByRole("button", { name: "管理文档" }));
+
+    expect(window.location.hash).toBe("#/documents");
+    expect(onPopState).toHaveBeenCalled();
+    window.removeEventListener("popstate", onPopState);
+  });
+
   it("keeps all governance surfaces visible and routes empty-state import without a document link", async () => {
     const user = userEvent.setup();
     const onPopState = vi.fn();

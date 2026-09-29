@@ -1,6 +1,7 @@
-import { Button, Loading, PrimaryTable, Tag, type PrimaryTableCol } from "tdesign-react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { CloseIcon, FileIcon, RefreshIcon } from "tdesign-icons-react";
 
+import { Button, Spin, Table, Tag } from "../../ui";
 import type { TaskOperation, TaskOperationAction } from "./taskOperationsTypes";
 import {
   formatDuration,
@@ -9,6 +10,15 @@ import {
   taskStatusLabel,
   taskStatusTheme,
 } from "./taskOperationsUi";
+
+type TaskTableColumn = {
+  title: string;
+  key: string;
+  width: number;
+  render: (_value: unknown, row: TaskOperation) => ReactNode;
+};
+
+const TABLE_KEYBOARD_SCROLL_STEP = 96;
 
 export interface TaskOperationsTableProps {
   operations: TaskOperation[];
@@ -56,7 +66,7 @@ function TaskActions({
     <div className="task-operations__row-actions">
       {onOpenDetail ? (
         <Button
-          variant="text"
+          type="text"
           size="small"
           icon={<FileIcon />}
           aria-label={`查看 ${task.task_label} 详情`}
@@ -67,7 +77,7 @@ function TaskActions({
       ) : null}
       {task.retryable && onRetry ? (
         <Button
-          variant="outline"
+          type="default"
           size="small"
           icon={<RefreshIcon />}
           aria-disabled={readOnly}
@@ -82,8 +92,8 @@ function TaskActions({
       ) : null}
       {task.cancellable && onCancel ? (
         <Button
-          theme="danger"
-          variant="text"
+          type="text"
+          danger
           size="small"
           icon={<CloseIcon />}
           aria-disabled={readOnly}
@@ -150,10 +160,17 @@ export default function TaskOperationsTable({
   onRetry,
   onCancel,
 }: TaskOperationsTableProps) {
+  const handleTableKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.currentTarget.scrollLeft +=
+      event.key === "ArrowRight" ? TABLE_KEYBOARD_SCROLL_STEP : -TABLE_KEYBOARD_SCROLL_STEP;
+  };
+
   if (loading && operations.length === 0) {
     return (
       <div className="task-operations__table-loading">
-        <Loading text="正在读取任务状态…" />
+        <Spin tip="正在读取任务状态…" />
       </div>
     );
   }
@@ -187,24 +204,24 @@ export default function TaskOperationsTable({
     );
   }
 
-  const columns: Array<PrimaryTableCol<TaskOperation>> = [
+  const columns: TaskTableColumn[] = [
     {
       title: "任务与来源",
-      colKey: "task",
+      key: "task",
       width: 280,
-      cell: ({ row }) => <TaskIdentity task={row} />,
+      render: (_value, row) => <TaskIdentity task={row} />,
     },
     {
       title: "状态",
-      colKey: "status",
+      key: "status",
       width: 175,
-      cell: ({ row }) => <TaskStatus task={row} />,
+      render: (_value, row) => <TaskStatus task={row} />,
     },
     {
       title: "队列 / 尝试",
-      colKey: "attempt",
+      key: "attempt",
       width: 150,
-      cell: ({ row }) => (
+      render: (_value, row) => (
         <div className="task-operations__queue-cell">
           <strong>{row.queue_name}</strong>
           <code>
@@ -215,9 +232,9 @@ export default function TaskOperationsTable({
     },
     {
       title: "时间 / 耗时",
-      colKey: "timing",
+      key: "timing",
       width: 170,
-      cell: ({ row }) => (
+      render: (_value, row) => (
         <div className="task-operations__timing-cell">
           <time dateTime={row.created_at ?? undefined}>{formatTaskDate(row.created_at)}</time>
           <small>{formatDuration(row.duration_ms)}</small>
@@ -226,9 +243,9 @@ export default function TaskOperationsTable({
     },
     {
       title: "操作",
-      colKey: "actions",
+      key: "actions",
       width: 230,
-      cell: ({ row }) => (
+      render: (_value, row) => (
         <TaskActions
           task={row}
           readOnly={readOnly}
@@ -241,22 +258,28 @@ export default function TaskOperationsTable({
   ];
 
   return (
-    <div
-      className="task-operations__desktop-table"
-      data-testid="task-operations-desktop-table"
-      tabIndex={0}
-      aria-label="任务表格，可横向滚动"
-    >
-      <PrimaryTable
-        rowKey="id"
-        columns={columns}
-        data={operations}
-        size="small"
-        bordered
-        hover
-        verticalAlign="top"
-        empty="暂无任务记录"
-      />
-    </div>
+      <div
+        className="task-operations__desktop-table"
+        data-testid="task-operations-desktop-table"
+      >
+        <Table
+          rowKey="id"
+          columns={columns}
+          dataSource={operations}
+          size="small"
+          bordered
+          hover
+          verticalAlign="top"
+          pagination={false}
+          loading={loading}
+          locale={{ emptyText: "暂无任务记录" }}
+          scroll={{ x: 900 }}
+          scrollContainerProps={{
+            tabIndex: 0,
+            "aria-label": "任务表格，可横向滚动",
+            onKeyDown: handleTableKeyDown,
+          }}
+        />
+      </div>
   );
 }

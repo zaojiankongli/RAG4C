@@ -358,6 +358,19 @@ describe("KnowledgeOverviewPage enterprise command center", () => {
     window.removeEventListener("popstate", onPopstate);
   });
 
+  it("preserves the legacy synthetic popstate contract in hash deployment mode", () => {
+    window.history.replaceState({}, "", "/#/overview");
+    renderOverview();
+    const onPopstate = vi.fn();
+    window.addEventListener("popstate", onPopstate);
+
+    fireEvent.click(within(screen.getByRole("region", { name: "快捷操作" })).getByRole("button", { name: "导入文档" }));
+
+    expect(window.location.hash).toBe("#/documents");
+    expect(onPopstate).toHaveBeenCalled();
+    window.removeEventListener("popstate", onPopstate);
+  });
+
   it("keeps refresh as an explicit TDesign operation", () => {
     renderOverview();
 

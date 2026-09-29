@@ -7,11 +7,13 @@ import {
 
 const summary: ConsistencySummaryResponse = {
   mode: "report-only",
+  projection_read_status: "best_effort",
   best_effort: true,
   counts: {
     documents_scanned: 12,
     authoritative_heads: 40,
     projection_chunks: 35,
+    projection_read_incomplete_documents: 0,
     missing_chunks: 3,
     stale_chunks: 2,
     orphaned_chunks: 1,
@@ -65,6 +67,19 @@ describe("consistency summary projection", () => {
       total: 9,
       effective_retrieval: 4,
       pending_review: 2,
+    });
+  });
+
+  it("preserves an incomplete target read count instead of presenting a clean report", () => {
+    const incomplete = {
+      ...summary,
+      projection_read_status: "incomplete" as const,
+      counts: { ...summary.counts, projection_read_incomplete_documents: 2 },
+      has_drift: false,
+    };
+    expect(projectConsistencySummary(incomplete)).toMatchObject({
+      projectionReadIncompleteDocuments: 2,
+      projectionReadStatus: "incomplete",
     });
   });
 

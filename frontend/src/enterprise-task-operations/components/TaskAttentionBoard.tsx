@@ -1,6 +1,6 @@
-import { Tag } from "tdesign-react";
 import { ErrorCircleIcon, LoadingIcon, TimeIcon } from "tdesign-icons-react";
 
+import { Tag } from "../../ui";
 import type { TaskOperationsSummary } from "./taskOperationsTypes";
 import { formatTaskCount } from "./taskOperationsUi";
 

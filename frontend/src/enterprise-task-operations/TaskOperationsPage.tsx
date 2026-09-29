@@ -12,6 +12,7 @@ import {
   type TaskSavedView as ViewTaskSavedView,
 } from "./components";
 import { useEnterpriseTaskOperations } from "./hooks/useEnterpriseTaskOperations";
+import { displayTaskStatus } from "./model/taskVocabulary";
 import type {
   TaskActionOutcome,
   TaskDetail,
@@ -90,7 +91,7 @@ function detailProjection(detail: TaskDetail): ViewTaskOperationDetail {
 }
 
 function savedViewFilter(view: TaskSavedView): Exclude<TaskOperationsTab, "activity"> {
-  const statuses = new Set(view.filters.statuses);
+  const statuses = new Set(view.filters.statuses.map(displayTaskStatus));
   if (
     statuses.size > 0 &&
     [...statuses].every((status) => status === "queued" || status === "running")
@@ -103,7 +104,7 @@ function savedViewFilter(view: TaskSavedView): Exclude<TaskOperationsTab, "activ
     )
   )
     return "failed";
-  if (statuses.size === 1 && statuses.has("succeeded")) return "completed";
+  if (statuses.size === 1 && statuses.has("completed")) return "completed";
   return "all";
 }
 

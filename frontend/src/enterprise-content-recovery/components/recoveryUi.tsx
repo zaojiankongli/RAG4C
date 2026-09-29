@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, type ReactNode, type RefObject } from "react";
-import { Alert, Empty, Loading, Tag } from "tdesign-react";
 import { CheckCircleIcon, ErrorCircleIcon, LoadingIcon, TimeIcon } from "tdesign-icons-react";
 
 import type {
@@ -8,6 +7,7 @@ import type {
   RecoveryResourceStatus,
   RecoverySummary,
 } from "./contentRecoveryTypes";
+import { Alert, Empty, Spin, Tag } from "../../ui";
 
 export function formatRecoveryDate(value: string | null | undefined): string {
   if (!value) return "未返回";
@@ -126,13 +126,13 @@ export function RecoveryStateNotice({
         className="content-recovery__state content-recovery__state--loading"
         data-testid="recovery-loading"
       >
-        <Loading text={`正在读取${resourceLabel}权威…`} />
+        <Spin tip={`正在读取${resourceLabel}权威…`} />
       </div>
     );
   }
   if (status === "unavailable") {
     return (
-      <div role="alert" className="content-recovery__state-alert">
+      <div className="content-recovery__state-alert">
         <Alert
           theme="warning"
           title={`${resourceLabel}暂不可用`}
@@ -143,7 +143,7 @@ export function RecoveryStateNotice({
   }
   if (status === "error") {
     return (
-      <div role="alert" className="content-recovery__state-alert">
+      <div className="content-recovery__state-alert">
         <Alert
           theme="error"
           title={`${resourceLabel}读取失败`}
@@ -154,7 +154,7 @@ export function RecoveryStateNotice({
   }
   if (status === "partial") {
     return (
-      <div role="alert" className="content-recovery__state-alert">
+      <div className="content-recovery__state-alert">
         <Alert
           theme="warning"
           title={`部分${resourceLabel}无法读取`}

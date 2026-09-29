@@ -1,7 +1,7 @@
-import { Alert } from "tdesign-react";
 import { CheckCircleIcon, ErrorCircleIcon, TimeIcon } from "tdesign-icons-react";
 
 import type { AutomationSummary } from "../model/automationModel";
+import { Alert } from "../../ui";
 import { formatAutomationCount } from "./automationUi";
 import type { AutomationResource } from "./types";
 
@@ -32,7 +32,7 @@ export default function AutomationAttentionBoard({ summary }: AutomationAttentio
         </span>
       </div>
       {summaryState === "partial" ? (
-        <div role="alert">
+        <div>
           <Alert
             theme="warning"
             title="自动化摘要部分可用"
@@ -41,7 +41,7 @@ export default function AutomationAttentionBoard({ summary }: AutomationAttentio
         </div>
       ) : null}
       {summaryState === "unavailable" ? (
-        <div role="alert">
+        <div>
           <Alert
             theme="warning"
             title="自动化摘要暂不可用"
@@ -50,7 +50,7 @@ export default function AutomationAttentionBoard({ summary }: AutomationAttentio
         </div>
       ) : null}
       {summaryState === "error" ? (
-        <div role="alert">
+        <div>
           <Alert
             theme="error"
             title="自动化摘要读取失败"

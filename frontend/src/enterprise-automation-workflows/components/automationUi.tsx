@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, type RefObject } from "react";
-import { Alert, Empty, Loading, Tag } from "tdesign-react";
 import { ErrorCircleIcon, SecuredIcon } from "tdesign-icons-react";
 
 import type {
@@ -11,6 +10,7 @@ import type {
   AutomationTriggerCode,
 } from "../model/automationModel";
 import type { AutomationResourceStatus } from "./types";
+import { Alert, Empty, Spin, Tag } from "../../ui";
 
 export function formatAutomationDate(value: string | null | undefined): string {
   if (!value) return "未返回";
@@ -194,13 +194,13 @@ export function AutomationStateNotice({
   if (status === "loading" && !hasItems) {
     return (
       <div className="automation-workflows__state automation-workflows__state--loading">
-        <Loading text={`正在读取${resourceLabel}…`} />
+        <Spin tip={`正在读取${resourceLabel}…`} />
       </div>
     );
   }
   if (status === "unavailable") {
     return (
-      <div className="automation-workflows__state-alert" role="alert">
+      <div className="automation-workflows__state-alert">
         <Alert
           theme="warning"
           title={`${resourceLabel}暂不可用`}
@@ -211,7 +211,7 @@ export function AutomationStateNotice({
   }
   if (status === "error") {
     return (
-      <div className="automation-workflows__state-alert" role="alert">
+      <div className="automation-workflows__state-alert">
         <Alert
           theme="error"
           title={`${resourceLabel}读取失败`}
@@ -222,7 +222,7 @@ export function AutomationStateNotice({
   }
   if (status === "partial") {
     return (
-      <div className="automation-workflows__state-alert" role="alert">
+      <div className="automation-workflows__state-alert">
         <Alert
           theme="warning"
           title={`部分${resourceLabel}无法读取`}

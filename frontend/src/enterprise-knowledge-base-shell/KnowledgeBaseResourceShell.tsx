@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { Button, Drawer, Select, Tabs, Tag } from "tdesign-react";
-import { InfoCircleIcon, SecuredIcon } from "tdesign-icons-react";
+import { InfoCircleIcon } from "tdesign-icons-react";
 import { fetchEnterpriseKnowledgeBaseDetail } from "../enterprise-knowledge-base/api/enterpriseKnowledgeBaseApi";
 import type { EnterpriseKnowledgeBaseDetail } from "../enterprise-knowledge-base/enterpriseKnowledgeBaseModel";
 import type { EnterpriseScope } from "../enterprise-admin/model";
@@ -45,15 +45,14 @@ const RESOURCE_SELECT_INPUT_PROPS = {
 const RESOURCE_ITEMS: ReadonlyArray<{
   value: KnowledgeBaseResourceSection;
   label: string;
-  description: string;
 }> = [
-  { value: "overview", label: "Overview", description: "知识库权威" },
-  { value: "documents", label: "Documents", description: "文档与解析处理" },
-  { value: "taxonomy", label: "Taxonomy", description: "目录与标签治理" },
-  { value: "sources", label: "Sources", description: "连接器与同步运行" },
-  { value: "serving", label: "Serving", description: "知识服务可靠性" },
-  { value: "governance", label: "Governance", description: "数据集、问答与版本" },
-  { value: "releases", label: "Releases", description: "不可变发布与 Channel" },
+  { value: "overview", label: "概览" },
+  { value: "documents", label: "文档" },
+  { value: "taxonomy", label: "目录与标签" },
+  { value: "sources", label: "数据来源" },
+  { value: "serving", label: "服务状态" },
+  { value: "governance", label: "内容治理" },
+  { value: "releases", label: "发布版本" },
 ];
 
 function useCompactViewport(): boolean {
@@ -251,7 +250,6 @@ export default function KnowledgeBaseResourceShell({
   const displayName = knowledgeBase?.name || requestedDatasetId || "Knowledge Base";
   const lifecycle = knowledgeBase?.status ?? null;
   const owner = knowledgeBase?.owning_workspace ?? null;
-  const currentSection = RESOURCE_ITEMS.find((item) => item.value === section) ?? RESOURCE_ITEMS[0];
   const authorityLabel =
     authorityState === "ready"
       ? "Registry 已验证"
@@ -311,72 +309,18 @@ export default function KnowledgeBaseResourceShell({
     >
       <header className="knowledge-base-resource-shell__header">
         <div className="knowledge-base-resource-shell__identity">
-          <span className="knowledge-base-resource-shell__mark" aria-hidden="true">
-            <SecuredIcon />
-          </span>
-          <div className="knowledge-base-resource-shell__copy">
-            <span className="knowledge-base-resource-shell__eyebrow">KNOWLEDGE BASE WORKSPACE</span>
-            <h1 ref={headingRef} tabIndex={-1}>
-              {displayName}
-            </h1>
-            <p>统一管理知识资产、治理事实与后续发布工作面</p>
-          </div>
-        </div>
-        <div
-          className="knowledge-base-resource-shell__desktop-context"
-          aria-label="Knowledge Base 权威上下文"
-        >
-          <div>
-            <span>生命周期</span>
+          <h1 ref={headingRef} tabIndex={-1}>
+            {displayName}
+          </h1>
+          <div
+            className="knowledge-base-resource-shell__status"
+            role="status"
+            aria-label="知识库状态"
+          >
             <Tag theme={statusTheme(lifecycle)} variant="light-outline">
               {statusLabel(lifecycle)}
             </Tag>
-          </div>
-          <div>
-            <span>Owning Workspace</span>
-            <strong>{owner?.name || "未返回"}</strong>
-          </div>
-          <div>
-            <span>Authority</span>
-            <strong>{authorityLabel}</strong>
-          </div>
-          <div>
-            <span>Revision</span>
-            <strong>
-              {knowledgeBase
-                ? `${revisionLabel(knowledgeBase.profile_revision)} / ${revisionLabel(knowledgeBase.ownership_revision)}`
-                : "未返回"}
-            </strong>
-          </div>
-          <div>
-            <span>Release</span>
-            <strong>
-              {coordinator.releaseContext?.channelName
-                ? `${coordinator.releaseContext.channelName} · 发布 ${coordinator.releaseContext.servingReleaseNumber ?? "未返回"}`
-                : coordinator.releaseContext?.unavailableReason || "发布权威读取中"}
-            </strong>
-          </div>
-        </div>
-        <div
-          className="knowledge-base-resource-shell__mobile-context"
-          aria-label="Knowledge Base 移动上下文"
-        >
-          <div>
-            <strong>{displayName}</strong>
-            <Tag theme={statusTheme(lifecycle)} variant="light-outline">
-              {statusLabel(lifecycle)}
-            </Tag>
-          </div>
-          <div>
-            <span>Channel</span>
-            <strong>{coordinator.releaseContext?.channelName || "未返回"}</strong>
-            <span className="knowledge-base-resource-shell__mobile-separator" aria-hidden="true" />
-            <span>Release</span>
-            <strong>
-              {coordinator.releaseContext?.effectiveReleaseNumber == null
-                ? "未返回"
-                : `Release ${coordinator.releaseContext.effectiveReleaseNumber}`}
-            </strong>
+            {authorityState !== "ready" && <span>{authorityLabel}</span>}
           </div>
         </div>
         <Button
@@ -385,6 +329,8 @@ export default function KnowledgeBaseResourceShell({
           variant="text"
           icon={<InfoCircleIcon />}
           onClick={openFacts}
+          aria-haspopup="dialog"
+          aria-expanded={factsOpen}
         >
           查看权威事实
         </Button>
@@ -437,10 +383,6 @@ export default function KnowledgeBaseResourceShell({
             />
           </label>
         )}
-        <div className="knowledge-base-resource-shell__section-note">
-          <strong>{currentSection.label}</strong>
-          <span>{currentSection.description}</span>
-        </div>
       </div>
 
       <div
@@ -478,6 +420,10 @@ export default function KnowledgeBaseResourceShell({
           tabIndex={-1}
         >
           <dl className="knowledge-base-resource-shell__facts-list">
+            <div>
+              <dt>Authority</dt>
+              <dd>{authorityLabel}</dd>
+            </div>
             <div>
               <dt>Dataset ID</dt>
               <dd>{shortId(knowledgeBase?.id ?? requestedDatasetId)}</dd>

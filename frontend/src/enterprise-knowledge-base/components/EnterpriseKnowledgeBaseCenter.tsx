@@ -63,6 +63,7 @@ import {
   knowledgeBaseRouteFromLocation,
   knowledgeBaseTabFromLocation,
 } from "../knowledgeBaseRoute";
+import { commitNavigationIntent } from "../../run/navigationAdapter";
 import {
   validateApplicationReferenceInput,
   validateWorkspaceTransferInput,
@@ -203,14 +204,7 @@ function writeKnowledgeBaseRoute(
 ): void {
   if (typeof window === "undefined") return;
   const intent = knowledgeBaseNavigationUrl(window.location, { datasetId, tab });
-  if (intent.mode === "history") {
-    if (replace) window.history.replaceState(window.history.state, "", intent.url);
-    else window.history.pushState(window.history.state, "", intent.url);
-    window.dispatchEvent(new PopStateEvent("popstate"));
-    return;
-  }
-  const nextHash = "#" + intent.url;
-  if (window.location.hash !== nextHash) window.location.hash = intent.url;
+  commitNavigationIntent(intent, { historyAction: replace ? "replace" : "push" });
 }
 
 function dependencySummary(detail: KnowledgeBaseDetail): {
@@ -668,12 +662,7 @@ export default function EnterpriseKnowledgeBaseCenter({
       closeKnowledgeBase();
       setDialog(null);
       setNotice(null);
-      if (intent.mode === "history") {
-        window.history.pushState(window.history.state, "", intent.url);
-        window.dispatchEvent(new PopStateEvent("popstate"));
-      } else {
-        window.location.hash = intent.url;
-      }
+      commitNavigationIntent(intent);
     },
     [closeKnowledgeBase],
   );

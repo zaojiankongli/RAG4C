@@ -1,6 +1,6 @@
-import { Button, Empty, Tag } from "tdesign-react";
 import { ArrowRightIcon, ErrorCircleIcon, SecuredIcon } from "tdesign-icons-react";
 
+import { Button, Empty, Tag } from "../../ui";
 import type { TaskReconciliationController, TaskReconciliationItem } from "./taskOperationsTypes";
 import { formatTaskDate } from "./taskOperationsUi";
 
@@ -23,6 +23,11 @@ export default function ReconciliationPanel({
   controller,
   readOnly = false,
 }: ReconciliationPanelProps) {
+  const openCount =
+    controller.status === "ready" || controller.status === "empty"
+      ? controller.items.filter((item) => item.status === "open").length
+      : null;
+
   return (
     <section
       className="task-operations__side-panel task-operations__reconciliation-panel"
@@ -34,7 +39,8 @@ export default function ReconciliationPanel({
           <h2 id="task-reconciliation-title">Reconciliation</h2>
         </div>
         <Tag theme="warning" variant="light-outline">
-          <SecuredIcon aria-hidden="true" /> {controller.items.length} open
+          <SecuredIcon aria-hidden="true" />{" "}
+          {openCount === null ? "open 未返回" : `${openCount} open`}
         </Tag>
       </div>
       {controller.status === "unavailable" ? (
@@ -45,6 +51,11 @@ export default function ReconciliationPanel({
       {controller.status === "partial" ? (
         <div role="alert">
           <Tag theme="warning">部分对账事项无法读取</Tag>
+        </div>
+      ) : null}
+      {controller.status === "error" ? (
+        <div role="alert">
+          <Tag theme="danger">Reconciliation 读取失败</Tag>
         </div>
       ) : null}
       {controller.items.length ? (
@@ -67,7 +78,7 @@ export default function ReconciliationPanel({
                 </small>
                 {item.action_required && item.status === "open" && controller.onResolve ? (
                   <Button
-                    variant="text"
+                    type="text"
                     size="small"
                     icon={<ArrowRightIcon />}
                     disabled={readOnly}

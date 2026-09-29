@@ -123,12 +123,26 @@ const flow = {
   edges: [],
 };
 const listeners = new Map<string, () => void>();
-function location(search: string) {
+function location(search: string, historyState: unknown = null) {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
       location: { pathname: "/visualize", search, hash: "" },
-      history: { state: null, replaceState: s.replace },
+      history: { state: historyState, replaceState: s.replace },
+      matchMedia: () => s.mobile,
+      setInterval: vi.fn(),
+      clearInterval: vi.fn(),
+      addEventListener: (type: string, listener: () => void) => listeners.set(type, listener),
+      removeEventListener: (type: string) => listeners.delete(type),
+    },
+  });
+}
+function hashLocation(search: string, historyState: unknown = null) {
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: { pathname: "/", search: "", hash: `#/visualize${search}` },
+      history: { state: historyState, replaceState: s.replace },
       matchMedia: () => s.mobile,
       setInterval: vi.fn(),
       clearInterval: vi.fn(),
@@ -216,6 +230,34 @@ describe("VisualizePage orchestration", () => {
     );
     act(() => r.root.findByProps({ "data-key": "knowledge" }).props.onClick());
     expect(s.knowledge).toHaveBeenCalledTimes(1);
+  });
+  it("preserves history state while silently replacing the direct route", () => {
+    const historyState = { source: "visualize-host" };
+    location("?run=run-1&tab=process&view=recent", historyState);
+    const r = create(<VisualizePage />);
+    s.replace.mockReset();
+
+    act(() => r.root.findByProps({ "data-key": "timeline" }).props.onClick());
+
+    expect(s.replace.mock.calls[s.replace.mock.calls.length - 1]?.[0]).toBe(historyState);
+    expect(s.replace.mock.calls[s.replace.mock.calls.length - 1]?.[2]).toMatch(
+      /^\/visualize\?.*tab=timeline/,
+    );
+  });
+  it("silently replaces the hash route and syncs hashchange state", () => {
+    hashLocation("?run=run-1&tab=process&view=recent");
+    const renderer = create(<VisualizePage />);
+    s.replace.mockReset();
+
+    act(() => renderer.root.findByProps({ "data-key": "timeline" }).props.onClick());
+
+    expect(s.replace.mock.calls[s.replace.mock.calls.length - 1]?.[2]).toMatch(
+      /^\/#\/visualize\?.*tab=timeline/,
+    );
+    window.location.hash = "#/visualize?run=run-2&tab=events&view=errors&follow=0";
+    act(() => listeners.get("hashchange")?.());
+    expect(s.history.selectRun).toHaveBeenCalledWith("run-2");
+    expect(s.history.setView).toHaveBeenCalledWith("errors");
   });
   it("propagates graph selection to timeline and opens mobile drawer", () => {
     s.mobile.matches = true;

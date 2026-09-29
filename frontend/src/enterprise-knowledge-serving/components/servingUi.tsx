@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Alert, Button, Tag } from "tdesign-react";
+import { Button } from "tdesign-react";
 import { CheckCircleIcon, ErrorCircleIcon, InfoCircleIcon, RefreshIcon } from "tdesign-icons-react";
 import {
   safeServingDisplayText,
@@ -8,6 +8,7 @@ import {
   type ServingStageState,
 } from "../model/servingModel";
 import type { ServingLoadStatus } from "../hooks/useEnterpriseKnowledgeServing";
+import { Alert, Tag } from "../../ui";
 
 export const STAGE_LABELS: Record<ServingStageCode, string> = {
   source: "SOURCE",
@@ -115,7 +116,7 @@ export function LoadState({
     );
   if (status === "unavailable" || status === "error")
     return (
-      <div className="knowledge-serving__state-wrap" role="alert">
+      <div className="knowledge-serving__state-wrap">
         <Alert
           theme="error"
           title={title ?? "权威事实不可用"}
@@ -132,7 +133,7 @@ export function LoadState({
     );
   if (status === "partial")
     return (
-      <div className="knowledge-serving__state-wrap" role="alert">
+      <div className="knowledge-serving__state-wrap">
         <Alert
           theme="warning"
           title={title ?? "部分服务快照可用"}

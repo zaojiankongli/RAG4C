@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert } from "tdesign-react";
-import { Tabs } from "../../ui/index";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Button, Tabs } from "../../ui/index";
 import { TimeIcon } from "tdesign-icons-react";
 
 import type {
@@ -33,7 +32,6 @@ function fallbackDetail(task: TaskOperation) {
   return { ...task, events: [] };
 }
 
-
 function ActivityPanel({ controller }: { controller: TaskOperationsController }) {
   const status = controller.activity.status;
   if (status === "loading") {
@@ -41,14 +39,14 @@ function ActivityPanel({ controller }: { controller: TaskOperationsController })
   }
   if (status === "unavailable") {
     return (
-      <div role="alert">
+      <div>
         <Alert theme="warning" title="活动权威暂不可用" message="当前无法读取任务活动链。" />
       </div>
     );
   }
   if (status === "error") {
     return (
-      <div role="alert">
+      <div>
         <Alert theme="error" title="活动读取失败" message="任务活动读取失败，请重试。" />
       </div>
     );
@@ -76,7 +74,7 @@ function ActivityPanel({ controller }: { controller: TaskOperationsController })
         </span>
       </div>
       {status === "partial" ? (
-        <div role="alert">
+        <div>
           <Alert
             theme="warning"
             title="部分活动可用"
@@ -117,6 +115,7 @@ export default function TaskOperationsCenter({
   const [retryTask, setRetryTask] = useState<TaskOperation | null>(null);
   const [cancelTask, setCancelTask] = useState<TaskOperation | null>(null);
   const focus = useTaskFocusReturn();
+  const diagnosticsRef = useRef<HTMLDetailsElement>(null);
   const summary = controller.summary.value;
   const operations = controller.operations.items;
 
@@ -226,12 +225,44 @@ export default function TaskOperationsCenter({
       status: controller.detail.status === "idle" ? "ready" : controller.detail.status,
       value: fallbackDetail(selectedTask),
       error: controller.detail.error,
-    } as typeof controller.detail;
+    } as TaskOperationsController["detail"];
   }, [controller.detail, selectedTask]);
 
   const unavailable = !capabilityReady || !controller.active;
   const tableStatus = unavailable ? "unavailable" : controller.operations.status;
   const tableStateHasItems = visibleOperations.length > 0;
+  const exceptionCount = operations.filter((task) =>
+    ["failed", "blocked", "unavailable"].includes(task.status),
+  ).length;
+  const openReconciliation = controller.reconciliation.items.filter(
+    (item) => item.status === "open",
+  );
+  const urgentReconciliation = openReconciliation.filter(
+    (item) => item.action_required || item.severity === "high" || item.severity === "critical",
+  );
+  const showDiagnostics = () => {
+    const details = diagnosticsRef.current;
+    if (!details) return;
+    details.open = true;
+    details.querySelector("summary")?.focus();
+    details.scrollIntoView?.({ block: "nearest" });
+  };
+  const resourceWarnings = [
+    {
+      label: "任务摘要",
+      status: summary && summary.state !== "ready" ? summary.state : controller.summary.status,
+      error: controller.summary.error,
+    },
+    { label: "保存视图", status: controller.savedViews.status, error: controller.savedViews.error },
+    {
+      label: "对账诊断",
+      status: controller.reconciliation.status,
+      error: controller.reconciliation.error,
+    },
+    { label: "任务活动", status: controller.activity.status, error: controller.activity.error },
+  ].filter(
+    (resource) => resource.error || ["partial", "error", "unavailable"].includes(resource.status),
+  );
 
   return (
     <section
@@ -249,22 +280,95 @@ export default function TaskOperationsCenter({
           controller.operations.reload ? () => void controller.operations.reload?.() : undefined
         }
       />
-      <TaskAttentionBoard summary={summary} />
-      <TaskOperationsLifecycleRail summary={summary} />
+      {resourceWarnings.length ? (
+        <div className="task-operations__notices">
+          <Alert
+            theme={
+              resourceWarnings.some((resource) => resource.status === "error" || resource.error)
+                ? "error"
+                : "warning"
+            }
+            title="部分任务信息暂不可用"
+            message={
+              <div>
+                <ul className="task-operations__resource-issues">
+                  {resourceWarnings.map(({ label, status }) => (
+                    <li key={label}>
+                      {label +
+                        (status === "partial"
+                          ? "部分记录无法读取"
+                          : status === "unavailable"
+                            ? "暂不可用"
+                            : "读取失败")}
+                    </li>
+                  ))}
+                </ul>
+                <span>请刷新状态后重试，当前信息可能不完整。</span>
+              </div>
+            }
+          />
+        </div>
+      ) : null}
+      {controller.mutation.error ? (
+        <div className="task-operations__mutation-error" role="alert">
+          {controller.mutation.error}
+        </div>
+      ) : null}
+      {exceptionCount > 0 ||
+      (summary?.failed_count ?? 0) > 0 ||
+      (summary?.stale_count ?? 0) > 0 ||
+      (summary?.reconciliation_count ?? 0) > 0 ||
+      openReconciliation.length > 0 ? (
+        <section className="task-operations__exceptions" aria-label="需要关注的异常">
+          <h2>需要关注</h2>
+          <div className="task-operations__exception-actions">
+            {exceptionCount > 0 || (summary?.failed_count ?? 0) > 0 ? (
+              <Button type="default" onClick={() => setTab("failed")}>
+                查看异常任务（当前列表 {exceptionCount} 项）
+              </Button>
+            ) : null}
+            {(summary?.failed_count ?? 0) > 0 ? (
+              <span>失败待处理 {summary?.failed_count}</span>
+            ) : null}
+            {(summary?.stale_count ?? 0) > 0 ? <span>陈旧状态 {summary?.stale_count}</span> : null}
+            {(summary?.stale_count ?? 0) > 0 ||
+            (summary?.reconciliation_count ?? 0) > 0 ||
+            openReconciliation.length > 0 ? (
+              <Button type="default" onClick={showDiagnostics}>
+                查看对账诊断
+              </Button>
+            ) : null}
+            {openReconciliation.length > 0 ? (
+              <span>待处理对账 {openReconciliation.length} 项</span>
+            ) : null}
+          </div>
+          {urgentReconciliation.length ? (
+            <ul className="task-operations__urgent-items">
+              {urgentReconciliation.map((item) => (
+                <li key={item.id}>
+                  <strong>
+                    {item.severity === "high" || item.severity === "critical"
+                      ? "高风险对账"
+                      : "待处理对账"}
+                  </strong>{" "}
+                  · {item.summary}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
       <div className="task-operations__content-grid">
         <div className="task-operations__main-column">
+          <h2 className="task-operations__list-title">任务列表</h2>
           <Tabs
             className="rag-tabs rag-tabs--card task-operations__tabs"
             aria-label="任务运行工作面"
             keepAlive
             activeKey={tab}
-            onChange={(next: any) => setTab(String(next) as TaskOperationsTab)}
+            onChange={(next: unknown) => setTab(String(next) as TaskOperationsTab)}
           >
-            <Tabs.TabPanel
-              value="all"
-              label="All"
-              destroyOnHide
-            >
+            <Tabs.TabPanel value="all" label="全部" destroyOnHide>
               <TaskStateNotice
                 status={tableStatus}
                 invalidItemCount={controller.operations.invalidItemCount}
@@ -282,11 +386,7 @@ export default function TaskOperationsCenter({
                 />
               ) : null}
             </Tabs.TabPanel>
-            <Tabs.TabPanel
-              value="running"
-              label="Running"
-              destroyOnHide
-            >
+            <Tabs.TabPanel value="running" label="运行中" destroyOnHide>
               <TaskStateNotice
                 status={tableStatus}
                 invalidItemCount={controller.operations.invalidItemCount}
@@ -306,11 +406,7 @@ export default function TaskOperationsCenter({
                 />
               ) : null}
             </Tabs.TabPanel>
-            <Tabs.TabPanel
-              value="failed"
-              label="Failed"
-              destroyOnHide
-            >
+            <Tabs.TabPanel value="failed" label="异常" destroyOnHide>
               <TaskStateNotice
                 status={tableStatus}
                 invalidItemCount={controller.operations.invalidItemCount}
@@ -330,11 +426,7 @@ export default function TaskOperationsCenter({
                 />
               ) : null}
             </Tabs.TabPanel>
-            <Tabs.TabPanel
-              value="completed"
-              label="Completed"
-              destroyOnHide
-            >
+            <Tabs.TabPanel value="completed" label="已完成" destroyOnHide>
               <TaskStateNotice
                 status={tableStatus}
                 invalidItemCount={controller.operations.invalidItemCount}
@@ -354,25 +446,27 @@ export default function TaskOperationsCenter({
                 />
               ) : null}
             </Tabs.TabPanel>
-            <Tabs.TabPanel
-              value="activity"
-              label="Activity"
-              destroyOnHide
-            >
+            <Tabs.TabPanel value="activity" label="活动记录" destroyOnHide>
               <ActivityPanel controller={controller} />
             </Tabs.TabPanel>
           </Tabs>
         </div>
-        <aside className="task-operations__sidebar">
-          <SavedViewsPanel controller={controller.savedViews} readOnly={readOnly} />
-          <ReconciliationPanel controller={controller.reconciliation} readOnly={readOnly} />
-        </aside>
-      </div>
-      {controller.mutation.error ? (
-        <div className="task-operations__mutation-error" role="alert">
-          {controller.mutation.error}
+        <div className="task-operations__secondary" aria-label="任务辅助信息">
+          <details className="task-operations__disclosure">
+            <summary>运行摘要与生命周期</summary>
+            <TaskAttentionBoard summary={summary} />
+            <TaskOperationsLifecycleRail summary={summary} />
+          </details>
+          <details className="task-operations__disclosure">
+            <summary>保存视图管理</summary>
+            <SavedViewsPanel controller={controller.savedViews} readOnly={readOnly} />
+          </details>
+          <details className="task-operations__disclosure" ref={diagnosticsRef}>
+            <summary>对账诊断</summary>
+            <ReconciliationPanel controller={controller.reconciliation} readOnly={readOnly} />
+          </details>
         </div>
-      ) : null}
+      </div>
       <TaskOperationDetailDrawer
         visible={detailVisible}
         state={detailState}

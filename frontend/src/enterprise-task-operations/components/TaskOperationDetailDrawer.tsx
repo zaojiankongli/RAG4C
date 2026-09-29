@@ -1,5 +1,4 @@
 import { type RefObject } from "react";
-import { Button, Drawer, Empty, Loading, Tag } from "tdesign-react";
 import {
   ArrowRightIcon,
   CheckCircleIcon,
@@ -10,6 +9,7 @@ import {
   TimeIcon,
 } from "tdesign-icons-react";
 
+import { Button, Drawer, Empty, Spin, Tag } from "../../ui";
 import type { TaskOperation, TaskOperationDetail, TaskResource } from "./taskOperationsTypes";
 import {
   formatDuration,
@@ -84,11 +84,13 @@ export default function TaskOperationDetailDrawer({
       </div>
       <div className="task-operations__drawer-header-actions">
         {task ? (
-          <Tag theme={taskStatusTheme(task.status)}>{taskStatusLabel(task.status)}</Tag>
+          <Tag theme={taskStatusTheme(task.status)} variant="light-outline">
+            {taskStatusLabel(task.status)}
+          </Tag>
         ) : null}
         <Button
-          variant="text"
-          shape="square"
+          type="text"
+          className="task-operations__drawer-close"
           icon={<CloseIcon />}
           aria-label="关闭任务详情"
           onClick={handleClose}
@@ -106,6 +108,7 @@ export default function TaskOperationDetailDrawer({
       header={header}
       footer={null}
       attach="body"
+      aria-label="任务详情与事件链"
       destroyOnClose
       closeBtn={false}
       closeOnEscKeydown={false}
@@ -114,23 +117,24 @@ export default function TaskOperationDetailDrawer({
     >
       <div
         className="task-operations__detail-shell"
-        role="dialog"
-        aria-label="任务详情与事件链"
-        aria-modal="true"
       >
         {state.status === "loading" ? (
           <div className="task-operations__detail-state">
-            <Loading text="正在读取任务事件链…" />
+            <Spin tip="正在读取任务事件链…" />
           </div>
         ) : null}
         {state.status === "unavailable" ? (
           <div role="alert">
-            <Tag theme="warning">任务详情权威暂不可用，未返回的事实不会被推断。</Tag>
+            <Tag theme="warning" variant="light-outline">
+              任务详情权威暂不可用，未返回的事实不会被推断。
+            </Tag>
           </div>
         ) : null}
         {state.status === "error" ? (
           <div role="alert">
-            <Tag theme="danger">任务详情读取失败，请稍后重试。</Tag>
+            <Tag theme="danger" variant="light-outline">
+              任务详情读取失败，请稍后重试。
+            </Tag>
           </div>
         ) : null}
         {task &&
@@ -146,7 +150,7 @@ export default function TaskOperationDetailDrawer({
                 {onHandoff ? (
                   <Button
                     icon={<ArrowRightIcon />}
-                    variant="outline"
+                    type="default"
                     aria-label="查看任务来源"
                     onClick={() => onHandoff(task)}
                   >
@@ -156,7 +160,7 @@ export default function TaskOperationDetailDrawer({
                 {task.action_required && onAcknowledge ? (
                   <Button
                     icon={<CheckCircleIcon />}
-                    variant="outline"
+                    type="default"
                     disabled={readOnly}
                     aria-label="确认已知悉"
                     onClick={() => onAcknowledge(task)}
@@ -167,7 +171,7 @@ export default function TaskOperationDetailDrawer({
                 {task.retryable && onRetry ? (
                   <Button
                     icon={<RefreshIcon />}
-                    variant="outline"
+                    type="default"
                     disabled={readOnly}
                     onClick={() => onRetry(task)}
                   >
@@ -177,8 +181,8 @@ export default function TaskOperationDetailDrawer({
                 {task.cancellable && onCancel ? (
                   <Button
                     icon={<CloseIcon />}
-                    theme="danger"
-                    variant="text"
+                    type="text"
+                    danger
                     disabled={readOnly}
                     onClick={() => onCancel(task)}
                   >
@@ -186,9 +190,13 @@ export default function TaskOperationDetailDrawer({
                   </Button>
                 ) : null}
                 {readOnly ? (
-                  <Tag theme="warning">只读模式</Tag>
+                  <Tag theme="warning" variant="light-outline">
+                    只读模式
+                  </Tag>
                 ) : (
-                  <Tag theme="success">Safe mutation boundary</Tag>
+                  <Tag theme="success" variant="light-outline">
+                    Safe mutation boundary
+                  </Tag>
                 )}
               </div>
             </div>
@@ -237,7 +245,9 @@ export default function TaskOperationDetailDrawer({
                 <div>
                   <dt>状态</dt>
                   <dd>
-                    <Tag theme={taskStatusTheme(task.status)}>{taskStatusLabel(task.status)}</Tag>
+                    <Tag theme={taskStatusTheme(task.status)} variant="light-outline">
+                      {taskStatusLabel(task.status)}
+                    </Tag>
                   </dd>
                 </div>
                 <div>

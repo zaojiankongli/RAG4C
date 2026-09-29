@@ -339,11 +339,7 @@ describe("DocumentsPage shared knowledge workspace", () => {
     // 原文查看默认按"这台服务没开这个能力"拒绝：这些用例考的是切片编辑与导航，
     // 不该因为读不到原文而失败，也不该走进需要 URL.createObjectURL 的成功分支。
     api.fetchDocumentSource.mockRejectedValue(
-      new api.SourcePreviewRefusedError(
-        "这台服务没有开放原文查看",
-        "source_preview_disabled",
-        409,
-      ),
+      new api.SourcePreviewRefusedError("这台服务没有开放原文查看", "source_preview_disabled", 409),
     );
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -358,6 +354,31 @@ describe("DocumentsPage shared knowledge workspace", () => {
         dispatchEvent: vi.fn(),
       })),
     });
+  });
+
+  it("starts with documents and reveals detailed filters and metrics only on demand", async () => {
+    api.fetchDocumentPage.mockResolvedValue({
+      items: [MODERN_DOCUMENT],
+      total: 1,
+      offset: 0,
+      limit: 10,
+      next_cursor: null,
+    });
+    api.fetchDocumentSummary.mockResolvedValue(makeModernSummary());
+    renderModernDocuments();
+    expect(await screen.findByText(MODERN_DOCUMENT.name)).toBeTruthy();
+    expect(screen.getByPlaceholderText("搜索文件名")).toBeTruthy();
+    const summary = screen.getByText("筛选与概况");
+    const disclosure = summary.closest("details")!;
+    expect(disclosure.open).toBe(false);
+    const requests = api.fetchDocumentPage.mock.calls.length;
+    fireEvent.click(summary);
+    expect(disclosure.open).toBe(true);
+    expect(screen.getByRole("heading", { name: "文档类型" })).toBeTruthy();
+    expect(screen.getByText("文档总数")).toBeTruthy();
+    expect(api.fetchDocumentPage.mock.calls.length).toBe(requests);
+    fireEvent.click(summary);
+    expect(disclosure.open).toBe(false);
   });
 
   it("uses the history URL q parameter as the initial document search", async () => {
@@ -490,7 +511,10 @@ describe("DocumentsPage shared knowledge workspace", () => {
         "complex_or_structured",
       ),
     );
-    expect(screen.getByRole("button", { name: /长文或含版面结构/ }).className).toContain("is-active");
+    expect(screen.getByRole("button", { name: /长文或含版面结构/ }).className).toContain(
+      "is-active",
+    );
+    fireEvent.click(screen.getByText("筛选与概况"));
     const clearButton = screen.getByRole("button", { name: "清除全部文档筛选" });
 
     api.fetchDocumentPage.mockClear();
@@ -520,7 +544,9 @@ describe("DocumentsPage shared knowledge workspace", () => {
       expect.objectContaining({ chunking_reason_code: "complex_or_structured" }),
       expect.anything(),
     );
-    expect(screen.getByRole("button", { name: /长文或含版面结构/ }).className).toContain("is-active");
+    expect(screen.getByRole("button", { name: /长文或含版面结构/ }).className).toContain(
+      "is-active",
+    );
 
     // 再前进到一条该参数与 status 同时变化的 URL：这一项要跟着其余六项一起回灌，而不是只回灌那六项。
     api.fetchDocumentPage.mockClear();
@@ -607,6 +633,7 @@ describe("DocumentsPage shared knowledge workspace", () => {
     renderModernDocuments();
     await screen.findByText(MODERN_DOCUMENT.name);
     // 侧栏显示的是中文判定名，不是裸的原因码：原因码是给 SQL 用的，不是给人读的。
+    fireEvent.click(screen.getByText("筛选与概况"));
     const facet = screen.getByRole("button", { name: /长文或含版面结构/ });
     api.fetchDocumentPage.mockClear();
 
@@ -633,6 +660,31 @@ describe("DocumentsPage shared knowledge workspace", () => {
       expect.objectContaining({ chunking_reason_code: "all" }),
       expect.objectContaining({ tenantId: "tenant-1" }),
     );
+  });
+
+  it("renders an empty chunking facet instead of crashing when a stale backend omits the key", async () => {
+    // 后端先于前端上线的滚动窗口：新前端 + 旧后端时 summary.facets 没有
+    // chunking_reasons 这把键。缺键必须是"空分面"，不能是渲染崩溃。
+    window.history.replaceState(null, "", "/documents");
+    const { chunking_reasons: _omitted, ...facetsWithoutChunking } = makeModernSummary().facets;
+    api.fetchDocumentPage.mockResolvedValue({
+      items: [MODERN_DOCUMENT],
+      total: 1,
+      offset: 0,
+      limit: 10,
+      next_cursor: null,
+    });
+    api.fetchDocumentSummary.mockResolvedValue({
+      ...makeModernSummary(),
+      facets: facetsWithoutChunking,
+    });
+
+    renderModernDocuments();
+    await screen.findByText(MODERN_DOCUMENT.name);
+
+    // 页面正常渲染，"全部判定"分组在，但没有任何具体判定项可点。
+    expect(screen.getByRole("button", { name: /全部判定/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /长文或含版面结构/ })).toBeNull();
   });
 
   it("uses an opaque cursor stack for next and previous pages while preserving cross-page selection", async () => {

@@ -32,6 +32,7 @@ import {
   type DeadLetterListResponse,
   type DeadLetterRequeueResponse,
 } from "../consistency/consistencyModel";
+import { isKnownProjectionRequeuePair } from "../consistency/projectionOperationVocabulary";
 import { useConnection } from "../context/ConnectionContext";
 import { useKnowledgeWorkspace } from "../knowledge/KnowledgeWorkspaceContext";
 import { readKnowledgeActorToken } from "../knowledge/workspaceScope";
@@ -299,6 +300,7 @@ export default function ConsistencyPage() {
 
   const requeue = useCallback(
     async (item: DeadLetterItem) => {
+      if (!isKnownProjectionRequeuePair(item.target_store, item.operation)) return;
       const deadLetterRef = item.dead_letter_ref;
       if (requeueControllersRef.current.has(deadLetterRef)) return;
 
@@ -428,6 +430,13 @@ export default function ConsistencyPage() {
             return (
               <Tag theme="success" variant="light" icon={<CheckCircleIcon />}>
                 已重放
+              </Tag>
+            );
+          }
+          if (!isKnownProjectionRequeuePair(row.target_store, row.operation)) {
+            return (
+              <Tag theme="warning" variant="light-outline">
+                仅展示
               </Tag>
             );
           }
@@ -565,6 +574,9 @@ export default function ConsistencyPage() {
                     本摘要为 best_effort={projection.bestEffort ? "true" : "未返回"}，只覆盖目录快照
                     （catalog-only），明确为 complete=false、confirmable=false。Milvus 投影尚无代次权威，
                     因此不生成修复计划，也不提供修复操作。
+                    {projection.projectionReadStatus === "incomplete"
+                      ? `另有 ${projection.projectionReadIncompleteDocuments} 份文档的投影读取无法确认完整，未参与缺失/过期/孤儿漂移分类。`
+                      : ""}
                   </span>
                 }
                 {...({ role: "alert", "aria-label": "最佳努力目录报告" } as Record<
@@ -579,8 +591,19 @@ export default function ConsistencyPage() {
                     <Text className="consistency-eyebrow">KNOWLEDGE LIFELINE</Text>
                     <h2 id="consistency-lifeline-title">目录期望到投影漂移</h2>
                   </div>
-                  <Tag theme={snapshot.summary.has_drift ? "warning" : "success"} variant="light">
-                    {snapshot.summary.has_drift ? "检测到漂移" : "未检测到漂移"}
+                  <Tag
+                    theme={
+                      snapshot.summary.has_drift || projection.projectionReadStatus === "incomplete"
+                        ? "warning"
+                        : "success"
+                    }
+                    variant="light"
+                  >
+                    {projection.projectionReadStatus === "incomplete"
+                      ? "报告含未完整读取"
+                      : snapshot.summary.has_drift
+                        ? "检测到漂移"
+                        : "未检测到漂移"}
                   </Tag>
                 </div>
                 <ol className="consistency-lifeline" aria-label="知识一致性生命线">
@@ -592,9 +615,17 @@ export default function ConsistencyPage() {
                   <li>
                     <span>投影</span>
                     <strong>{projection.projection.toLocaleString()}</strong>
-                    <small>已观察索引片段</small>
+                    <small>可读范围内索引片段</small>
                   </li>
-                  <li className={projection.drift ? "is-drift" : "is-clear"}>
+                  <li
+                    className={
+                      projection.projectionReadStatus === "incomplete"
+                        ? "is-incomplete"
+                        : projection.drift
+                          ? "is-drift"
+                          : "is-clear"
+                    }
+                  >
                     <span>漂移</span>
                     <strong>{projection.drift.toLocaleString()}</strong>
                     <small>分类问题合计</small>

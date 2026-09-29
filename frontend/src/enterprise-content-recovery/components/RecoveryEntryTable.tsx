@@ -1,4 +1,4 @@
-import { Button, Loading, PrimaryTable, Tag, type PrimaryTableCol } from "tdesign-react";
+import { Button, PrimaryTable, Tag, type PrimaryTableCol } from "tdesign-react";
 import {
   ArrowRightIcon,
   DeleteTimeIcon,
@@ -14,6 +14,7 @@ import {
   recoveryStatusLabel,
   recoveryStatusTheme,
 } from "./recoveryUi";
+import { Spin } from "../../ui";
 
 export interface RecoveryEntryTableProps {
   entries: RecoveryEntry[];
@@ -189,7 +190,7 @@ export default function RecoveryEntryTable({
   if (loading && entries.length === 0) {
     return (
       <div className="content-recovery__entry-loading" data-testid="recovery-table-loading">
-        <Loading text="正在读取回收条目…" />
+        <Spin tip="正在读取回收条目…" />
       </div>
     );
   }

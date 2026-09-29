@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useState } from "react";
-import { Alert, Button, Input, Select } from "tdesign-react";
+import { Button, Input, Select } from "tdesign-react";
 import { RefreshIcon, SecuredIcon, SettingIcon } from "tdesign-icons-react";
 
+import { Alert } from "../../ui";
 import AuthorityBanner from "../../ui/enterprise/AuthorityBanner";
 import type {
   ContentRecoveryController,
@@ -289,7 +290,7 @@ export default function ContentRecoveryCenter({
       </div>
 
       {controller.mutation.error ? (
-        <div className="content-recovery__mutation-error" role="alert">
+        <div className="content-recovery__mutation-error">
           <Alert
             theme="error"
             title="操作未完成"

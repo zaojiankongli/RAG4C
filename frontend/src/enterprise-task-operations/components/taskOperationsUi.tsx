@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, type RefObject } from "react";
-import { Alert, Empty, Loading, Tag } from "tdesign-react";
 import { CheckCircleIcon, ErrorCircleIcon, LoadingIcon, TimeIcon } from "tdesign-icons-react";
 
+import { TASK_STATUS_DISPLAY_LABELS } from "../model/taskVocabulary";
+import { Alert, Empty, Spin } from "../../ui";
+import { Tag } from "../../ui";
 import type {
   TaskOperation,
   TaskOperationStatus,
@@ -35,16 +37,7 @@ export function formatDuration(durationMs: number | null | undefined): string {
 }
 
 export function taskStatusLabel(status: TaskOperationStatus): string {
-  const labels: Record<TaskOperationStatus, string> = {
-    queued: "排队中",
-    running: "运行中",
-    failed: "失败",
-    completed: "已完成",
-    cancelled: "已取消",
-    blocked: "已阻塞",
-    unavailable: "来源不可用",
-  };
-  return labels[status];
+  return TASK_STATUS_DISPLAY_LABELS[status];
 }
 
 export function taskStatusTheme(
@@ -145,13 +138,13 @@ export function TaskStateNotice({
         className="task-operations__state task-operations__state--loading"
         data-testid="task-operations-loading"
       >
-        <Loading text={`正在读取${resourceLabel}…`} />
+        <Spin tip={`正在读取${resourceLabel}…`} />
       </div>
     );
   }
   if (status === "unavailable") {
     return (
-      <div className="task-operations__state-alert" role="alert">
+      <div className="task-operations__state-alert">
         <Alert
           theme="warning"
           title={`${resourceLabel}暂不可用`}
@@ -162,7 +155,7 @@ export function TaskStateNotice({
   }
   if (status === "error") {
     return (
-      <div className="task-operations__state-alert" role="alert">
+      <div className="task-operations__state-alert">
         <Alert
           theme="error"
           title={`${resourceLabel}读取失败`}
@@ -173,7 +166,7 @@ export function TaskStateNotice({
   }
   if (status === "partial") {
     return (
-      <div className="task-operations__state-alert" role="alert">
+      <div className="task-operations__state-alert">
         <Alert
           theme="warning"
           title={`部分${resourceLabel}无法读取`}

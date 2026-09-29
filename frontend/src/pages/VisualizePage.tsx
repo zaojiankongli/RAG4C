@@ -42,6 +42,7 @@ import {
 import { useRunHistory } from "../run/useRunHistory";
 import type { RunExecutionSource } from "../run/runMonitorStore";
 import { parsePageLocation } from "../run/appRoute";
+import { commitNavigationIntent } from "../run/navigationAdapter";
 import type { BackendRunEvent } from "../types/rag";
 import type { RunEventsDto, RunListView, RunPersistenceStatus } from "../types/runs";
 
@@ -449,7 +450,10 @@ export default function VisualizePage() {
       view: history.view,
       follow: followActive,
     });
-    window.history.replaceState(window.history.state, "", nextUrl);
+    commitNavigationIntent(
+      { mode: "history", url: nextUrl },
+      { historyAction: "replace", dispatchPopStateAfterHistory: false },
+    );
   }, [activeTab, effectiveNodeId, followActive, history.selectedRunId, history.view]);
 
   const processPanel = selectedProjection ? (
