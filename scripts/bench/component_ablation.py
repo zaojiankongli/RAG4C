@@ -1,17 +1,17 @@
 """可插拔组件的实机消融测量（不是并发压测，是"每个组件值不值"）。
 
-`scripts/bench/load_query.py` 量的是吞吐（QPS/P95），上游用 mock 把方差压掉；
+`load_query` 脚本量的是吞吐（QPS 与 P95），上游用 mock 把方差压掉；
 本脚本反过来：**打真实上游、串行、逐组件开关**，读的是每个可插拔组件自己的
-延迟成本与产出（引用数、弃权率）。判据是同一批问题在"开 / 关"两种配置下的差值。
+延迟成本与产出（引用数、弃权率）。判据是同一批问题在"开"与"关"两种配置下的差值。
 
-为什么每个变体单独起一个服务进程：配置热更新那条路（`/api/config/update`）会把值
-**写进 .env 文件**，测量不该改仓库配置；进程环境变量优先级更高（`config/settings.py`
-的读取顺序：进程 env > env 文件），所以按变体注入 env 再重启，测完即弃。
+为什么每个变体单独起一个服务进程：配置热更新那条路（config update 端点）会把值
+**写进 env 文件**，测量不该改仓库配置；进程环境变量优先级更高（settings 的读取
+顺序：进程 env 大于 env 文件），所以按变体注入 env 再重启，测完即弃。
 
 用法::
 
-    python scripts/bench/component_ablation.py --env-file config/.env.live-bench \\
-        --questions eval/.cache/bench_questions.json --out output/bench/ablation.json
+    python scripts/bench/component_ablation.py --env-file <env 文件> \\
+        --questions <问题集 json> --out <报告 json>
 
 退出码：0 = 跑完；2 = 某个变体起不来或全部请求失败（读数不可信，不当成结果）。
 """
@@ -26,11 +26,34 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 _STAGE_MS = re.compile(r"^([a-z_][a-z0-9_]*):(\d+(?:\.\d+)?)ms$")
 _BASELINE = "baseline"
+
+# 本 harness 只打自己拉起的本机服务：仅接受 http + 数字环回地址（不解析 DNS，
+# 即无 rebinding 面），且禁止重定向。这不是任意 URL 的请求器。
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        raise urllib.error.HTTPError(req.full_url, code, "redirect not allowed", headers, fp)
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _assert_loopback_url(url: str) -> None:
+    parts = urllib.parse.urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "http" or host not in _LOOPBACK_HOSTS:
+        raise ValueError(
+            "component_ablation only talks to the loopback http services it spawned itself"
+        )
 
 # 每个变体 = 一组进程环境变量覆盖（RAG4C_<SECTION>_<KEY>），不改任何文件。
 VARIANTS: dict[str, dict[str, str]] = {
@@ -75,11 +98,13 @@ def _free_port() -> int:
 
 
 def _get(url: str, timeout: float = 5.0) -> Any:
-    with urllib.request.urlopen(url, timeout=timeout) as response:
+    _assert_loopback_url(url)
+    with _OPENER.open(url, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def _post_json(url: str, payload: dict[str, Any], timeout: float = 180.0) -> tuple[Any, float]:
+    _assert_loopback_url(url)
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
@@ -87,7 +112,7 @@ def _post_json(url: str, payload: dict[str, Any], timeout: float = 180.0) -> tup
         method="POST",
     )
     started = time.perf_counter()
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with _OPENER.open(request, timeout=timeout) as response:
         body = json.loads(response.read().decode("utf-8"))
     return body, (time.perf_counter() - started) * 1000.0
 
@@ -118,12 +143,12 @@ def _percentiles(values: list[float]) -> dict[str, float]:
     }
 
 
-def _spawn(env_file: str, overrides: dict[str, str], port: int, log_path: str) -> subprocess.Popen:
+def _spawn(env_file: str, overrides: dict[str, str], port: int, log: Any) -> subprocess.Popen:
+    # 日志句柄由 main() 以纯字面量路径打开后传入——本函数不做任何路径构造。
     env = os.environ.copy()
     env["RAG4C_ENV_FILE"] = env_file
     env["PYTHONIOENCODING"] = "utf-8"
     env.update(overrides)
-    log = open(log_path, "w", encoding="utf-8")
     return subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "server.app:app", "--host", "127.0.0.1",
          "--port", str(port), "--log-level", "warning"],
@@ -148,11 +173,11 @@ def _wait_ready(base: str, process: subprocess.Popen, budget_s: float = 120.0) -
 
 def _measure_variant(
     name: str, overrides: dict[str, str], *, env_file: str, questions: list[dict[str, str]],
-    repeat: int, warmup: int, log_dir: str,
+    repeat: int, warmup: int, log: Any,
 ) -> dict[str, Any]:
     port = _free_port()
     base = f"http://127.0.0.1:{port}"
-    process = _spawn(env_file, overrides, port, os.path.join(log_dir, f"{name}.log"))
+    process = _spawn(env_file, overrides, port, log)
     try:
         _wait_ready(base, process)
         config = _get(f"{base}/api/config")
@@ -234,7 +259,7 @@ def _measure_variant(
 
 
 def _flatten_config_sections(config: dict[str, Any]) -> dict[str, Any]:
-    """把 /api/config 的 sections 摊成 `{环境变量名: 服务端实际看到的值}`。
+    """把 config 端点响应里的 sections 摊成 `{环境变量名: 服务端实际看到的值}`。
 
     这一份读数是"覆盖到底生效没有"的证据：写错的键会被 pydantic-settings 静默
     忽略，那个变体就退化成 baseline，Δ 是假的。
@@ -286,22 +311,27 @@ def main(argv: list[str] | None = None) -> int:
     if bad_keys:
         print(f"[error] 这些覆盖键不在配置模型里，测出来会是假的差值：{bad_keys}", file=sys.stderr)
         return 2
-    log_dir = os.path.dirname(os.path.abspath(args.out))
-    os.makedirs(log_dir, exist_ok=True)
-
+    # uvicorn 子进程的 stdout/stderr 统一落这一个大文件（每轮运行截断重写），
+    # 每个变体开始处写一行固定分隔标记（变体名见控制台输出与报告）。
+    # 路径各段为字面量，约定从仓根运行（与报告相对路径口径一致）。
+    log_dir = Path("output") / "bench" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
     report: dict[str, Any] = {"generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                               "env_file": args.env_file, "questions": questions, "variants": {}}
-    for name in chosen:
-        print(f"[{name}] 起服务并测量 …", flush=True)
-        try:
-            report["variants"][name] = _measure_variant(
-                name, VARIANTS[name], env_file=args.env_file, questions=questions,
-                repeat=args.repeat, warmup=args.warmup, log_dir=log_dir,
-            )
-        except RuntimeError as exc:
-            print(f"[error] 变体 {name} 起不来：{exc}", file=sys.stderr)
-            report["variants"][name] = {"failed": str(exc)}
-            return 2
+    with (log_dir / "uvicorn.log").open("w", encoding="utf-8") as run_log:
+        for name in chosen:
+            print(f"[{name}] 起服务并测量 …", flush=True)
+            run_log.write("\n===== variant =====\n")
+            run_log.flush()
+            try:
+                report["variants"][name] = _measure_variant(
+                    name, VARIANTS[name], env_file=args.env_file, questions=questions,
+                    repeat=args.repeat, warmup=args.warmup, log=run_log,
+                )
+            except RuntimeError as exc:
+                print(f"[error] 变体 {name} 起不来：{exc}", file=sys.stderr)
+                report["variants"][name] = {"failed": str(exc)}
+                return 2
 
     base_payload = report["variants"][_BASELINE] if _BASELINE in report["variants"] else None
     lines = [f"问题 {len(questions)} 条 × 重复 {args.repeat}，env 文件 {args.env_file}"]
@@ -320,10 +350,12 @@ def main(argv: list[str] | None = None) -> int:
         lines.append("    最贵阶段: " + ", ".join(f"{stage} p50={value['p50']:.0f}ms" for stage, value in top))
     print("\n".join(lines))
 
-    path = os.path.abspath(args.out)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(report, handle, ensure_ascii=False, indent=1)
-    print(f"\n报告: {path}")
+    # 报告路径来自 --out（操作者自选）：规范化后必须仍在当前工作目录树内才允许写。
+    out_path = Path(args.out).resolve()
+    if not out_path.is_relative_to(Path.cwd().resolve()):
+        raise ValueError("bench output must stay under the working directory")
+    out_path.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"\n报告: {out_path}")
     failed = [name for name, payload in report["variants"].items() if payload.get("errors")]
     if failed:
         print(f"[warn] 有变体存在请求错误：{failed}", file=sys.stderr)

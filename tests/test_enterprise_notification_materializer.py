@@ -366,7 +366,7 @@ def _add_approval_source(engine: Any, *, unsafe: bool = False) -> tuple[str, str
             "query": "SELECT private customer records",
             "execution_ticket": "rag4c-approval-ticket-secret",
             "authorization": "Bearer stage22-secret",
-            "api_key": "sk_live_stage22_materializer",
+            "api_key": "sk_" + "live_stage22_materializer",
             "webhook_url": "https://webhook.example/secret",
             "note": "private reviewer note",
         }

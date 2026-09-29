@@ -13,19 +13,19 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-# 夹具里的「疑似凭据」全部由运行时拼接生成：它们是脱敏断言的标记值，不是真实凭据；
-# 写成字面量会被凭据扫描误判成硬编码凭据拦下提交。
-_FAKE_TOKEN = "must" + "-not-leak"
-_FAKE_CLIENT_SECRET = "also-" + "must-not-leak"
-_FAKE_API_KEY = "secret" + "-value"
-_REDACTED_PLACEHOLDER = "[REDACT" + "ED]"
-
 from config.settings import KnowledgeSecuritySettings, RunHistorySettings, TenantSettings
 from core import catalog
 from core.knowledge_governance import AuditContext, KnowledgeGovernanceRepository
 from models.orm import Account, Base, Dataset, KnowledgeAuditEvent, Tenant, TenantMember
 from server.knowledge_audit_api import router
 from server.knowledge_auth import issue_knowledge_actor_token
+
+# 夹具里的「疑似凭据」全部由运行时拼接生成：它们是脱敏断言的标记值，不是真实凭据；
+# 写成字面量会被凭据扫描误判成硬编码凭据拦下提交。
+_FAKE_TOKEN = "must" + "-not-leak"
+_FAKE_CLIENT_SECRET = "also-" + "must-not-leak"
+_FAKE_API_KEY = "secret" + "-value"
+_REDACTED_PLACEHOLDER = "[REDACT" + "ED]"
 
 
 def _settings() -> SimpleNamespace:
