@@ -89,20 +89,23 @@ def _create_decision_immutable_guards() -> None:
 
 
 def _drop_decision_immutable_guards() -> None:
+    # 目标名是本迁移头部定义的常量（DECISION_IMMUTABLE_UPDATE_TRIGGER /
+    # DECISION_IMMUTABLE_DELETE_TRIGGER / DECISION_IMMUTABLE_FUNCTION）。DROP 守卫按
+    # 安全扫描要求写成完整字面量；迁移是冻结产物，这些名字不会再变。
     dialect = _dialect_name()
     if dialect == "postgresql":
         op.execute(
-            f"DROP TRIGGER IF EXISTS {DECISION_IMMUTABLE_UPDATE_TRIGGER} "
-            "ON tenant_approval_decisions"
+            "DROP TRIGGER IF EXISTS trg_tenant_approval_decisions_no_update"
+            " ON tenant_approval_decisions"
         )
         op.execute(
-            f"DROP TRIGGER IF EXISTS {DECISION_IMMUTABLE_DELETE_TRIGGER} "
-            "ON tenant_approval_decisions"
+            "DROP TRIGGER IF EXISTS trg_tenant_approval_decisions_no_delete"
+            " ON tenant_approval_decisions"
         )
-        op.execute(f"DROP FUNCTION IF EXISTS {DECISION_IMMUTABLE_FUNCTION}()")
+        op.execute("DROP FUNCTION IF EXISTS rag4c_tenant_approval_decisions_immutable()")
     elif dialect in {"sqlite", "mysql", "mariadb"}:
-        op.execute(f"DROP TRIGGER IF EXISTS {DECISION_IMMUTABLE_UPDATE_TRIGGER}")
-        op.execute(f"DROP TRIGGER IF EXISTS {DECISION_IMMUTABLE_DELETE_TRIGGER}")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_approval_decisions_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_approval_decisions_no_delete")
 
 
 def upgrade() -> None:

@@ -188,20 +188,70 @@ def _create_guards() -> None:
 
 
 def _drop_guards() -> None:
+    # 目标名是本迁移头部定义/派生的常量（IMMUTABLE_TABLES = TABLES[1:] 按
+    # 「trg_{表}_no_{update|delete}」规则创建；EVENT_INSERT_TRIGGER / EVENT_TABLE /
+    # EVENT_VALIDATE_FUNCTION / IMMUTABLE_FUNCTION 同在头部定义）。DROP 守卫按安全
+    # 扫描要求写成完整字面量；迁移是冻结产物，这些名字不会再变。
     dialect = _require_supported_dialect()
-    for table in IMMUTABLE_TABLES:
-        for operation in ("update", "delete"):
-            name = f"trg_{table}_no_{operation}"
-            if dialect == "postgresql":
-                op.execute(f"DROP TRIGGER IF EXISTS {name} ON {table}")
-            else:
-                op.execute(f"DROP TRIGGER IF EXISTS {name}")
     if dialect == "postgresql":
-        op.execute(f"DROP TRIGGER IF EXISTS {EVENT_INSERT_TRIGGER} ON {EVENT_TABLE}")
-        op.execute(f"DROP FUNCTION IF EXISTS {EVENT_VALIDATE_FUNCTION}()")
-        op.execute(f"DROP FUNCTION IF EXISTS {IMMUTABLE_FUNCTION}()")
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_policy_revisions_no_update"
+            " ON tenant_knowledge_serving_policy_revisions"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_policy_revisions_no_delete"
+            " ON tenant_knowledge_serving_policy_revisions"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_snapshots_no_update"
+            " ON tenant_knowledge_serving_snapshots"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_snapshots_no_delete"
+            " ON tenant_knowledge_serving_snapshots"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_stage_facts_no_update"
+            " ON tenant_knowledge_serving_stage_facts"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_stage_facts_no_delete"
+            " ON tenant_knowledge_serving_stage_facts"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_evidence_links_no_update"
+            " ON tenant_knowledge_serving_evidence_links"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_evidence_links_no_delete"
+            " ON tenant_knowledge_serving_evidence_links"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_events_no_update"
+            " ON tenant_knowledge_serving_events"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_events_no_delete"
+            " ON tenant_knowledge_serving_events"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_events_validate_insert"
+            " ON tenant_knowledge_serving_events"
+        )
+        op.execute("DROP FUNCTION IF EXISTS rag4c_knowledge_serving_event_validate()")
+        op.execute("DROP FUNCTION IF EXISTS rag4c_knowledge_serving_immutable()")
     else:
-        op.execute(f"DROP TRIGGER IF EXISTS {EVENT_INSERT_TRIGGER}")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_policy_revisions_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_policy_revisions_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_snapshots_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_snapshots_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_stage_facts_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_stage_facts_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_evidence_links_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_evidence_links_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_events_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_events_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_knowledge_serving_events_validate_insert")
 
 
 def _guard_downgrade() -> None:

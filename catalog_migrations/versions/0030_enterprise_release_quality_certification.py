@@ -123,16 +123,36 @@ def _create_guards() -> None:
 
 
 def _drop_guards() -> None:
+    # 目标名按「trg_{IMMUTABLE_TABLES 里的表}_no_{update|delete}」规则由本迁移派生并创建，
+    # 这里按安全扫描要求展开成完整字面量；迁移是冻结产物，这些名字不会再变。
     dialect = _dialect_name()
-    for table in IMMUTABLE_TABLES:
-        for operation in ("update", "delete"):
-            name = f"trg_{table}_no_{operation}"
-            if dialect == "postgresql":
-                op.execute(f"DROP TRIGGER IF EXISTS {name} ON {table}")
-            else:
-                op.execute(f"DROP TRIGGER IF EXISTS {name}")
     if dialect == "postgresql":
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_quality_baselines_no_update ON dataset_quality_baselines")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_quality_baselines_no_delete ON dataset_quality_baselines")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_quality_baseline_items_no_update ON dataset_quality_baseline_items")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_quality_baseline_items_no_delete ON dataset_quality_baseline_items")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_certifications_no_update ON dataset_release_quality_certifications")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_certifications_no_delete ON dataset_release_quality_certifications")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_certification_evidence_no_update ON dataset_release_quality_certification_evidence")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_certification_evidence_no_delete ON dataset_release_quality_certification_evidence")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_waivers_no_update ON dataset_release_quality_waivers")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_waivers_no_delete ON dataset_release_quality_waivers")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_events_no_update ON dataset_release_quality_events")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_events_no_delete ON dataset_release_quality_events")
         op.execute("DROP FUNCTION IF EXISTS rag4c_release_quality_immutable()")
+    else:
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_quality_baselines_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_quality_baselines_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_quality_baseline_items_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_quality_baseline_items_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_certifications_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_certifications_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_certification_evidence_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_certification_evidence_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_waivers_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_waivers_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_events_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_quality_events_no_delete")
 
 
 def _guard_downgrade() -> None:

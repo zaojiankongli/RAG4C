@@ -227,22 +227,32 @@ def _create_guards() -> None:
 
 
 def _drop_guards() -> None:
+    # 目标名是本迁移头部定义的常量（EVENT_INSERT_TRIGGER / EVENT_VALIDATE_FUNCTION /
+    # EVENT_IMMUTABLE_FUNCTION 与按「trg_{表}_no_{update|delete}」规则创建的触发器）。
+    # DROP 守卫按安全扫描要求写成完整字面量；迁移是冻结产物，这些名字不会再变。
     dialect = _dialect_name()
     if dialect == "postgresql":
         op.execute(
-            f"DROP TRIGGER IF EXISTS {EVENT_INSERT_TRIGGER} ON tenant_document_recovery_events"
+            "DROP TRIGGER IF EXISTS trg_tenant_document_recovery_events_validate_insert"
+            " ON tenant_document_recovery_events"
         )
     else:
-        op.execute(f"DROP TRIGGER IF EXISTS {EVENT_INSERT_TRIGGER}")
-    for operation in ("update", "delete"):
-        name = f"trg_tenant_document_recovery_events_no_{operation}"
-        if dialect == "postgresql":
-            op.execute(f"DROP TRIGGER IF EXISTS {name} ON tenant_document_recovery_events")
-        else:
-            op.execute(f"DROP TRIGGER IF EXISTS {name}")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_document_recovery_events_validate_insert")
     if dialect == "postgresql":
-        op.execute(f"DROP FUNCTION IF EXISTS {EVENT_VALIDATE_FUNCTION}()")
-        op.execute(f"DROP FUNCTION IF EXISTS {EVENT_IMMUTABLE_FUNCTION}()")
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_document_recovery_events_no_update"
+            " ON tenant_document_recovery_events"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_tenant_document_recovery_events_no_delete"
+            " ON tenant_document_recovery_events"
+        )
+    else:
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_document_recovery_events_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_document_recovery_events_no_delete")
+    if dialect == "postgresql":
+        op.execute("DROP FUNCTION IF EXISTS rag4c_content_recovery_event_validate()")
+        op.execute("DROP FUNCTION IF EXISTS rag4c_content_recovery_event_immutable()")
 
 
 def _guard_downgrade() -> None:

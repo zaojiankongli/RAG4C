@@ -75,21 +75,6 @@ _SCHEMA_STATEMENTS = (
        ON workers(state, last_heartbeat_at_us)""",
 )
 
-_EXPECTED_TABLE_NAMES = (
-    "registry_meta",
-    "boots",
-    "workers",
-    "runs",
-    "run_events",
-    "schema_migrations",
-)
-_EXPECTED_INDEX_NAMES = (
-    "idx_runs_scope_started",
-    "idx_runs_scope_status_started",
-    "idx_runs_worker_status",
-    "idx_run_events_run_seq",
-    "idx_workers_heartbeat",
-)
 
 
 class RunHistoryReadError(RuntimeError):
@@ -116,51 +101,227 @@ def _schema_shape(
     *,
     include_migration: bool,
 ) -> dict[str, Any]:
-    table_names = [
-        name for name in _EXPECTED_TABLE_NAMES if include_migration or name != "schema_migrations"
-    ]
+    # PRAGMA 语句不接受绑定参数，且安全门禁要求 execute() 的 SQL 必须是就地字面量。
+    # 表/索引名与 _SCHEMA_STATEMENTS 声明的 schema 一一对应，这里逐个内联、
+    # 不做任何动态构造；改 schema 时本函数必须同步。
     tables: dict[str, Any] = {}
-    for name in table_names:
-        row = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (name,)
-        ).fetchone()
-        if row is None:
-            tables[name] = None
-            continue
-        columns = [
-            (str(item[1]), str(item[2]).upper(), int(item[3]), item[4], int(item[5]))
-            for item in connection.execute(f'PRAGMA table_info("{name}")')
-        ]
-        foreign_keys = [
-            (
-                str(item[2]),
-                str(item[3]),
-                str(item[4]),
-                str(item[5]),
-                str(item[6]),
-                str(item[7]),
-            )
-            for item in connection.execute(f'PRAGMA foreign_key_list("{name}")')
-        ]
-        tables[name] = {
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", ("registry_meta",)
+    ).fetchone()
+    if row is None:
+        tables["registry_meta"] = None
+    else:
+        tables["registry_meta"] = {
             "sql": _normalized_ddl(str(row[0])),
-            "columns": columns,
-            "foreign_keys": foreign_keys,
+            "columns": [
+                (str(item[1]), str(item[2]).upper(), int(item[3]), item[4], int(item[5]))
+                for item in connection.execute('PRAGMA table_info("registry_meta")')
+            ],
+            "foreign_keys": [
+                (
+                    str(item[2]),
+                    str(item[3]),
+                    str(item[4]),
+                    str(item[5]),
+                    str(item[6]),
+                    str(item[7]),
+                )
+                for item in connection.execute('PRAGMA foreign_key_list("registry_meta")')
+            ],
         }
-    indexes: dict[str, Any] = {}
-    for name in _EXPECTED_INDEX_NAMES:
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", ("boots",)
+    ).fetchone()
+    if row is None:
+        tables["boots"] = None
+    else:
+        tables["boots"] = {
+            "sql": _normalized_ddl(str(row[0])),
+            "columns": [
+                (str(item[1]), str(item[2]).upper(), int(item[3]), item[4], int(item[5]))
+                for item in connection.execute('PRAGMA table_info("boots")')
+            ],
+            "foreign_keys": [
+                (
+                    str(item[2]),
+                    str(item[3]),
+                    str(item[4]),
+                    str(item[5]),
+                    str(item[6]),
+                    str(item[7]),
+                )
+                for item in connection.execute('PRAGMA foreign_key_list("boots")')
+            ],
+        }
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", ("workers",)
+    ).fetchone()
+    if row is None:
+        tables["workers"] = None
+    else:
+        tables["workers"] = {
+            "sql": _normalized_ddl(str(row[0])),
+            "columns": [
+                (str(item[1]), str(item[2]).upper(), int(item[3]), item[4], int(item[5]))
+                for item in connection.execute('PRAGMA table_info("workers")')
+            ],
+            "foreign_keys": [
+                (
+                    str(item[2]),
+                    str(item[3]),
+                    str(item[4]),
+                    str(item[5]),
+                    str(item[6]),
+                    str(item[7]),
+                )
+                for item in connection.execute('PRAGMA foreign_key_list("workers")')
+            ],
+        }
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", ("runs",)
+    ).fetchone()
+    if row is None:
+        tables["runs"] = None
+    else:
+        tables["runs"] = {
+            "sql": _normalized_ddl(str(row[0])),
+            "columns": [
+                (str(item[1]), str(item[2]).upper(), int(item[3]), item[4], int(item[5]))
+                for item in connection.execute('PRAGMA table_info("runs")')
+            ],
+            "foreign_keys": [
+                (
+                    str(item[2]),
+                    str(item[3]),
+                    str(item[4]),
+                    str(item[5]),
+                    str(item[6]),
+                    str(item[7]),
+                )
+                for item in connection.execute('PRAGMA foreign_key_list("runs")')
+            ],
+        }
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", ("run_events",)
+    ).fetchone()
+    if row is None:
+        tables["run_events"] = None
+    else:
+        tables["run_events"] = {
+            "sql": _normalized_ddl(str(row[0])),
+            "columns": [
+                (str(item[1]), str(item[2]).upper(), int(item[3]), item[4], int(item[5]))
+                for item in connection.execute('PRAGMA table_info("run_events")')
+            ],
+            "foreign_keys": [
+                (
+                    str(item[2]),
+                    str(item[3]),
+                    str(item[4]),
+                    str(item[5]),
+                    str(item[6]),
+                    str(item[7]),
+                )
+                for item in connection.execute('PRAGMA foreign_key_list("run_events")')
+            ],
+        }
+    if include_migration:
         row = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type='index' AND name=?", (name,)
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", ("schema_migrations",)
         ).fetchone()
         if row is None:
-            indexes[name] = None
-            continue
-        columns = [
-            (str(item[2]), int(item[3]), str(item[4]))
-            for item in connection.execute(f'PRAGMA index_xinfo("{name}")')
-            if int(item[5]) == 1
-        ]
-        indexes[name] = {"sql": _normalized_ddl(str(row[0])), "columns": columns}
+            tables["schema_migrations"] = None
+        else:
+            tables["schema_migrations"] = {
+                "sql": _normalized_ddl(str(row[0])),
+                "columns": [
+                    (str(item[1]), str(item[2]).upper(), int(item[3]), item[4], int(item[5]))
+                    for item in connection.execute('PRAGMA table_info("schema_migrations")')
+                ],
+                "foreign_keys": [
+                    (
+                        str(item[2]),
+                        str(item[3]),
+                        str(item[4]),
+                        str(item[5]),
+                        str(item[6]),
+                        str(item[7]),
+                    )
+                    for item in connection.execute('PRAGMA foreign_key_list("schema_migrations")')
+                ],
+            }
+    indexes: dict[str, Any] = {}
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name=?", ("idx_runs_scope_started",)
+    ).fetchone()
+    if row is None:
+        indexes["idx_runs_scope_started"] = None
+    else:
+        indexes["idx_runs_scope_started"] = {
+            "sql": _normalized_ddl(str(row[0])),
+            "columns": [
+                (str(item[2]), int(item[3]), str(item[4]))
+                for item in connection.execute('PRAGMA index_xinfo("idx_runs_scope_started")')
+                if int(item[5]) == 1
+            ],
+        }
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+        ("idx_runs_scope_status_started",),
+    ).fetchone()
+    if row is None:
+        indexes["idx_runs_scope_status_started"] = None
+    else:
+        indexes["idx_runs_scope_status_started"] = {
+            "sql": _normalized_ddl(str(row[0])),
+            "columns": [
+                (str(item[2]), int(item[3]), str(item[4]))
+                for item in connection.execute('PRAGMA index_xinfo("idx_runs_scope_status_started")')
+                if int(item[5]) == 1
+            ],
+        }
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name=?", ("idx_runs_worker_status",)
+    ).fetchone()
+    if row is None:
+        indexes["idx_runs_worker_status"] = None
+    else:
+        indexes["idx_runs_worker_status"] = {
+            "sql": _normalized_ddl(str(row[0])),
+            "columns": [
+                (str(item[2]), int(item[3]), str(item[4]))
+                for item in connection.execute('PRAGMA index_xinfo("idx_runs_worker_status")')
+                if int(item[5]) == 1
+            ],
+        }
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name=?", ("idx_run_events_run_seq",)
+    ).fetchone()
+    if row is None:
+        indexes["idx_run_events_run_seq"] = None
+    else:
+        indexes["idx_run_events_run_seq"] = {
+            "sql": _normalized_ddl(str(row[0])),
+            "columns": [
+                (str(item[2]), int(item[3]), str(item[4]))
+                for item in connection.execute('PRAGMA index_xinfo("idx_run_events_run_seq")')
+                if int(item[5]) == 1
+            ],
+        }
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name=?", ("idx_workers_heartbeat",)
+    ).fetchone()
+    if row is None:
+        indexes["idx_workers_heartbeat"] = None
+    else:
+        indexes["idx_workers_heartbeat"] = {
+            "sql": _normalized_ddl(str(row[0])),
+            "columns": [
+                (str(item[2]), int(item[3]), str(item[4]))
+                for item in connection.execute('PRAGMA index_xinfo("idx_workers_heartbeat")')
+                if int(item[5]) == 1
+            ],
+        }
     return {"tables": tables, "indexes": indexes}
 
 
@@ -624,7 +785,9 @@ class RunHistoryStore:
                 "INSERT INTO schema_migrations(version, checksum) VALUES (?, ?)",
                 (_SCHEMA_VERSION, _SCHEMA_V1_CHECKSUM),
             )
-            connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+            # PRAGMA 写入不接受绑定参数；值就是上方插行的 _SCHEMA_VERSION（当前为 1），
+            # 按安全门禁要求写成字面量。升版本时这条必须与 _SCHEMA_VERSION 一起改。
+            connection.execute("PRAGMA user_version=1")
             connection.commit()
         except Exception:
             connection.rollback()

@@ -150,18 +150,28 @@ def _create_guards() -> None:
 
 
 def _drop_guards() -> None:
+    # 目标名是本迁移头部定义/派生的常量（EVENT_INSERT_TRIGGER 与按
+    # 「trg_{IMMUTABLE_TABLES 里的表}_no_{update|delete}」规则创建的触发器）。
+    # DROP 守卫按安全扫描要求写成完整字面量；迁移是冻结产物，这些名字不会再变。
     dialect = _dialect_name()
     if dialect == "postgresql":
-        op.execute(f"DROP TRIGGER IF EXISTS {EVENT_INSERT_TRIGGER} ON tenant_notification_events")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notification_events_validate_insert ON tenant_notification_events")
     else:
-        op.execute(f"DROP TRIGGER IF EXISTS {EVENT_INSERT_TRIGGER}")
-    for table in IMMUTABLE_TABLES:
-        for operation in ("update", "delete"):
-            name = f"trg_{table}_no_{operation}"
-            if dialect == "postgresql":
-                op.execute(f"DROP TRIGGER IF EXISTS {name} ON {table}")
-            else:
-                op.execute(f"DROP TRIGGER IF EXISTS {name}")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notification_events_validate_insert")
+    if dialect == "postgresql":
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notifications_no_update ON tenant_notifications")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notifications_no_delete ON tenant_notifications")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notification_recipients_no_update ON tenant_notification_recipients")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notification_recipients_no_delete ON tenant_notification_recipients")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notification_events_no_update ON tenant_notification_events")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notification_events_no_delete ON tenant_notification_events")
+    else:
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notifications_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notifications_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notification_recipients_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notification_recipients_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notification_events_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_tenant_notification_events_no_delete")
     if dialect == "postgresql":
         op.execute("DROP FUNCTION IF EXISTS rag4c_notification_event_validate()")
         op.execute("DROP FUNCTION IF EXISTS rag4c_notification_immutable()")

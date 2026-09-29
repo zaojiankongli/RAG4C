@@ -273,16 +273,43 @@ def _create_immutable_guards() -> None:
 
 
 def _drop_immutable_guards() -> None:
+    # 目标名是本迁移 IMMUTABLE_GUARDS 里逐条声明的常量（表名 + no_update/no_delete
+    # 触发器名），IMMUTABLE_FUNCTION 同样在头部定义。DROP 守卫按安全扫描要求写成
+    # 完整字面量；迁移是冻结产物，这些名字不会再变。
     dialect = _dialect_name()
-    for table_name, update_trigger, delete_trigger in IMMUTABLE_GUARDS:
-        if dialect == "postgresql":
-            op.execute(f"DROP TRIGGER IF EXISTS {update_trigger} ON {table_name}")
-            op.execute(f"DROP TRIGGER IF EXISTS {delete_trigger} ON {table_name}")
-        elif dialect in {"sqlite", "mysql", "mariadb"}:
-            op.execute(f"DROP TRIGGER IF EXISTS {update_trigger}")
-            op.execute(f"DROP TRIGGER IF EXISTS {delete_trigger}")
     if dialect == "postgresql":
-        op.execute(f"DROP FUNCTION IF EXISTS {IMMUTABLE_FUNCTION}()")
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_dataset_release_manifests_no_update"
+            " ON dataset_release_manifests"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_dataset_release_manifests_no_delete"
+            " ON dataset_release_manifests"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_dataset_release_entries_no_update"
+            " ON dataset_release_entries"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_dataset_release_entries_no_delete"
+            " ON dataset_release_entries"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_dataset_release_events_no_update"
+            " ON dataset_release_events"
+        )
+        op.execute(
+            "DROP TRIGGER IF EXISTS trg_dataset_release_events_no_delete"
+            " ON dataset_release_events"
+        )
+        op.execute("DROP FUNCTION IF EXISTS rag4c_dataset_release_content_immutable()")
+    elif dialect in {"sqlite", "mysql", "mariadb"}:
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_manifests_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_manifests_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_entries_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_entries_no_delete")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_events_no_update")
+        op.execute("DROP TRIGGER IF EXISTS trg_dataset_release_events_no_delete")
 
 
 def _backfill_application_release_bindings(connection: Connection) -> None:
