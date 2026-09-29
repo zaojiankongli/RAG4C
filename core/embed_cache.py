@@ -122,11 +122,29 @@ class EmbedCache(TwoLevelCache[list]):
     # -- 领域接口 ------------------------------------------------------- #
     def get(self, model: str, text: str, *, variant: str = "") -> Optional[list[float]]:
         """查缓存。未命中返回 None。"""
-        return self.get_digest(_digest(model, variant, text))
+        result = self.get_digest(_digest(model, variant, text))
+        self.last_lookup_hit = result is not None
+        return result
 
     def put(self, model: str, text: str, vec: list[float], *, variant: str = "") -> None:
         """写缓存（两级同写）。空向量不写——那多半是上游出错的产物。"""
+        self.last_lookup_hit = False
         self.put_digest(_digest(model, variant, text), list(vec))
+
+    @property
+    def last_lookup_hit(self) -> bool:
+        """最近一次 get() 是否命中（线程内序，供阶段记账标注缓存口径）。
+
+        为什么不做成 get() 的返回值的一部分：调用方（embedder）的签名到处在用，
+        往返回值里塞元组会牵动整条管线；进程级单例上的一个读后即用的标志位，
+        对「刚查完就记账」的阶段语义足够（GIL 下读写不撕裂，偶发的跨线程串扰
+        只影响标注不影响向量正确性）。
+        """
+        return bool(getattr(self, "_last_lookup_hit", False))
+
+    @last_lookup_hit.setter
+    def last_lookup_hit(self, value: bool) -> None:
+        self._last_lookup_hit = bool(value)
 
 
 _instance: Optional[EmbedCache] = None

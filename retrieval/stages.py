@@ -627,7 +627,17 @@ class StageRunner:
     ) -> RetrievalState:
         next_state = outcome.state if outcome.state is not None else state
         if outcome.span is not None:
-            add_span(outcome.span[0], outcome.span[1], next_state.traces)
+            span_name = outcome.span[0]
+            # embed 带 cache 口径（hit/miss）：trace 行写成 embed@hit:xx ms，
+            # 让消费方（消融/报表）能把冷热两栏分开，而不是被近 0 的命中读数
+            # 读成"嵌入不花钱"（Round 10 §7-4）。其余阶段行为不变。
+            if (
+                span_name == "embed"
+                and outcome.completed is not None
+                and outcome.completed[1].get("cache")
+            ):
+                span_name = f"embed@{outcome.completed[1]['cache']}"
+            add_span(span_name, outcome.span[1], next_state.traces)
 
         if outcome.failed is not None and stage.node_id is not None:
             failure = outcome.failed
@@ -1158,7 +1168,12 @@ class EnhancerPrefetchStage(_Stage):
 
 
 class EmbedStage(_Stage):
-    """5. 嵌入：BGE-M3 稠密嵌入；HyDE 生效时嵌的是假设文档（span 恒记 ``embed``）。"""
+    """5. 嵌入：BGE-M3 稠密嵌入；HyDE 生效时嵌的是假设文档（span 恒记 ``embed``）。
+
+    embed_query 带两级缓存（进程内 LRU + Redis），命中时耗时接近 0——这是
+    「读数会被读成嵌入不花钱」的来源（Round 10 §7-4）。complete() 携带
+    ``cache="hit"|"miss"``，消费方（报表/消融）按它分冷热两栏，而不是猜。
+    """
 
     name = "embed"
     node_id = "embed"
@@ -1181,8 +1196,17 @@ class EmbedStage(_Stage):
             state.hyde_doc if state.hyde_doc else state.search_query
         )
         embed_ms = (time.perf_counter() - t0) * 1000.0
+        # 缓存口径如实上报：命中时耗时接近 0，不标注会被读成"嵌入不花钱"
+        #（Round 10 §7-4）。embed_query 内部刚好查过一次缓存，直接问它的结论。
+        from core.embed_cache import get_embed_cache
+
+        cache_hit = get_embed_cache().last_lookup_hit
         outcome = StageOutcome().set_span("embed", embed_ms)
-        outcome.complete(embed_ms, source="hyde" if state.hyde_doc else "query")
+        outcome.complete(
+            embed_ms,
+            source="hyde" if state.hyde_doc else "query",
+            cache="hit" if cache_hit else "miss",
+        )
         return outcome.derive(state.with_query_vec(query_vec))
 
 

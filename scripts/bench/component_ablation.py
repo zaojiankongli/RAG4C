@@ -31,7 +31,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-_STAGE_MS = re.compile(r"^([a-z_][a-z0-9_]*):(\d+(?:\.\d+)?)ms$")
+_STAGE_MS = re.compile(r"^([a-z_@][a-z0-9_@]*):(\d+(?:\.\d+)?)ms$")
 _BASELINE = "baseline"
 
 # 本 harness 只打自己拉起的本机服务：仅接受 http + 数字环回地址（不解析 DNS，
