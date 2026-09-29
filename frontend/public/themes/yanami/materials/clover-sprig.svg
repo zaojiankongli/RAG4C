@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500" viewBox="0 0 400 500" fill="none" role="img" aria-labelledby="cs-title cs-desc">
+  <title id="cs-title">Four-leaf clover sprig</title>
+  <desc id="cs-desc">Four distinct heart-shaped green leaflets meet at one petiole. Each has a natural cleft, branching veins, a pale crescent marking and restrained cel shading. A slender curved stem completes the transparent botanical motif.</desc>
+  <defs>
+    <linearGradient id="cs-leaf-fill" x1="-53" y1="-124" x2="40" y2="-11" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#a1bf77"/><stop offset=".48" stop-color="#77a666"/><stop offset="1" stop-color="#4d835d"/>
+    </linearGradient>
+    <g id="cs-leaf">
+      <path d="M0 0C-18-19-43-38-58-65C-75-96-65-123-44-128C-26-132-8-119 0-103C8-120 27-133 45-127C67-119 73-94 56-64C40-37 16-18 0 0Z" fill="url(#cs-leaf-fill)" stroke="#436b55" stroke-width="2" stroke-linejoin="round"/>
+      <path d="M0 0C-18-19-43-38-58-65C-66-80-69-97-63-108C-62-85-43-65-30-65C-22-65-20-56-13-54L0-70C16-64 31-69 43-80C52-89 59-102 59-112C72-98 64-80 56-64C40-37 16-18 0 0Z" fill="#4d865b" opacity=".54"/>
+      <path d="M0-23C-14-39-25-49-41-56L-44-68C-26-63-12-53 0-41C13-54 28-63 43-66L39-54C24-49 12-36 0-23Z" fill="#bbce95" opacity=".73"/>
+      <path d="M-58-100C-59-111-50-120-40-121C-27-122-17-112-13-106" stroke="#cadcaf" stroke-width="3" stroke-linecap="round"/>
+      <path d="M11-106C20-120 31-122 41-120" stroke="#bbd395" stroke-width="2.2" stroke-linecap="round"/>
+      <g stroke="#436f54" stroke-width="1.2" stroke-linecap="round" opacity=".86">
+        <path d="M0-3C-2-38 2-70 0-102M0-28C-23-41-40-52-52-74M0-49C-25-62-39-78-47-98M0-73C-13-84-21-97-27-112M0-30C22-43 39-56 49-77M1-52C25-66 39-82 43-103M1-76C12-87 21-102 26-113"/>
+        <path d="M-25-46L-37-47M-26-65L-28-82M-17-88L-31-97M25-49L39-53M27-72L30-90M14-92L27-101" stroke-width=".8"/>
+      </g>
+      <path d="M2-13C2-44 4-69 2-94" stroke="#d1dcad" stroke-width="1.35" stroke-linecap="round" opacity=".76"/>
+    </g>
+  </defs>
+  <path d="M200 212C215 270 235 307 226 352C218 398 197 422 206 457C197 459 194 453 194 445C190 412 211 385 215 349C221 303 204 266 195 214Z" fill="#6b9865" stroke="#456d55" stroke-width="1.7" stroke-linejoin="round"/>
+  <path d="M201 232C214 279 226 309 221 348C217 384 196 423 200 447" stroke="#b2c687" stroke-width="2" stroke-linecap="round"/>
+  <path d="M218 327C210 320 207 321 204 326C210 326 214 329 218 335M224 307C230 301 232 298 237 296C234 306 230 312 224 316" fill="#5b855a" stroke="#456d55" stroke-width="1" stroke-linejoin="round"/>
+  <g transform="translate(198 212) rotate(-16)">
+    <use href="#cs-leaf" transform="rotate(-45)"/>
+    <use href="#cs-leaf" transform="rotate(45) scale(.96)"/>
+    <use href="#cs-leaf" transform="rotate(135) scale(.95)"/>
+    <use href="#cs-leaf" transform="rotate(225) scale(.91)"/>
+    <path d="M-4 5L-8-6L-2-3L3-10L5-3L12-2L5 3L5 10L0 6L-5 10Z" fill="#4c7752"/>
+    <path d="M0 5L1-3M1 0L6-3M-1 0L-5-4" stroke="#b9ce8e" stroke-width="1.3" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="640" viewBox="0 0 800 640" fill="none" role="img" aria-labelledby="cc-title cc-desc">
+  <title id="cc-title">Clover meadow corner</title>
+  <desc id="cc-desc">An airy lower-left botanical border with five four-leaf clovers, veined meadow foliage and fine grass blades. The upper and right areas remain clear for theme content. Transparent background with comfortable edge padding.</desc>
+  <defs>
+    <linearGradient id="cc-leaf-fill" x1="-29" y1="-63" x2="17" y2="-4" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#b0c887"/><stop offset=".52" stop-color="#81ad70"/><stop offset="1" stop-color="#5c8b62"/>
+    </linearGradient>
+    <linearGradient id="cc-foliage-fill" x1="0" y1="0" x2="68" y2="-45" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#77967d"/><stop offset="1" stop-color="#c1ce9d"/>
+    </linearGradient>
+    <g id="cc-leaf">
+      <path d="M0 0C-11-10-24-21-32-35C-41-53-35-68-23-70C-13-72-4-64 0-56C5-65 14-73 24-69C36-65 40-51 31-35C21-19 9-9 0 0Z" fill="url(#cc-leaf-fill)" stroke="#57765e" stroke-width="1.4" stroke-linejoin="round"/>
+      <path d="M0 0C-11-10-24-21-32-35C-37-43-39-53-35-60C-34-46-25-35-16-36C-10-36-5-30 0-27C13-32 27-43 32-57C37-47 32-38 25-28C17-17 9-8 0 0Z" fill="#5e915f" opacity=".48"/>
+      <path d="M0-13C-8-22-16-28-23-30L-25-36C-15-34-6-28 0-22C7-29 15-34 24-36L21-29C12-26 6-19 0-13Z" fill="#c0d49b" opacity=".76"/>
+      <path d="M-31-54C-30-64-22-68-15-62M8-60C14-67 22-67 27-60" stroke="#d0deb0" stroke-width="1.8" stroke-linecap="round"/>
+      <path d="M0-2Q1-31 0-56M0-17Q-20-27-28-44M0-30Q-20-41-23-55M0-42L-13-61M0-17Q20-28 28-46M1-30Q19-42 23-56M0-43L14-62" stroke="#537955" stroke-width=".85" stroke-linecap="round"/>
+      <path d="M2-7L2-49" stroke="#c5d7a1" stroke-width=".9" stroke-linecap="round"/>
+    </g>
+    <g id="cc-clover">
+      <use href="#cc-leaf" transform="rotate(-45)"/><use href="#cc-leaf" transform="rotate(45) scale(.94)"/><use href="#cc-leaf" transform="rotate(135) scale(.93)"/><use href="#cc-leaf" transform="rotate(225) scale(.96)"/>
+      <path d="M-6-2L-2-1L1-6L3-1L7 1L3 3L2 7L-1 3L-6 4Z" fill="#5d8359"/>
+      <path d="M0 4V-2M0 1L4-1" stroke="#c6d69b" stroke-width="1" stroke-linecap="round"/>
+    </g>
+    <g id="cc-foliage">
+      <path d="M0 0C4-22 26-43 69-48C63-26 38-3 0 0Z" fill="url(#cc-foliage-fill)" stroke="#698571" stroke-width="1.4"/>
+      <path d="M0 0C26-9 44-25 69-48C57-21 32-6 0 0Z" fill="#87a280" opacity=".6"/>
+      <path d="M1-1Q37-17 65-44M16-9L19-25M29-18L37-33M42-29L49-38M17-9L33-9M31-20L48-23M46-31L57-34" stroke="#6e8b70" stroke-width=".85" stroke-linecap="round"/>
+      <path d="M5-3Q36-18 58-38" stroke="#d4dbad" stroke-width=".8" stroke-linecap="round"/>
+    </g>
+  </defs>
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <path d="M66 589C85 534 90 475 98 411C105 350 106 288 131 221" stroke="#6c8d72" stroke-width="2.1"/>
+    <path d="M74 585C113 553 161 547 207 551C272 558 344 570 426 553C472 544 514 534 560 538" stroke="#7e9777" stroke-width="2.2"/>
+    <path d="M87 580C80 517 48 477 43 422M100 577C91 519 109 452 148 412M109 578C123 531 170 475 226 450M80 582C69 537 70 508 78 468" stroke="#a2b58b" stroke-width="1.5"/>
+    <path d="M115 580C169 574 220 596 286 588M112 583C161 580 198 571 246 566M64 581C53 551 49 518 54 496" stroke="#bdc9a0" stroke-width="1.3"/>
+    <use href="#cc-foliage" transform="translate(107 362) rotate(-74) scale(.67)"/>
+    <use href="#cc-foliage" transform="translate(108 318) rotate(-5) scale(.64)"/>
+    <use href="#cc-foliage" transform="translate(118 271) rotate(-69) scale(.53)"/>
+    <use href="#cc-foliage" transform="translate(127 233) rotate(-18) scale(.4)"/>
+    <use href="#cc-foliage" transform="translate(98 417) rotate(-137) scale(.65)"/>
+    <use href="#cc-foliage" transform="translate(88 477) rotate(-67) scale(.8)"/>
+    <use href="#cc-foliage" transform="translate(346 562) rotate(32) scale(.71)"/>
+    <use href="#cc-foliage" transform="translate(380 560) rotate(122) scale(.55)"/>
+    <use href="#cc-foliage" transform="translate(427 553) rotate(-6) scale(.7)"/>
+    <use href="#cc-foliage" transform="translate(469 544) rotate(115) scale(.47)"/>
+    <use href="#cc-foliage" transform="translate(511 538) rotate(1) scale(.46)"/>
+    <use href="#cc-foliage" transform="translate(547 538) rotate(30) scale(.35)"/>
+    <path d="M78 582C135 544 164 475 170 394C173 359 168 330 173 302" stroke="#597e60" stroke-width="4"/>
+    <path d="M81 580C139 536 165 469 168 399C171 357 169 331 173 305" stroke="#b5c98f" stroke-width="1.5"/>
+    <path d="M94 583C139 559 169 530 196 487C216 455 237 437 263 427" stroke="#648764" stroke-width="3.6"/>
+    <path d="M98 580C145 551 171 522 194 485C214 453 237 435 260 428" stroke="#c0ce99" stroke-width="1.3"/>
+    <path d="M81 583C102 551 117 526 113 491C111 477 105 467 101 457" stroke="#648763" stroke-width="3"/>
+    <path d="M115 582C174 568 223 550 272 526C287 519 304 515 320 515" stroke="#75966e" stroke-width="2.8"/>
+    <path d="M115 580C174 566 223 548 273 524" stroke="#c4d3a1" stroke-width="1"/>
+    <path d="M108 539C81 471 99 412 97 371" stroke="#7f9b77" stroke-width="2.2"/>
+    <use href="#cc-clover" transform="translate(98 364) rotate(12) scale(.5)"/>
+    <use href="#cc-clover" transform="translate(173 304) rotate(-19) scale(.88)"/>
+    <use href="#cc-clover" transform="translate(263 427) rotate(11) scale(.97)"/>
+    <use href="#cc-clover" transform="translate(320 515) rotate(23) scale(.56)"/>
+    <use href="#cc-clover" transform="translate(100 457) rotate(-17) scale(.63)"/>
+    <path d="M60 594C45 568 46 545 40 530C54 545 60 569 65 589M67 592C73 559 68 541 73 522C79 543 82 565 72 590M77 590C87 563 97 550 111 542C97 559 89 575 84 592" fill="#9aaf82" stroke="#7f9673" stroke-width=".9"/>
+    <path d="M82 594C110 590 127 592 147 600C120 601 108 598 86 598M88 593C114 582 135 580 153 582C129 588 113 593 93 597" fill="#adc096" stroke="#889f7b" stroke-width=".9"/>
+  </g>
+</svg>

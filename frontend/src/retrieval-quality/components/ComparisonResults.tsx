@@ -1,4 +1,4 @@
-import { Alert, Card, Tag } from "tdesign-react";
+import { Alert, Card, Tag } from "../../ui";
 import type { CSSProperties } from "react";
 import type { RunResponse } from "../model/contracts";
 import { projectExperiment } from "../model/projection";

@@ -14,10 +14,13 @@ const draft: JudgmentDraft = { relevanceLabel: "partial", score: 2, note: "revie
 
 describe("ExperimentDetailDrawer", () => {
   it("shows immutable facts, owner/revision, agreement, conflict, and an honest Eval note", () => {
-    render(<ExperimentDetailDrawer visible detail={detail} agreement={agreement} status="ready" error={null} actorId="judge-a" openerRef={createRef()} conflictRanks={[1]} savingRanks={[]} draftFor={() => draft} setDraft={vi.fn()} onSave={vi.fn()} onClose={vi.fn()} />);
+    render(<ExperimentDetailDrawer visible detail={detail} agreement={agreement} status="ready" error={new Error("detail unavailable")} actorId="judge-a" openerRef={createRef()} conflictRanks={[1]} savingRanks={[]} draftFor={() => draft} setDraft={vi.fn()} onSave={vi.fn()} onClose={vi.fn()} />);
+    expect(document.querySelector(".rag-button")).not.toBeNull();
+    expect(document.querySelector(".rag-tag.is-light-outline")).not.toBeNull();
     expect(screen.getByText("不可变实验快照")).toBeTruthy();
     expect(screen.getByText("judge-a · r4")).toBeTruthy();
-    expect(screen.getByRole("alert").textContent).toContain("判断已被更新");
+    expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("detail unavailable"))).toBe(true);
+    expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("判断已被更新"))).toBe(true);
     expect(screen.getByText("一致率")).toBeTruthy();
     expect(screen.getByText(/当前没有实验转入 Eval 的真实接口/)).toBeTruthy();
     expect(screen.getByText("judge-b · r2")).toBeTruthy();

@@ -9,5 +9,7 @@ describe("retrieval quality responsive and accessibility CSS", () => {
     expect(css).toContain(":focus-visible");
     expect(css).toContain('html[data-theme="dark"]');
     expect(css).toContain("prefers-reduced-motion: reduce");
+    expect(css).toContain(".rq-composer-actions > .rag-space");
+    expect(css).toContain(".rq-composer-actions .rag-button");
   });
 });

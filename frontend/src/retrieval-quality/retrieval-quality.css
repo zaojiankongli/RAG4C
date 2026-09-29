@@ -26,7 +26,7 @@
 .rq-switch-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
 .rq-switch-grid label { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 8px 9px; border-radius: var(--radius-sm); background: var(--color-bg-sunken); color: var(--color-text-secondary); }
 .rq-composer-actions { justify-content: flex-end; }
-.rq-composer-actions > .t-space { flex: 1; }
+.rq-composer-actions > .t-space, .rq-composer-actions > .rag-space { flex: 1; }
 .rq-generation-rail { position: relative; overflow: hidden; border-left-color: var(--color-graph); background: linear-gradient(90deg, var(--color-primary-bg), var(--color-graph-bg)); }
 .rq-generation-rail::after { position: absolute; right: 18px; bottom: 0; left: 18px; height: 2px; content: ""; background: var(--color-primary-border); }
 .rq-variant-summary { min-width: 0; }
@@ -76,7 +76,7 @@ html[data-theme="dark"] .rq-table-scroll { border-color: var(--color-border-stro
   .rq-authority-banner, .rq-generation-rail, .rq-immutable-banner { grid-template-columns: 1fr; gap: 9px; }
   .rq-strategy-grid, .rq-variant-summary-grid { grid-template-columns: 1fr; overflow: visible; }
   .rq-composer-actions, .rq-section-heading, .rq-summary-head, .rq-pagination { align-items: stretch; flex-direction: column; }
-  .rq-composer-actions .t-button { width: 100%; }
+  .rq-composer-actions .t-button, .rq-composer-actions .rag-button { width: 100%; }
   .rq-switch-grid, .rq-summary-facts, .rq-detail-facts, .rq-agreement dl, .rq-evidence-cell dl, .rq-history-filters { grid-template-columns: 1fr; }
   .rq-lineage-strip { grid-template-columns: 1fr; }
   .rq-lineage-strip i { width: 2px; height: 10px; margin-left: 8px; }

@@ -1,4 +1,4 @@
-import { Card } from "tdesign-react";
+import { Card } from "../../ui";
 import type { Agreement } from "../model/contracts";
 export default function AgreementPanel({ agreement }: { agreement: Agreement | null }) {
   return <Card bordered className="rq-agreement" header="判断一致性"><dl>{[

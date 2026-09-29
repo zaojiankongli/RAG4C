@@ -18,6 +18,10 @@ afterEach(cleanup);
 describe("RetrievalComposer", () => {
   it("duplicates strategy cards, blocks duplicate names, and labels pure retrieval", async () => {
     const user = userEvent.setup(); const onRun = vi.fn(); render(<Harness onRun={onRun} />);
+    expect(document.querySelector(".rag-card")).not.toBeNull();
+    expect(document.querySelector(".rag-space")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "样例：员工年假制度是怎么规定的？" }).className).toContain("is-text");
+    expect(screen.getByRole("button", { name: "运行纯检索对比（不生成答案）" }).className).toContain("is-primary");
     await user.click(screen.getByRole("button", { name: "复制策略 策略 A" }));
     expect(screen.getAllByRole("group", { name: /检索策略/ })).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "运行纯检索对比（不生成答案）" }));
@@ -29,6 +33,28 @@ describe("RetrievalComposer", () => {
     const user = userEvent.setup(); const onRun = vi.fn(); render(<Harness onRun={onRun} />);
     await user.click(screen.getByRole("button", { name: "样例：员工年假制度是怎么规定的？" }));
     expect((screen.getByLabelText("检索问题") as HTMLTextAreaElement).value).toBe("员工年假制度是怎么规定的？");
+    expect(onRun).not.toHaveBeenCalled();
+  });
+
+  it("keeps ACL input values as real strings at the facade boundary", async () => {
+    const user = userEvent.setup();
+    const onRun = vi.fn();
+    render(<Harness onRun={onRun} />);
+    const acl = screen.getByLabelText("检索 ACL") as HTMLInputElement;
+    await user.type(acl, "finance-reader");
+    expect(acl.value).toBe("finance-reader");
+    expect(onRun).not.toHaveBeenCalled();
+  });
+
+  it("marks invalid ACL input for the shared validation focus path", async () => {
+    const user = userEvent.setup();
+    const onRun = vi.fn();
+    render(<Harness onRun={onRun} />);
+    const acl = screen.getByLabelText("检索 ACL") as HTMLInputElement;
+    await user.type(acl, '"');
+    await user.click(screen.getByRole("button", { name: "运行纯检索对比（不生成答案）" }));
+    expect(acl.getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByText("ACL 包含无效项")).toBeTruthy();
     expect(onRun).not.toHaveBeenCalled();
   });
 });

@@ -5,7 +5,6 @@ import {
   Card,
   Input,
   Popconfirm,
-  Select,
   Space,
   Tag,
   Tooltip,
@@ -16,10 +15,7 @@ import {
   ArrowDownOutlined,
   ClearOutlined,
   CopyOutlined,
-  FileSearchOutlined,
-  LinkOutlined,
   MessageOutlined,
-  SafetyCertificateOutlined,
   SendOutlined,
   StopOutlined,
 } from "../ui/icons";
@@ -27,6 +23,8 @@ import AnswerCard from "../components/AnswerCard";
 import PageTopbar from "../components/PageTopbar";
 import PhaseStatus from "../components/PhaseStatus";
 import StreamingCard from "../components/StreamingCard";
+import QueryWelcome from "./QueryWelcome";
+import QueryScopePicker from "./QueryScopePicker";
 import { fetchAnswer, streamAnswer } from "../api/client";
 import { DEMO_RESPONSES } from "../api/mock";
 import { useConnection } from "../context/ConnectionContext";
@@ -42,14 +40,6 @@ const CHAT_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
   second: "2-digit",
   hour12: false,
 });
-
-/** 示例问题（空态引导，降低首次使用门槛） */
-const SAMPLES = [
-  "公司的报销流程是什么？",
-  "员工年假制度是怎么规定的？",
-  "入职需要准备哪些材料？",
-  "去年 Q4 的毛利率是多少？",
-];
 
 /** 资料范围选项（对应后端 acl 过滤） */
 const ACL_OPTIONS = [
@@ -318,18 +308,7 @@ export default function QueryPage({ acl, onAclChange }: Props) {
         subtitle="向知识库提问，答案会标注可核对的资料出处"
         extra={
           <>
-            <Select
-              size="small"
-              mode="multiple"
-              placeholder="全部资料"
-              value={acl}
-              onChange={onAclChange}
-              style={{ minWidth: 170 }}
-              options={ACL_OPTIONS}
-              maxTagCount={1}
-              maxTagPlaceholder={(omitted: any) => "+" + omitted.length}
-              aria-label="限定查询的资料范围"
-            />
+            <QueryScopePicker value={acl} onChange={onAclChange} options={ACL_OPTIONS} />
             <Popconfirm
               title="清空这次对话？"
               description="页面上的提问和回答将不再显示"
@@ -346,14 +325,18 @@ export default function QueryPage({ acl, onAclChange }: Props) {
         }
       />
 
-      <div className="page-shell query-page">
+      <div
+        className={`page-shell query-page${messages.length === 0 && !loading ? " is-welcome" : ""}`}
+      >
         <div
           className="page-shell-inner"
           style={{ display: "flex", flexDirection: "column", height: "100%", position: "relative" }}
         >
           <div className="chat-scroll" ref={scrollRef}>
-            <div className="chat-inner">
-              {messages.length === 0 && !loading && <Welcome onPick={(q) => void ask(q)} />}
+            <div className={`chat-inner${messages.length === 0 && !loading ? " is-empty" : ""}`}>
+              {messages.length === 0 && !loading && (
+                <QueryWelcome onPick={(question) => void ask(question)} />
+              )}
               {messages.map((m, idx) =>
                 m.role === "user" ? (
                   <div key={m.id} className="bubble-user-wrap">
@@ -478,53 +461,6 @@ export default function QueryPage({ acl, onAclChange }: Props) {
             </div>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-/** 空态：以提问为中心，示例问题一键发起 */
-function Welcome({ onPick }: { onPick: (q: string) => void }) {
-  return (
-    <div className="welcome">
-      <div className="welcome-mark" aria-hidden="true">
-        <MessageOutlined />
-      </div>
-      <h2>向知识库提问</h2>
-      <div className="hint">
-        系统会从已入库的资料中检索相关内容并生成回答，每条结论都可以回溯到原始出处。
-      </div>
-
-      <div className="welcome-cards">
-        <div className="welcome-card">
-          <LinkOutlined aria-hidden="true" />
-          <div>
-            <div className="welcome-card-title">答案带出处</div>
-            <div className="welcome-card-desc">每条结论标注引用，可展开查看原文片段。</div>
-          </div>
-        </div>
-        <div className="welcome-card">
-          <SafetyCertificateOutlined aria-hidden="true" />
-          <div>
-            <div className="welcome-card-title">资料不足会拒答</div>
-            <div className="welcome-card-desc">找不到可靠依据时如实说明，不补充臆测内容。</div>
-          </div>
-        </div>
-        <div className="welcome-card">
-          <FileSearchOutlined aria-hidden="true" />
-          <div>
-            <div className="welcome-card-title">过程可查</div>
-            <div className="welcome-card-desc">检索与生成的每一步都可在「回答过程」回放。</div>
-          </div>
-        </div>
-      </div>
-
-      <div className="welcome-samples">
-        {SAMPLES.map((q) => (
-          <button key={q} type="button" className="sample-chip" onClick={() => onPick(q)}>
-            {q}
-          </button>
-        ))}
       </div>
     </div>
   );

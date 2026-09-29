@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="280" viewBox="0 0 960 280" fill="none" role="img" aria-labelledby="ir-title ir-desc">
+  <title id="ir-title">Iridescent flowing ribbon</title>
+  <desc id="ir-desc">One airy satin ribbon turns from powder blue through rose to pale cyan, with a looped left end, indigo reverse folds, and fine pearly hems. Transparent divider with generous open space.</desc>
+  <defs>
+    <linearGradient id="ir-satin" x1="101" y1="158" x2="899" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#b4dbe9"/><stop offset=".24" stop-color="#dcd2ee"/><stop offset=".47" stop-color="#efc0d9"/><stop offset=".67" stop-color="#d0e9f2"/><stop offset="1" stop-color="#90c9dd"/>
+    </linearGradient>
+    <linearGradient id="ir-loop" x1="64" y1="94" x2="177" y2="203" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f8e6f0"/><stop offset=".49" stop-color="#c1dce9"/><stop offset="1" stop-color="#8c9ac2"/>
+    </linearGradient>
+    <linearGradient id="ir-reverse" x1="202" y1="110" x2="695" y2="182" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#536d9d"/><stop offset=".52" stop-color="#8983ae"/><stop offset="1" stop-color="#53688f"/>
+    </linearGradient>
+  </defs>
+  <g stroke="#50668c" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M172 158C146 170 114 173 94 155C78 140 74 116 87 98C99 81 121 83 137 97C155 114 165 145 181 169L199 157C180 128 167 91 142 76C118 61 86 65 70 87C47 117 58 158 82 178C108 200 146 197 181 182Z" fill="url(#ir-loop)"/>
+    <path d="M87 98C99 81 121 83 137 97C155 114 165 145 181 169L191 161C178 134 161 100 141 89C122 77 98 79 87 98Z" fill="#667ca6" stroke="none"/>
+    <path d="M71 102C61 128 76 158 95 169C120 184 146 180 168 173" stroke="#b9eef0" stroke-width="3.5"/>
+    <path d="M82 83C106 62 131 75 146 90" stroke="#fff4f7" stroke-width="2.5"/>
+    <path d="M189 157C216 121 246 93 280 103C307 111 325 132 350 151C389 181 424 201 462 203C500 206 537 185 570 161C613 129 656 92 704 80C745 69 784 72 820 82C854 92 881 91 914 72L905 98C878 116 845 117 811 105C777 93 745 91 712 101C666 115 626 151 585 182C547 210 502 232 455 226C412 222 373 199 336 169C313 151 292 128 271 124C246 119 224 147 203 175Z" fill="url(#ir-satin)"/>
+    <path d="M281 103C307 111 325 132 350 151C389 181 424 201 462 203C500 206 537 185 570 161L585 182C547 210 502 232 455 226C412 222 373 199 336 169C313 151 292 128 271 124C287 124 302 132 316 143C305 125 296 113 281 103Z" fill="#c0bedb" stroke="none"/>
+    <path d="M454 204C503 209 541 183 576 157C564 177 543 196 520 205C496 216 475 217 455 214C412 209 378 189 349 165C390 191 421 201 454 204Z" fill="#f7d5e4" stroke="none"/>
+    <path d="M624 121C650 102 676 87 704 80C745 69 784 72 820 82C854 92 881 91 914 72L905 98C878 116 845 117 811 105C777 93 745 91 712 101C737 80 786 86 816 94C853 104 879 102 898 92C862 100 842 89 816 84C752 67 700 82 624 121Z" fill="#7294ba" stroke="none"/>
+    <path d="M209 145C230 119 254 101 280 108C307 116 325 138 347 153C389 185 425 205 464 207C505 210 540 187 574 162C613 133 657 97 703 86C743 76 779 78 816 87" stroke="#fbf5fa" stroke-width="2.6"/>
+    <path d="M349 172C387 202 421 220 457 223C501 229 542 209 580 182" stroke="#e9aeca" stroke-width="3.3"/>
+    <path d="M590 175C628 146 670 112 712 99C746 89 779 91 810 102" stroke="#b5f0ed" stroke-width="3.5"/>
+    <path d="M820 103C851 114 879 111 899 99" stroke="#eac7e2" stroke-width="2.7"/>
+    <path d="M56 201L79 192C113 222 146 211 171 183C184 168 195 145 212 127C229 109 251 96 271 101C245 107 230 131 217 154C201 183 183 211 151 224C112 241 82 225 56 201Z" fill="url(#ir-reverse)"/>
+    <path d="M56 201L79 192C113 222 146 211 171 183C184 168 195 145 212 127C229 109 251 96 271 101C248 99 231 116 218 138C201 165 187 197 159 216C119 241 84 222 56 201Z" fill="#9bcddc" stroke="none"/>
+    <path d="M69 201C100 226 128 229 157 212C184 196 204 155 219 132" stroke="#dcbbdf" stroke-width="3.2"/>
+    <path d="M87 213C116 230 141 222 160 210C185 192 194 174 204 157" stroke="#faf4fc" stroke-width="1.4"/>
+    <path d="M231 117C243 106 256 101 268 101M378 193C390 201 401 207 413 211M726 85C747 81 765 82 782 85" stroke="#f7faff" stroke-width="1.3"/>
+  </g>
+</svg>

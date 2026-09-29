@@ -1,7 +1,7 @@
 import "./retrieval-quality.css";
-import { Button, Tag } from "tdesign-react";
+import { Button, Tag } from "../ui";
 import { FileSearchIcon } from "tdesign-icons-react";
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from "react";
 import PageState from "../components/PageState";
 import PageTopbar from "../components/PageTopbar";
 import { useConnection } from "../context/ConnectionContext";
@@ -40,6 +40,10 @@ export default function RetrievalQualityCenter() {
   const judgments = useJudgmentMutation(effectiveScope, scope?.actorId ?? "", detail.detail, detail.refresh);
   const execute = async (payload: RunRetrievalRequest) => { const ok = await runner.run(payload); if (ok) { await history.refresh(); setMobileTab("results"); } };
   const select = (item: Experiment, opener: RefObject<HTMLButtonElement>) => { openerRef.current = opener.current; setSelectedId(item.id); };
+  const switchMobileTab = (value: string, event: MouseEvent<HTMLButtonElement>) => {
+    if (selectedId && value !== "history") openerRef.current = event.currentTarget;
+    setMobileTab(value);
+  };
   const close = () => setSelectedId(null);
   const historyPanel = <ExperimentHistory items={history.items} status={history.status} error={history.error} paging={history.paging} hasPrevious={history.hasPrevious} hasNext={history.nextBeforeSequence !== null} onFilters={(filters: HistoryFilters) => { void history.applyFilters(filters); }} onRefresh={() => { void history.refresh(); }} onNext={() => { void history.nextPage(); }} onPrevious={() => { void history.previousPage(); }} onSelect={select}/>;
   const composer = <RetrievalComposer value={draft} onChange={setDraft} running={runner.pending} onRun={execute}/>;
@@ -53,7 +57,7 @@ export default function RetrievalQualityCenter() {
   return <div className="page-slot rq-page">{topbar}<div className="page-shell"><div className="page-shell-inner rq-shell">
     <section className="rq-authority-banner" aria-label="检索质量权威范围"><div><span className="rq-eyebrow">AUTHENTICATED KNOWLEDGE WORKSPACE</span><strong>{scope.tenantId} / {scope.datasetId}</strong></div><p>运行结果和历史记录是当前知识库服务代次上的不可变历史证据；页面不会用演示数据替代权威事实。</p></section>
     {runner.error ? <div role="alert" className="rq-inline-error">{runner.error.message}</div> : null}
-    {mobile ? <div className="rq-mobile-views"><div className="rq-mobile-tablist" role="tablist" aria-label="检索质量中心视图">{[["composer","配置"],["results","结果"],["history","历史"]].map(([value,label]) => <Button key={value} id={`rq-tab-${value}`} role="tab" aria-selected={mobileTab === value} aria-controls={`rq-panel-${value}`} variant={mobileTab === value ? "base" : "outline"} theme={mobileTab === value ? "primary" : "default"} onClick={() => setMobileTab(value)}>{label}</Button>)}</div><div id={`rq-panel-${mobileTab}`} role="tabpanel" aria-labelledby={`rq-tab-${mobileTab}`}>{mobileTab === "composer" ? composer : mobileTab === "results" ? results : historyPanel}</div></div> : <>{composer}{results}{historyPanel}</>}
+    {mobile ? <div className="rq-mobile-views"><div className="rq-mobile-tablist" role="tablist" aria-label="检索质量中心视图">{[["composer","配置"],["results","结果"],["history","历史"]].map(([value,label]) => <Button key={value} id={`rq-tab-${value}`} role="tab" aria-selected={mobileTab === value} aria-controls={mobileTab === value ? `rq-panel-${value}` : undefined} type={mobileTab === value ? "primary" : undefined} onClick={(event: MouseEvent<HTMLButtonElement>) => switchMobileTab(value, event)}>{label}</Button>)}</div><div id={`rq-panel-${mobileTab}`} role="tabpanel" aria-labelledby={`rq-tab-${mobileTab}`}>{mobileTab === "composer" ? composer : mobileTab === "results" ? results : historyPanel}</div></div> : <>{composer}{results}{historyPanel}</>}
   </div></div>
   <ExperimentDetailDrawer visible={Boolean(selectedId)} detail={detail.detail} agreement={detail.agreement} status={detail.status} error={detail.error} actorId={scope.actorId} openerRef={openerRef} conflictRanks={judgments.conflictRanks} savingRanks={judgments.savingRanks} draftFor={judgments.draftFor} setDraft={judgments.setDraft} onSave={(rank, value) => { void judgments.save(rank, value); }} onClose={close}/>
   </div>;

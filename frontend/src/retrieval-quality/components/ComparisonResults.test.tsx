@@ -12,8 +12,11 @@ describe("ComparisonResults", () => {
   it("renders the immutable generation rail and neutral aligned evidence", () => {
     const response: RunResponse = { run_id: "run-1", dataset_serving_generation: 12, items: [item(), item({ id: "exp-2", sequence: 2, name: "策略 B" })] };
     render(<ComparisonResults response={response} />);
+    expect(document.querySelector(".rag-card")).not.toBeNull();
+    expect(document.querySelector(".rag-tag.is-success.is-light")).not.toBeNull();
     expect(screen.getByText("数据集服务代次 G12")).toBeTruthy();
     expect(screen.getByRole("table", { name: "证据排名对比" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "证据排名对比，可横向滚动" })).toBeTruthy();
     expect(screen.getAllByText("bbbbbbbbbbbb…")).toHaveLength(2);
     expect(document.body.textContent).not.toContain("获胜");
     expect(document.body.textContent?.toLowerCase()).not.toContain("winner");
@@ -25,6 +28,14 @@ describe("ComparisonResults", () => {
     render(<ComparisonResults response={response} />);
     expect(screen.getAllByText("检索失败").length).toBeGreaterThan(0);
     expect(screen.getAllByText("没有召回结果").length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("alert")).toHaveLength(2);
+  });
+
+  it("keeps the empty result state explicit before a run exists", () => {
+    render(<ComparisonResults response={null} />);
+
+    expect(screen.getByRole("region", { name: "检索对比结果" })).toBeTruthy();
+    expect(screen.getByText("等待纯检索对比")).toBeTruthy();
   });
 });
 

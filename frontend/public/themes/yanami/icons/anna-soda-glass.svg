@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="240" viewBox="0 0 180 240" role="img" aria-labelledby="title desc">
+  <title id="title">杏菜主题 · 放课后汽水</title>
+  <desc id="desc">水蓝玻璃杯、奶油冰淇淋与金黄色吸管组成的独立主题装饰，含气泡、玻璃高光和杯壁刻线。</desc>
+  <defs>
+    <linearGradient id="glass"><stop stop-color="#e5f7ff" stop-opacity=".9"/><stop offset=".4" stop-color="#b0e3f9" stop-opacity=".3"/><stop offset="1" stop-color="#69b8de" stop-opacity=".6"/></linearGradient>
+    <linearGradient id="soda" x2=".2" y2="1"><stop stop-color="#b4eced"/><stop offset=".5" stop-color="#69c6dc"/><stop offset="1" stop-color="#3d9ec9"/></linearGradient>
+    <linearGradient id="ice" x2=".6" y2="1"><stop stop-color="#fffef6"/><stop offset=".7" stop-color="#fff1d4"/><stop offset="1" stop-color="#e9cc9b"/></linearGradient>
+  </defs>
+  <path d="M107 104L128 25L151 13" fill="none" stroke="#b68b35" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M107 104L128 25L151 13" fill="none" stroke="#f4d479" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M40 84Q89 71 141 84L127 216Q90 229 53 216Z" fill="url(#glass)" stroke="#4389ae" stroke-width="1.6"/>
+  <path d="M48 112Q90 103 133 112L122 211Q91 222 58 211Z" fill="url(#soda)"/>
+  <ellipse cx="90" cy="113" rx="42" ry="9" fill="#bbf0ee"/>
+  <path d="M53 89C43 78 50 67 60 63C60 48 72 42 81 44C92 34 104 41 108 49C122 47 132 59 128 68C142 79 130 94 117 96L66 96Z" fill="url(#ice)" stroke="#c8b786" stroke-width="1.3"/>
+  <path d="M64 65Q69 53 83 56M86 48Q100 44 105 55M111 60Q124 61 122 72M57 80Q61 70 74 74M91 73Q103 64 111 76" fill="none" stroke="#e2c89a" stroke-width="1.2" stroke-linecap="round"/>
+  <ellipse cx="90" cy="85" rx="50" ry="11" fill="none" stroke="#71b0cd" stroke-width="1.3"/>
+  <path d="M47 92L60 210M54 119L63 205M134 92L123 211" fill="none" stroke="#fff" stroke-opacity=".75" stroke-width="3" stroke-linecap="round"/>
+  <path d="M76 125L79 213M104 124L101 214" fill="none" stroke="#2e8bab" stroke-opacity=".24" stroke-width="1.4"/>
+  <g fill="none" stroke="#d7ffff" stroke-width="1.2"><circle cx="74" cy="145" r="4"/><circle cx="110" cy="137" r="3"/><circle cx="94" cy="173" r="4.5"/><circle cx="72" cy="193" r="2.5"/><circle cx="115" cy="191" r="3.5"/><circle cx="89" cy="129" r="2"/><circle cx="65" cy="167" r="1.6"/></g>
+  <path d="M61 214Q90 223 122 214" fill="none" stroke="#edfaff" stroke-width="2"/>
+</svg>

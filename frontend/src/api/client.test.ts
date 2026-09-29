@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BackendRunEvent, QueryResponse } from "../types/rag";
-import { request, streamAnswer } from "./client";
+import { graphSearch, graphSubgraph, request, streamAnswer } from "./client";
 
 const response: QueryResponse = {
   result: {
@@ -154,4 +154,28 @@ it("returns undefined for an authenticated 204 response instead of parsing an em
       method: "DELETE",
     }),
   ).resolves.toBeUndefined();
+});
+
+it("sends the workspace tenant header for graph visualization reads", async () => {
+  vi.stubGlobal("localStorage", {
+    getItem: vi.fn(() => null),
+    setItem: vi.fn(),
+    removeItem: vi.fn(),
+  });
+  const fetchMock = vi.fn(
+    async () =>
+      new Response(JSON.stringify({ entities: [], relations: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  await graphSearch("query");
+  await graphSubgraph({ entity_ids: ["entity-a"] });
+
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  for (const [, init] of fetchMock.mock.calls as unknown as Array<[string, RequestInit?]>) {
+    expect(init?.headers).toMatchObject({ "X-RAG4C-Tenant": "default" });
+  }
 });

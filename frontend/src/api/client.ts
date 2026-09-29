@@ -51,7 +51,10 @@ import type {
   DeadLetterListResponse,
   DeadLetterRequeueResponse,
 } from "../consistency/consistencyModel";
-import { readKnowledgeActorToken } from "../knowledge/workspaceScope";
+import {
+  readKnowledgeActorToken,
+  resolveKnowledgeWorkspaceScope,
+} from "../knowledge/workspaceScope";
 
 /** 探测桥服务健康状态；失败抛错（调用方决定是否回退 mock） */
 export async function fetchHealth(signal?: AbortSignal): Promise<HealthInfo> {
@@ -98,8 +101,13 @@ export async function graphSearch(
   topK = 8,
   signal?: AbortSignal,
 ): Promise<GraphSubgraph> {
+  const actorToken = readKnowledgeActorToken();
+  const scope = resolveKnowledgeWorkspaceScope({
+    actorToken,
+  });
   return request<GraphSubgraph>("/api/graph/search", {
     method: "POST",
+    headers: knowledgeAuthHeaders(scope.tenantId, actorToken),
     body: JSON.stringify({
       query,
       entity_top_k: topK,
@@ -119,12 +127,17 @@ export async function graphSubgraph(
   },
   signal?: AbortSignal,
 ): Promise<GraphSubgraph> {
+  const actorToken = readKnowledgeActorToken();
+  const scope = resolveKnowledgeWorkspaceScope({
+    actorToken,
+  });
   const qs = new URLSearchParams();
   if (params.entity_ids?.length) qs.set("entity_ids", params.entity_ids.join(","));
   if (params.relation_ids?.length) qs.set("relation_ids", params.relation_ids.join(","));
   qs.set("degree", String(params.degree ?? 1));
   return request<GraphSubgraph>("/api/graph/subgraph?" + qs.toString(), {
     method: "GET",
+    headers: knowledgeAuthHeaders(scope.tenantId, actorToken),
     timeoutMs: 20_000,
     signal,
   });

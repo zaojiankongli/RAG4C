@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480" fill="none" role="img" aria-labelledby="ib-title ib-desc">
+  <title id="ib-title">Pearl ribbon bow</title>
+  <desc id="ib-desc">A softly folded white satin bow with indigo undersides, rose and cyan reflected edging, and two curved swallowtail ribbons. Transparent background.</desc>
+  <defs>
+    <linearGradient id="ib-pearl" x1="190" y1="89" x2="313" y2="291" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fffefa"/><stop offset=".48" stop-color="#f9fcff"/><stop offset="1" stop-color="#ced6ee"/>
+    </linearGradient>
+    <linearGradient id="ib-tail" x1="211" y1="238" x2="375" y2="424" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#d3def1"/><stop offset=".32" stop-color="#fffdfa"/><stop offset=".72" stop-color="#f5f5ff"/><stop offset="1" stop-color="#dcbfd9"/>
+    </linearGradient>
+    <linearGradient id="ib-edge" x1="89" y1="120" x2="534" y2="234" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#a7e5e9"/><stop offset=".34" stop-color="#dba9cf"/><stop offset=".61" stop-color="#536da8"/><stop offset=".8" stop-color="#beeef0"/><stop offset="1" stop-color="#edbedb"/>
+    </linearGradient>
+  </defs>
+  <g stroke="#46557d" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M294 210C281 251 269 294 236 334C208 368 164 384 116 391L147 354L125 330C168 330 202 314 222 283C240 256 250 222 257 198Z" fill="url(#ib-tail)"/>
+    <path d="M265 216C252 264 244 298 216 329C196 351 163 371 116 391C164 384 208 368 236 334C269 294 281 251 294 210Z" fill="#c9bfdc" stroke="none"/>
+    <path d="M270 221C257 274 239 319 204 345C178 365 150 377 130 382" stroke="#e9accf" stroke-width="5"/>
+    <path d="M254 218C246 252 235 287 216 309C193 337 159 344 142 345" stroke="#bde9ee" stroke-width="4"/>
+    <path d="M249 239C236 274 226 301 206 320C188 337 173 342 157 344" stroke="#fffefa" stroke-width="3"/>
+    <path d="M327 208C353 222 362 259 371 291C388 348 425 374 479 389L443 400L449 432C390 418 351 383 333 336C315 290 302 259 302 230Z" fill="url(#ib-tail)"/>
+    <path d="M327 225C344 277 350 325 376 360C398 390 422 408 449 432C390 418 351 383 333 336C315 290 302 259 302 230Z" fill="#8a91ba" stroke="none"/>
+    <path d="M328 241C345 304 349 328 372 361C394 393 419 411 439 422" stroke="#abcfdc" stroke-width="7"/>
+    <path d="M350 275C365 331 390 363 430 382C443 388 454 392 461 393" stroke="#efc1d8" stroke-width="5"/>
+    <path d="M354 291C370 339 394 364 430 379" stroke="#fffefa" stroke-width="3.3"/>
+    <path d="M290 197C261 150 221 105 168 87C143 78 118 78 96 94C70 113 63 144 75 174C91 215 134 254 181 260C223 266 257 231 290 221Z" fill="url(#ib-pearl)"/>
+    <path d="M82 154C91 178 115 190 146 194C190 200 224 191 269 210C233 207 211 230 176 232C137 234 100 206 82 177Z" fill="#58658f" stroke="none"/>
+    <path d="M94 170C133 208 192 185 241 204C212 202 187 214 162 215C133 215 111 203 94 185Z" fill="#7f8db6" stroke="none"/>
+    <path d="M281 208C247 194 216 219 181 225C139 232 102 211 80 169C89 207 132 252 179 256C221 260 249 230 281 218Z" fill="#f0f7fa" stroke="none"/>
+    <path d="M99 97C141 85 179 109 212 140C234 160 251 182 272 196C235 177 219 155 190 136C155 112 126 102 99 113Z" fill="#fffefa" stroke="none"/>
+    <path d="M80 168C103 211 138 232 181 225C220 219 249 193 282 208" stroke="url(#ib-edge)" stroke-width="6"/>
+    <path d="M86 171C111 210 140 224 179 220C219 216 252 193 279 204" stroke="#fbf7fd" stroke-width="2"/>
+    <path d="M117 111C161 117 195 153 223 176" stroke="#d4deee" stroke-width="1.4"/>
+    <path d="M155 92C183 99 207 117 226 137" stroke="#e5b4d4" stroke-width="2.6"/>
+    <path d="M334 199C372 151 422 104 474 87C504 77 535 90 550 116C570 150 557 191 531 217C505 244 467 257 433 249C395 240 368 218 334 218Z" fill="url(#ib-pearl)"/>
+    <path d="M547 132C536 164 500 185 466 190C433 195 394 193 356 210C399 208 420 233 455 234C497 237 534 213 547 180Z" fill="#52618d" stroke="none"/>
+    <path d="M533 163C510 190 478 199 450 202C421 205 399 200 377 210C418 204 428 221 461 220C491 219 516 204 533 185Z" fill="#8e87b5" stroke="none"/>
+    <path d="M543 161C521 201 486 224 451 221C416 219 388 194 348 209L342 218C380 217 401 241 434 249C474 259 522 233 540 202C550 185 554 169 553 153Z" fill="#ecf5fc" stroke="none"/>
+    <path d="M358 192C391 150 439 107 478 98C496 94 514 97 524 108C488 99 463 120 429 145C405 162 383 182 358 192Z" fill="#fffefa" stroke="none"/>
+    <path d="M546 160C524 199 489 224 451 221C415 218 384 195 348 209" stroke="url(#ib-edge)" stroke-width="6"/>
+    <path d="M541 162C519 198 486 219 451 216C418 214 387 191 352 204" stroke="#fff9fd" stroke-width="2"/>
+    <path d="M517 110C473 111 435 139 407 165" stroke="#d2dcec" stroke-width="1.4"/>
+    <path d="M487 89C511 86 531 102 539 118" stroke="#b8e9eb" stroke-width="3"/>
+    <path d="M282 179C298 174 319 180 335 180C344 187 347 200 343 217C340 232 333 245 325 250C310 246 295 246 282 249C272 239 269 224 272 208C274 194 277 185 282 179Z" fill="#fafcfb"/>
+    <path d="M282 179C275 200 279 224 288 236C300 247 315 239 330 240L325 250C310 246 295 246 282 249C272 239 269 224 272 208C274 194 277 185 282 179Z" fill="#bbb9d7" stroke="none"/>
+    <path d="M329 185C332 201 330 220 323 231C318 237 309 237 302 238C321 242 330 234 334 222C339 207 339 194 334 185Z" fill="#d2e9ed" stroke="none"/>
+    <path d="M286 184C294 181 313 186 324 185" stroke="#fffefa" stroke-width="3"/>
+    <path d="M279 205C276 221 282 235 287 240" stroke="#e7b2d0" stroke-width="2.5"/>
+    <path d="M292 254C287 272 280 287 271 301M335 254C338 268 339 280 340 290" stroke="#65799f" stroke-width="1.5"/>
+  </g>
+</svg>

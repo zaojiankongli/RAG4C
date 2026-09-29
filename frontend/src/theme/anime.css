@@ -1,306 +1,200 @@
-/* ============================================================
- * 八奈见杏菜（Anko）二次元动漫主题
- * 色板灵感：樱花粉 / 珊瑚橙 / 奶白（《败犬女主太多了！》Anko 印象色）
- * 通过 data-theme="anime" 启用；与既有 light/dark 并存，可扩展。
- *
- * 语义 token 一律取 styles.css 的 `html[data-theme="anime"]` 块（单一真源）。
- * 这里曾有一份 32 个 `--color-anko-*` 的 Tailwind @theme 色板，全仓零引用
- * （既没有 var() 使用点，也没有 anko-* 工具类），却会被 Tailwind 原样注入 :root，
- * 且其中 #ff7fa5 / #f06292 正是压白底只有 2.4~3.1:1 的那批粉——留着就是等人捡起来用。
- * ============================================================ */
+/* 八奈见：海蓝、虹彩与白色缎带。业务语义色来自 styles.css。
+   只引用已核验的 WeKnora 生产素材，来源见 public/themes/yanami/README.md。 */
 @import "tailwindcss";
 
-/* 二次元主题启用开关：html[data-theme="anime"] 时挂载覆盖类 */
-[data-theme="anime"] body {
-  background: linear-gradient(160deg, #fff0f4 0%, #fff9fb 40%, #fff3e8 100%);
-  color: #3d2c35;
+.brand-yanami-icon,
+.themed-nav-icon-yanami,
+.yanami-welcome-art {
+  display: none;
 }
-
-[data-theme="anime"] ::selection {
-  background: #ff7fa5;
-  color: #fff;
+.themed-nav-icon,
+.themed-nav-icon-default {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
 }
-
-/* ============================================================
- * 二次元主题覆盖：侧边栏 / 菜单 / 品牌区 / 卡片圆润化
- * （叠加在既有 TDesign 布局之上，不改变 DOM 结构）
- * 注意：styles.css 的 `:root:not([data-theme="dark"]) .app-sider` 用
- * !important + 高特异性压默认样式，这里必须 `html[data-theme="anime"]`
- * 前缀 + !important 才能赢（特异性相同则后者加载顺序赢，anime.css 最后）。
- * ============================================================ */
-html[data-theme="anime"] body .app-sider {
-  background: linear-gradient(180deg, #fff0f4 0%, #fff9fb 100%) !important;
-  border-right: 1px solid #ffe0e8 !important;
+html[data-theme="anime"] .app-sider.app-sider {
+  background: var(--sider-bg-grad) !important;
+  border-right-color: var(--sider-line);
 }
-
-html[data-theme="anime"] body .app-sider .sider-brand {
-  padding: 18px 16px 12px;
-}
-
-html[data-theme="anime"] body .app-sider .brand-logo {
+html[data-theme="anime"] .brand-logo {
   width: 40px;
   height: 40px;
+  background: var(--color-primary-bg-strong);
+  border: 1px solid var(--color-primary-border);
   border-radius: 14px;
-  background: linear-gradient(135deg, #ff9e7d 0%, #ff7fa5 100%);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 12px rgba(255, 127, 165, 0.35);
+  box-shadow: none;
 }
-
-html[data-theme="anime"] body .app-sider .brand-title {
-  background: linear-gradient(90deg, #ff7fa5, #ff9e7d);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  font-weight: 800;
-  letter-spacing: 0.5px;
+html[data-theme="anime"] .brand-default-icon {
+  display: none;
 }
-
-html[data-theme="anime"] body .app-sider .brand-sub {
-  color: #6b5560;
-  font-size: 12px;
+html[data-theme="anime"] .brand-yanami-icon {
+  display: block;
+  width: 38px;
+  height: 34px;
+  background: url("/themes/yanami/materials/iridescent-bow.svg") center / contain no-repeat;
 }
-
-html[data-theme="anime"] body .app-sider .t-menu {
-  background: transparent;
-  border: none;
-  padding: 8px 10px;
+html[data-theme="anime"] .brand-title {
+  color: var(--color-text);
 }
-
-html[data-theme="anime"] body .app-sider .t-menu__item {
-  border-radius: 12px;
-  margin: 2px 0;
-  transition: all 0.2s ease;
-  color: #5c4551 !important; /* 提高菜单文字对比度（原浅色过淡不可读） */
-  font-weight: 500;
-}
-
-html[data-theme="anime"] body .app-sider .t-menu__item .t-menu__item-link,
-html[data-theme="anime"] body .app-sider .t-menu__item-inner {
-  color: #5c4551 !important;
-}
-
-html[data-theme="anime"] body .app-sider .t-menu__item:hover {
-  background: #ffe4ec;
-}
-
-html[data-theme="anime"] body .app-sider .t-menu__item.t-is-active {
-  background: linear-gradient(90deg, #ff9e7d 0%, #ff7fa5 100%);
-  color: #fff;
-  box-shadow: 0 4px 12px rgba(255, 127, 165, 0.35);
-}
-
-html[data-theme="anime"] body .app-sider .t-menu__group-title {
-  /* 颜色不在这里定：styles.css 的 `html[data-theme="anime"] .app-sider
-     .t-menu__group-title.t-menu__group-title`（重复类抬到 (0,4,1) 且带 !important）
-     永远赢过本条的 (0,3,2)，原先写在这里的 `color: #7a5f6c` 是一份永不生效的意图。
-     2026-09-21 裁定保留生效值 #c9a8b5，故这里只留排版属性。 */
+html[data-theme="anime"] .brand-sub {
+  color: var(--color-text-secondary);
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  padding: 12px 12px 4px;
 }
-
-/* 主内容区：柔化背景 + 圆润卡片 */
-[data-theme="anime"] .app-content,
-[data-theme="anime"] main {
-  background: linear-gradient(160deg, #fff0f4 0%, #fff9fb 45%, #fff3e8 100%);
+/* Keep standard icons when there is no verified production equivalent. */
+html[data-theme="anime"]
+  .themed-nav-icon:has(
+    .yanami-icon-agent,
+    .yanami-icon-knowledge,
+    .yanami-icon-organization,
+    .yanami-icon-search
+  )
+  .themed-nav-icon-default {
+  display: none;
 }
-
-[data-theme="anime"] .t-card {
-  border-radius: 16px;
-  border-color: #ffe0e8;
-  box-shadow: 0 4px 16px rgba(255, 127, 165, 0.08);
+html[data-theme="anime"]
+  :is(.yanami-icon-agent, .yanami-icon-knowledge, .yanami-icon-organization, .yanami-icon-search) {
+  display: block;
+  width: 20px;
+  height: 20px;
+  background-position: center;
+  background-size: contain;
+  background-repeat: no-repeat;
 }
-
-/* 主行动按钮：粉橙渐变 */
-[data-theme="anime"] .t-button--theme-primary {
-  background: linear-gradient(90deg, #ff9e7d 0%, #ff7fa5 100%);
-  border-color: transparent;
-  box-shadow: 0 4px 12px rgba(255, 127, 165, 0.3);
+html[data-theme="anime"] .yanami-icon-agent {
+  background-image: url("/themes/yanami/navigation/agent.svg");
 }
-
-[data-theme="anime"] .t-button--theme-primary:hover {
-  background: linear-gradient(90deg, #ff8d66 0%, #f06292 100%);
-  border-color: transparent;
+html[data-theme="anime"] .yanami-icon-knowledge {
+  background-image: url("/themes/yanami/navigation/zhishiku.svg");
 }
-
-/* ============================================================
- * 问答页二次元覆盖（QueryPage：输入框 / 气泡 / 欢迎区）
- * ============================================================ */
-[data-theme="anime"] .query-page .chat-input-bar {
-  background: linear-gradient(180deg, rgba(255, 244, 247, 0.9), rgba(255, 249, 251, 0.95));
-  border: 1px solid #ffe0e8;
-  border-radius: 24px;
-  box-shadow: 0 8px 32px rgba(255, 127, 165, 0.15);
-  padding: 14px;
+html[data-theme="anime"] .yanami-icon-organization {
+  background-image: url("/themes/yanami/navigation/organization.svg");
 }
-
-[data-theme="anime"] .query-page .input-box {
-  background: #fff;
-  border: 2px solid #ffe0e8;
-  border-radius: 18px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+html[data-theme="anime"] .yanami-icon-search {
+  background-image: url("/themes/yanami/navigation/search.svg");
 }
-
-[data-theme="anime"] .query-page .input-box:focus-within {
-  border-color: #ff7fa5;
-  box-shadow: 0 0 0 4px rgba(255, 127, 165, 0.15);
+html[data-theme="anime"] [aria-current="page"] .yanami-icon-agent,
+html[data-theme="anime"] [aria-pressed="true"] .yanami-icon-agent {
+  background-image: url("/themes/yanami/navigation/agent-green.svg");
+  filter: hue-rotate(53deg);
 }
-
-[data-theme="anime"] .query-page .send-btn {
-  background: linear-gradient(90deg, #ff9e7d, #ff7fa5);
-  border-color: transparent;
+html[data-theme="anime"] [aria-current="page"] .yanami-icon-knowledge,
+html[data-theme="anime"] [aria-pressed="true"] .yanami-icon-knowledge {
+  background-image: url("/themes/yanami/navigation/zhishiku-green.svg");
+  filter: hue-rotate(53deg);
+}
+html[data-theme="anime"] [aria-current="page"] .yanami-icon-organization {
+  background-image: url("/themes/yanami/navigation/organization-green.svg");
+  filter: hue-rotate(53deg);
+}
+html[data-theme="anime"] .t-card {
+  border-color: var(--color-border);
   border-radius: 14px;
-  box-shadow: 0 4px 12px rgba(255, 127, 165, 0.3);
+  box-shadow: var(--shadow-sm);
 }
-
-[data-theme="anime"] .query-page .send-btn:hover {
-  background: linear-gradient(90deg, #ff8d66, #f06292);
-  border-color: transparent;
+html[data-theme="anime"] .t-button--theme-primary.t-button--variant-base {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
 }
-
-[data-theme="anime"] .bubble-user {
-  background: linear-gradient(135deg, #ff9e7d, #ff7fa5);
-  border-radius: 18px 18px 6px 18px;
-  color: #fff;
-  box-shadow: 0 4px 12px rgba(255, 127, 165, 0.25);
+html[data-theme="anime"] .t-button--theme-primary.t-button--variant-base:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
 }
-
-[data-theme="anime"] .bubble-assistant {
-  background: #fff;
-  border: 1px solid #ffe0e8;
-  border-radius: 18px 18px 18px 6px;
-  box-shadow: 0 4px 16px rgba(255, 127, 165, 0.1);
+html[data-theme="anime"] .sider-actions .rag-button.is-text {
+  color: var(--sider-text-strong);
 }
-
-[data-theme="anime"] .query-page .welcome-card {
-  background: #fff;
-  border: 1px solid #ffe0e8;
-  border-radius: 18px;
-  box-shadow: 0 4px 16px rgba(255, 127, 165, 0.1);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+html[data-theme="anime"] .query-welcome {
+  max-width: 940px;
 }
-
-[data-theme="anime"] .query-page .welcome-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(255, 127, 165, 0.18);
+html[data-theme="anime"] .query-welcome-hero {
+  position: relative;
+  min-height: 250px;
 }
-
-[data-theme="anime"] .query-page .sample-chip {
-  background: #fff0f4;
-  border: 1px solid #ffe0e8;
-  border-radius: 9999px;
-  color: #b03058;
-  transition: all 0.2s ease;
+html[data-theme="anime"] .query-welcome-intro {
+  position: relative;
+  z-index: 1;
 }
-
-[data-theme="anime"] .query-page .sample-chip:hover {
-  background: linear-gradient(90deg, #ff9e7d, #ff7fa5);
-  color: #fff;
-  border-color: transparent;
-  box-shadow: 0 4px 12px rgba(255, 127, 165, 0.3);
+html[data-theme="anime"] .query-welcome-intro h2 {
+  max-width: 15em;
+  font-weight: 650;
 }
-
-[data-theme="anime"] .query-page .welcome-mark {
-  background: linear-gradient(135deg, #ff9e7d, #ff7fa5);
-  border-radius: 22px;
-  color: #fff;
-  box-shadow: 0 8px 24px rgba(255, 127, 165, 0.3);
+html[data-theme="anime"] .query-welcome-theme-note {
+  display: block;
+  margin: 14px 0 0;
+  color: var(--color-primary-strong);
+  font-size: 12px;
+  letter-spacing: 0.04em;
 }
-
-/* ============================================================
- * 空态 / 错误态美化（PageState 统一三态容器）
- * ============================================================ */
-[data-theme="anime"] .page-state {
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px dashed #ffd0dc;
-  border-radius: 20px;
-  padding: 36px 24px;
-  margin: 12px;
+html[data-theme="anime"] .query-welcome-eyebrow-mark {
+  width: 28px;
+  height: 24px;
+  background: url("/themes/yanami/materials/iridescent-bow.svg") center / contain no-repeat;
 }
-
-[data-theme="anime"] .page-state .page-state-icon {
-  width: 56px;
-  height: 56px;
-  margin: 0 auto 12px;
-  border-radius: 18px;
-  background: linear-gradient(135deg, #ffe4ec 0%, #fff0f4 100%);
-  color: #ff7fa5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 26px;
+/* The source project renders this production PNG, not a preview or an SVG master. */
+html[data-theme="anime"] .yanami-welcome-art {
+  display: block;
+  position: relative;
+  align-self: stretch;
+  flex: 0 0 240px;
+  min-height: 250px;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: 46% 46% 18px 18px;
+  background: radial-gradient(ellipse at 50% 70%, var(--color-primary-bg-strong), transparent 70%);
 }
-
-[data-theme="anime"] .page-state.is-error .page-state-icon {
-  background: linear-gradient(135deg, #ffe0e8 0%, #fff0f4 100%);
-  color: #ff5c7a;
+html[data-theme="anime"] .yanami-art-character {
+  position: absolute;
+  inset: 0 12px 18px;
+  background: url("/themes/yanami/materials/iridescent-character.png") center top / contain
+    no-repeat;
 }
-
-[data-theme="anime"] .page-state .page-state-title {
-  color: #3d2c35;
-  font-weight: 600;
-  font-size: 15px;
+html[data-theme="anime"] .yanami-art-caption {
+  position: absolute;
+  inset: auto 0 0;
+  text-align: center;
+  color: var(--color-primary-strong);
+  font-size: 11px;
+  letter-spacing: 0.15em;
 }
-
-[data-theme="anime"] .page-state .page-state-desc {
-  color: #6b5560;
+html[data-theme="anime"] .query-evidence-panel {
+  border-color: var(--color-primary-border);
 }
-
-[data-theme="anime"] .page-state .page-state-extra .t-button--theme-primary {
-  border-radius: 9999px;
+html[data-theme="anime"] .query-welcome-prompt:hover {
+  background: var(--color-primary-bg);
 }
-
-/* ============================================================
- * 控件全局粉橙化：按钮 / 标签 / 链接（解决"蓝色控件与粉橙主题冲突"）
- * ============================================================ */
-[data-theme="anime"] .t-button--variant-base.t-button--theme-primary,
-[data-theme="anime"] .t-button--variant-solid.t-button--theme-primary {
-  background: linear-gradient(90deg, #ff9e7d 0%, #ff7fa5 100%) !important;
-  border-color: transparent !important;
-  color: #fff !important;
-  box-shadow: 0 4px 12px rgba(255, 127, 165, 0.3) !important;
+html[data-theme="anime"] .input-box {
+  border-color: var(--color-primary-border);
 }
-
-[data-theme="anime"] .t-button--variant-base.t-button--theme-primary:hover,
-[data-theme="anime"] .t-button--variant-solid.t-button--theme-primary:hover {
-  background: linear-gradient(90deg, #ff8d66 0%, #f06292 100%) !important;
-  border-color: transparent !important;
+html[data-theme="anime"] .input-box:focus-within {
+  border-color: var(--color-primary);
 }
-
-[data-theme="anime"] .t-tag--theme-primary,
-[data-theme="anime"] .t-tag--theme-success {
-  background: #ffe4ec !important;
-  border-color: #ffc2d4 !important;
-  color: #b03058 !important;
+@media (max-width: 1100px) {
+  html[data-theme="anime"] .yanami-welcome-art {
+    flex-basis: 180px;
+    min-height: 220px;
+  }
+  html[data-theme="anime"] .query-welcome-hero {
+    min-height: 220px;
+    gap: 16px;
+  }
 }
-
-[data-theme="anime"] .t-tag--theme-warning {
-  background: #fff0e8 !important;
-  border-color: #ffd6b8 !important;
-  color: #e07b39 !important;
+@media (max-width: 600px) {
+  html[data-theme="anime"] .query-welcome-hero {
+    min-height: 0;
+  }
+  html[data-theme="anime"] .yanami-welcome-art {
+    display: none;
+  }
+  html[data-theme="anime"] .query-welcome-intro h2 {
+    font-size: 27px;
+  }
+  html[data-theme="anime"] .query-welcome-theme-note {
+    font-size: 11px;
+  }
 }
-
-[data-theme="anime"] .t-tag--theme-danger {
-  background: #ffe0e8 !important;
-  border-color: #ffb8c8 !important;
-  color: #ff5c7a !important;
-}
-
-[data-theme="anime"] a.t-link,
-[data-theme="anime"] .t-link {
-  color: #e05a80 !important;
-}
-
-/* anime 是 13 个含动效声明的 CSS 里唯一没有 reduced-motion 兜底的一个
-   （与 findings §14 同源：第三主题总是最后被照顾到）。
-   这里**不**照抄 enterprise-admin 那种 `.page * { transform: none }` 的写法：
-   全站 blanket 取消 transform 会误伤用 translate 定位的元素。
-   动效时长按 house 模式归零，位移只中和真正会动的那一处 welcome-card:hover。
-   本文件在 main.tsx 里最后加载，故同特异性下这条覆盖能赢上面的 hover 规则。 */
 @media (prefers-reduced-motion: reduce) {
   [data-theme="anime"] *,
   [data-theme="anime"] *::before,
@@ -308,9 +202,5 @@ html[data-theme="anime"] body .app-sider .t-menu__group-title {
     scroll-behavior: auto !important;
     transition: none !important;
     animation-duration: 0.01ms !important;
-  }
-
-  [data-theme="anime"] .query-page .welcome-card:hover {
-    transform: none !important;
   }
 }

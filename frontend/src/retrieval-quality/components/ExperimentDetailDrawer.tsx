@@ -1,5 +1,4 @@
-import { Alert, Button, Tag } from "tdesign-react";
-import { Drawer } from "../../ui";
+import { Alert, Button, Drawer, Tag } from "../../ui";
 import type { RefObject } from "react";
 import type { Agreement, ExperimentDetail } from "../model/contracts";
 import { projectExperiment } from "../model/projection";
@@ -12,8 +11,8 @@ interface Props { visible: boolean; detail: ExperimentDetail | null; agreement: 
 export default function ExperimentDetailDrawer(props: Props) {
   const view = props.detail ? projectExperiment(props.detail) : null;
   const close = () => { props.onClose(); props.openerRef.current?.focus(); };
-  return <Drawer className="rq-detail-drawer" open={props.visible} title="检索实验详情" width="min(880px, 96vw)" destroyOnClose={false} onClose={close}>
-    <div className="rq-drawer-actions"><Button variant="outline" aria-label="关闭实验详情" onClick={close}>关闭</Button></div>
+  return <Drawer className="rq-detail-drawer" open={props.visible} title="检索实验详情" width="min(880px, 96vw)" destroyOnClose={false} footer={false} closeBtn={false} onClose={close}>
+    <div className="rq-drawer-actions"><Button aria-label="关闭实验详情" onClick={close}>关闭</Button></div>
     {props.status === "loading" ? <div role="status">正在读取不可变实验快照…</div> : null}
     {props.error ? <Alert theme="error" title="实验详情读取不完整" message={props.error.message} /> : null}
     {props.detail && view ? <div className="rq-detail-content">
