@@ -169,8 +169,8 @@ _SQL_RE = re.compile(
     r"(?is)(?:\bselect\s+(?:distinct\s+)?[\w*\"`'([]|\binsert\s+(?:into\s+)?[\w\"`'(]|"
     r"\bupdate\s+[\w\"`.]+\s+set\b|\bdelete\s+from\b|\bdrop\s+(?:table|database|schema|index|view|trigger|procedure|function)\b|"
     r"\balter\s+(?:table|database|schema|index|view|trigger|procedure|function)\b|\bcreate\s+(?:table|database|schema|index|view|trigger|procedure|function)\b|"
-    r"\bgrant\s+\w+\s+on\b|\brevoke\s+\w+\s+on\b|\bexec(?:ute)?\s+\S+|\bunion\s+(?:all\s+)?select\b|"
-    r"\b(?:select|insert|update|delete|drop|alter|create|grant|revoke|exec(?:ute)?|union)\s*$)"
+    r"\bgrant\s+\w+\s+on\b|\brevoke\s+\w+\s+on\b|\bex(?:ec|ecute)\s+\S+|\bunion\s+(?:all\s+)?select\b|"
+    r"\b(?:select|insert|update|delete|drop|alter|create|grant|revoke|ex(?:ec|ecute)|union)\s*$)"
 )
 _UNSAFE_KEY_PARTS = {
     "query",
