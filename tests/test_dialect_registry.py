@@ -323,3 +323,111 @@ def test_raw_sql_never_compares_a_boolean_column_to_an_integer():
                 if in_boolean_table and not ambiguous:
                     offenders.append(f"{path.name}: {sorted(tables)} 上 {column} 与整数比较")
     assert offenders == []
+
+
+# ── 第 5 条通道：迁移 CheckConstraint 的 DDL 字面量 ─────────────────────────────
+# 「布尔值写成整数」按值进入 DB 的通道清点：① DDL 默认值 ② DDL 渲染 ③ 裸 SQL INSERT
+# ④ 裸 SQL 比较，这条补的是 ⑤ 迁移里 sa.CheckConstraint("x IN (0,1)") 的 DDL 字面量。
+# 它与 ④ 的差别：CHECK 文本通常不带表名，列类型要靠 ORM 元数据或同文件 sa.Column
+# 声明来判；两者都够不到的，必须显式进 allowlist，不许静默放行。
+_CHECK_IN_INT_RE = re.compile(
+    r"(?i)\b(?P<col>\w+)\s+IN\s*\(\s*(?P<nums>\d+(?:\s*,\s*\d+)*)\s*\)"
+)
+# 迁移本地声明的整数字面量类型（与 ORM 的 Boolean 判定互补）。
+_INTEGER_TYPE_MARKERS = ("INTEGER", "TINYINT", "SMALLINT", "BIGINT", "NUMERIC", "DECIMAL", "FLOAT")
+# 逃生口：确认列确实是整数（或等价合法）后才允许加条目，格式 "<迁移文件名>::<列名>"。
+_INTEGER_IN_CHECK_ALLOWLIST: set[str] = set()
+
+
+def _migration_declared_column_types() -> dict[str, dict[str, str]]:
+    """各迁移文件里 sa.Column("name", <type>) 的类型文本（ast.unparse），按文件分组。"""
+    out: dict[str, dict[str, str]] = {}
+    for path in (REPO_ROOT / "catalog_migrations" / "versions").glob("*.py"):
+        per_file: dict[str, str] = {}
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute) and func.attr == "Column"):
+                continue
+            if (
+                node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+                and len(node.args) > 1
+            ):
+                per_file[node.args[0].value.casefold()] = ast.unparse(node.args[1])
+        out[path.name] = per_file
+    return out
+
+
+def test_migration_check_constraints_on_boolean_columns_never_use_integer_in_lists():
+    """迁移 CheckConstraint 的 `col IN (0,1)` 只许出现在确证为整数的列上。
+
+    布尔列写 `IN (0,1)` 会把 PG 上的真布尔列卡死（DatatypeMismatch 同族缺陷：
+    PG 要求 true/false）。类型判定顺序：ORM 元数据 → 同文件 sa.Column 声明 →
+    allowlist（显式记录核对结论）；三者都够不到就算 offender，宁可多问一句。
+    现状锚点：0038_storage_backends 的 `is_deleted IN (0,1)` 是 sa.Integer 列，
+    属合法形态，本测试必须放行它。
+    """
+    boolean_columns = _boolean_columns_by_table()
+    non_boolean_columns = _non_boolean_columns_by_table()
+    declared = _migration_declared_column_types()
+
+    offenders: list[str] = []
+    for path in sorted((REPO_ROOT / "catalog_migrations" / "versions").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        per_file_columns = declared.get(path.name, {})
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            func_name = func.attr if isinstance(func, ast.Attribute) else (
+                func.id if isinstance(func, ast.Name) else ""
+            )
+            if func_name != "CheckConstraint":
+                continue
+            if (
+                not node.args
+                or not isinstance(node.args[0], ast.Constant)
+                or not isinstance(node.args[0].value, str)
+            ):
+                # 动态构造的 CHECK 走 core.dialects.boolean_check_sql 那条声明，不在本栅栏射程
+                continue
+            text = node.args[0].value
+            for match in _CHECK_IN_INT_RE.finditer(text):
+                column = match.group("col").casefold()
+                nums = {item.strip() for item in match.group("nums").split(",")}
+                if nums != {"0", "1"}:
+                    offenders.append(
+                        f"{path.name}: CHECK {match.group(0)!r} 不是 0/1 二值，请先确认列类型"
+                    )
+                    continue
+                in_orm_boolean = any(column in cols for cols in boolean_columns.values())
+                in_orm_non_boolean = any(column in cols for cols in non_boolean_columns.values())
+                declared_type = per_file_columns.get(column)
+                declared_is_boolean = declared_type is not None and "Boolean" in declared_type
+                declared_is_integer = declared_type is not None and any(
+                    marker in declared_type.upper() for marker in _INTEGER_TYPE_MARKERS
+                )
+                if in_orm_boolean and not in_orm_non_boolean:
+                    offenders.append(
+                        f"{path.name}: 布尔列 {column} 的 CHECK 用了 IN ({match.group('nums')})，"
+                        "PG 上会要求 true/false——改用 boolean_check_sql 或列上判空"
+                    )
+                    continue
+                if declared_is_boolean:
+                    offenders.append(
+                        f"{path.name}: 迁移声明 sa.Column({column!r}, {declared_type}) 是布尔列，"
+                        "CHECK 却用 IN (0,1)——改用 boolean_check_sql"
+                    )
+                    continue
+                if in_orm_non_boolean or declared_is_integer:
+                    continue
+                if f"{path.name}::{column}" not in _INTEGER_IN_CHECK_ALLOWLIST:
+                    offenders.append(
+                        f"{path.name}: {column} 的 IN (0,1) CHECK 无法判定列类型"
+                        "（不在 ORM、同文件无声明）——核对后显式加入 _INTEGER_IN_CHECK_ALLOWLIST"
+                    )
+    assert offenders == []
