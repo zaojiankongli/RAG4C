@@ -35,6 +35,10 @@ server = ["fastapi>=0.115", "uvicorn[standard]>=0.32"]
 # 返回 None/False，不装这个包服务照常起、照常答，只是缓存退回进程内 LRU、
 # 排队退回 asyncio.Semaphore。把它列为必需依赖等于否认这套降级设计。
 redis = ["redis>=5,<7"]
+# 目录库驱动：PostgreSQL（推荐）/ MySQL。两个都是可选依赖——不装也能跑 SQLite，
+# 装哪个取决于 CATALOG_DB_URL 的方言。psycopg2-binary 免编译，Windows 上也能装。
+postgres = ["psycopg2-binary>=2.9,<3"]
+mysql = ["pymysql>=1.1,<2"]
 dev = ["httpx2>=0.28", "pytest>=8", "pytest-xdist>=3.6,<4", "ruff>=0.6"]
 
 [tool.setuptools]

@@ -42,6 +42,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from core.dialects import boolean_check_sql
 
 
 class Base(DeclarativeBase):
@@ -6477,10 +6478,24 @@ class SourceSchedule(Base):
             "interval_seconds >= 300 AND interval_seconds <= 604800",
             name="ck_source_schedules_interval",
         ),
+        # 布尔 CHECK 的方言差异：PG 用 true/false，MySQL/MariaDB/SQLite 用 1/0
+        # （同一份语义，写法必须按引擎来，见 core.dialects.boolean_check_sql）。
         CheckConstraint(
-            "force_full IN (0, 1)",
+            boolean_check_sql("force_full", "mysql"),
             name="ck_source_schedules_force_full",
-        ),
+        ).ddl_if(dialect="mysql"),
+        CheckConstraint(
+            boolean_check_sql("force_full", "mariadb"),
+            name="ck_source_schedules_force_full",
+        ).ddl_if(dialect="mariadb"),
+        CheckConstraint(
+            boolean_check_sql("force_full", "sqlite"),
+            name="ck_source_schedules_force_full",
+        ).ddl_if(dialect="sqlite"),
+        CheckConstraint(
+            boolean_check_sql("force_full", "postgresql"),
+            name="ck_source_schedules_force_full",
+        ).ddl_if(dialect="postgresql"),
         Index("ix_source_schedules_due", "status", "next_run_at", "id"),
         Index(
             "ix_source_schedules_status",

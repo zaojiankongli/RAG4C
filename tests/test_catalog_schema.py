@@ -2524,3 +2524,35 @@ def test_era_lazy_column_declaration_matches_migrations_after_0036() -> None:
     assert added, "没有从 0036 之后的迁移里抓到任何 tenants/datasets 可空列，检查抽取逻辑"
     assert added <= declared, f"未登记进 ERA_LAZY_ADDED_COLUMNS 的新列: {sorted(added - declared)}"
     assert declared <= added, f"声明表里有没有任何迁移加过的列（应删）: {sorted(declared - added)}"
+
+
+def test_connect_args_match_what_each_driver_accepts() -> None:
+    """连接等待上限要翻译成**对应驱动**认的参数。
+
+    psycopg2 只接受整数秒，pymysql 接受浮点，sqlite3 根本没有 connect_timeout
+    —— 给 sqlite 透传它会在建引擎时直接 ``TypeError: Connection() got an
+    unexpected keyword argument 'connect_timeout'``，于是 verify 模式下任何
+    sqlite 目录库都起不来（实机踩到过一次）。
+    """
+    from sqlalchemy import create_engine, text
+
+    from core.catalog import _connect_args_for
+
+    assert _connect_args_for("sqlite:///catalog.db", 5.0) == {}
+    assert _connect_args_for("postgresql+psycopg2://u@h/db", 5.0) == {"connect_timeout": 5}
+    assert _connect_args_for("mysql+pymysql://u@h/db", 5.0) == {"connect_timeout": 5.0}
+    assert _connect_args_for("mysql+pymysql://u@h/db", 0) == {}
+
+    # 真的建引擎并连接：断言"驱动收得下这组参数"，而不是"参数看着合理"
+    engine = create_engine("sqlite://", connect_args=_connect_args_for("sqlite://", 5.0))
+    with engine.connect() as connection:
+        assert connection.scalar(text("select 1")) == 1
+    engine.dispose()
+
+    # 反证：这条护栏拦的是真实存在的失败形状
+    broken = create_engine("sqlite://", connect_args={"connect_timeout": 5.0})
+    try:
+        with pytest.raises(TypeError):
+            broken.connect()
+    finally:
+        broken.dispose()
