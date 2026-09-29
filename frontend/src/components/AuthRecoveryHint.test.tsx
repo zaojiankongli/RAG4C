@@ -1,7 +1,17 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AuthRecoveryHint, { isAuthError } from "./AuthRecoveryHint";
+
+beforeEach(() => {
+  localStorage.removeItem("rag4c.knowledge_actor_token");
+  window.history.replaceState({}, "", "/query");
+});
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("AuthRecoveryHint", () => {
   it("shows recovery copy when actor token is missing", () => {
@@ -32,6 +42,29 @@ describe("AuthRecoveryHint", () => {
     expect(screen.getByText("治理权威不可用")).toBeTruthy();
     expect(screen.getByText(/服务未启动/)).toBeTruthy();
     localStorage.removeItem("rag4c.knowledge_actor_token");
+  });
+
+  it("opens Config through history navigation when the app uses direct routes", () => {
+    const onPopState = vi.fn();
+    window.addEventListener("popstate", onPopState);
+    render(<AuthRecoveryHint />);
+
+    fireEvent.click(screen.getByRole("button", { name: "打开系统设置" }));
+
+    expect(window.location.pathname).toBe("/config");
+    expect(onPopState).toHaveBeenCalledTimes(1);
+    window.removeEventListener("popstate", onPopState);
+  });
+
+  it("opens Config through the hash route when the app uses hash deployment", () => {
+    window.history.replaceState({}, "", "/#/query");
+    const dispatchEvent = vi.spyOn(window, "dispatchEvent");
+    render(<AuthRecoveryHint />);
+
+    fireEvent.click(screen.getByRole("button", { name: "打开系统设置" }));
+
+    expect(window.location.hash).toBe("#/config");
+    expect(dispatchEvent.mock.calls.filter(([event]) => event.type === "popstate")).toHaveLength(0);
   });
 });
 

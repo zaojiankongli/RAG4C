@@ -16,6 +16,8 @@ export interface Citation {
 export interface EvidenceChunk {
   chunk_id: string;
   doc_id: string;
+  /** Upstream evidence owner; required for safe cross-dataset deep links when present. */
+  dataset_id?: string | null;
   text: string;
   score: number;
   rank: number;
@@ -30,8 +32,48 @@ export interface QueryResult {
   abstained: boolean;
   route: string;
   traces: string[];
+  /**
+   * 本次问答的 LLM 用量台账（后端 core.llm_usage 产出）。
+   * 没开台账时后端给空对象；金额只在配了价格表时才有意义。
+   */
+  usage?: QueryUsage;
   /** 桥服务附加：答案依赖的证据片段（非必须字段） */
   evidence?: EvidenceChunk[];
+}
+
+/** 单个（模型 × 槽位）的用量条目。 */
+export interface QueryUsageEntry {
+  model: string;
+  slot: string;
+  calls: number;
+  cached_calls: number;
+  failures: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  saved_prompt_tokens: number;
+  saved_completion_tokens: number;
+  saved_total_tokens: number;
+  cost: number;
+  unpriced_total_tokens: number;
+}
+
+/** 本次问答的 LLM 用量汇总（含按槽位拆分）。 */
+export interface QueryUsage {
+  calls: number;
+  cached_calls: number;
+  failures: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  saved_prompt_tokens: number;
+  saved_completion_tokens: number;
+  saved_total_tokens: number;
+  /** 估算金额（货币单位由部署方自定）；cost_priced=false 时不可信 */
+  cost: number;
+  cost_priced: boolean;
+  unpriced_total_tokens: number;
+  by_slot: QueryUsageEntry[];
 }
 
 export interface QueryResponse {
@@ -249,9 +291,26 @@ export interface SharedQueueStats {
   unacked?: number;
   consumers?: number;
 }
+/** 单个环节的降级/失败统计（服务端算好的比率，前端只负责显示）。 */
+export interface DegradedScopeStats {
+  total: number;
+  degraded: number;
+  rate: number;
+}
+
+/** 上游降级与端点可达性概览（/api/metrics 的 degraded 段）。 */
+export interface DegradedStats {
+  retrieval?: DegradedScopeStats;
+  reranker?: DegradedScopeStats;
+  /** 键形如 "llm.endpoint.unreachable|endpoint=host:port"，值为次数 */
+  endpoint_unreachable?: Record<string, number>;
+}
+
 export interface MetricsSnapshot {
   ts: string;
   metrics: Record<string, MetricStat>;
+  /** 上游降级率（检索 / 重排 / 端点不可达）。与质量指标分开看：降级是"上游没扛住"，不是"检索变差"。 */
+  degraded?: DegradedStats;
   recent_queries: RecentQuery[];
   queue?: {
     pending: number;
@@ -512,7 +571,12 @@ export interface DocumentCatalogSummaryResponse {
     };
     types: Array<{ value: string; count: number }>;
     engines: Array<{ value: string; count: number }>;
-    chunking_reasons: Array<{ value: string; count: number }>;
+    /**
+     * 滚动窗口里可能缺这把键（后端先于前端上线之前）。
+     * 消费侧 projectSummaryFacets 会按缺失处理成空分面；
+     * 后端 core/catalog.py 自 227f0f4 起恒产出该键。
+     */
+    chunking_reasons?: Array<{ value: string; count: number }>;
     folders: Array<{ path: string; documents: number; chunks: number }>;
     tags: Array<{ name: string; documents: number; chunks: number }>;
   };

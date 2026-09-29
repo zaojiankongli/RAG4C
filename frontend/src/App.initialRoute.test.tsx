@@ -243,7 +243,8 @@ describe("App direct route mounting", () => {
       await screen.findByRole("region", { name: "知识治理页面" }, { timeout: 5000 }),
     ).toBeTruthy();
     expect(screen.getByText("内容治理")).toBeTruthy();
-    expect(screen.getByText("知识组织")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "知识库" }));
+    expect(screen.getByRole("button", { name: "知识组织" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "问答页面" })).toBeNull();
   });
 
@@ -254,19 +255,23 @@ describe("App direct route mounting", () => {
 
     expect(await screen.findByRole("region", { name: "文档管理页面" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "模拟未保存" }));
-    fireEvent.click(screen.getByText("运行监控"));
+    fireEvent.click(screen.getByRole("button", { name: "质量与运维" }));
+    fireEvent.click(screen.getByRole("button", { name: "运行监控" }));
     expect(confirm).toHaveBeenCalled();
     expect(screen.getByRole("region", { name: "文档管理页面" })).toBeTruthy();
 
     confirm.mockReturnValue(true);
-    fireEvent.click(screen.getByText("运行监控"));
+    fireEvent.click(screen.getByRole("button", { name: "质量与运维" }));
+    fireEvent.click(screen.getByRole("button", { name: "运行监控" }));
     expect(await screen.findByRole("region", { name: "运行监控页面" })).toBeTruthy();
   });
   it("mounts the chunk workbench from a history deep link", async () => {
     window.history.replaceState(null, "", "/parse-intervention?doc=doc-1&chunk=chunk-9");
     render(<App themeMode="light" onToggleTheme={vi.fn()} />);
 
-    expect(await screen.findByRole("region", { name: "解析干预页面" }, { timeout: 5000 })).toBeTruthy();
+    expect(
+      await screen.findByRole("region", { name: "解析干预页面" }, { timeout: 5000 }),
+    ).toBeTruthy();
     expect(screen.queryByRole("region", { name: "文档管理页面" })).toBeNull();
   });
 
@@ -275,14 +280,18 @@ describe("App direct route mounting", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<App themeMode="light" onToggleTheme={vi.fn()} />);
 
-    expect(await screen.findByRole("region", { name: "解析干预页面" }, { timeout: 5000 })).toBeTruthy();
+    expect(
+      await screen.findByRole("region", { name: "解析干预页面" }, { timeout: 5000 }),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "模拟未提交草稿" }));
-    fireEvent.click(screen.getByText("运行监控"));
+    fireEvent.click(screen.getByRole("button", { name: "质量与运维" }));
+    fireEvent.click(screen.getByRole("button", { name: "运行监控" }));
     expect(confirm).toHaveBeenCalled();
     expect(screen.getByRole("region", { name: "解析干预页面" })).toBeTruthy();
 
     confirm.mockReturnValue(true);
-    fireEvent.click(screen.getByText("运行监控"));
+    fireEvent.click(screen.getByRole("button", { name: "质量与运维" }));
+    fireEvent.click(screen.getByRole("button", { name: "运行监控" }));
     expect(await screen.findByRole("region", { name: "运行监控页面" })).toBeTruthy();
     confirm.mockRestore();
   });
@@ -326,7 +335,8 @@ describe("App direct route mounting", () => {
 
     expect(await screen.findByRole("region", { name: "企业管理页面" })).toBeTruthy();
     expect(screen.getByText("组织与权限")).toBeTruthy();
-    expect(screen.getByText("内容治理")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "质量与运维" }));
+    expect(screen.getByRole("button", { name: "内容治理" })).toBeTruthy();
   });
 });
 

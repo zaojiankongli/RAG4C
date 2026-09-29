@@ -41,6 +41,17 @@ function contrast(foreground: string, background: string): number {
 }
 
 describe("accessible semantic color tokens", () => {
+  it("keeps Yanami text, selected navigation and primary actions readable", () => {
+    const anime = block('html[data-theme="anime"]');
+    for (const foreground of ["color-text", "color-text-secondary", "color-text-tertiary"]) {
+      for (const surface of ["color-bg", "color-bg-elevated", "color-bg-sunken"]) {
+        expect(contrast(token(anime, foreground), token(anime, surface))).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    expect(contrast(token(anime, "color-on-primary"), token(anime, "color-primary"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(token(anime, "sider-active-text"), token(anime, "sider-active-bg"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(token(anime, "color-border-control"), token(anime, "color-bg-elevated"))).toBeGreaterThanOrEqual(3);
+  });
   it("meets WCAG AA for light tertiary and semantic status text", () => {
     const light = block(":root");
     const tertiary = token(light, "color-text-tertiary");

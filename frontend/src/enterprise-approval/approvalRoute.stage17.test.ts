@@ -4,6 +4,7 @@ import {
   approvalRequestIdFromLocation,
   approvalRequestClearNavigationUrl,
   approvalRequestNavigationUrl,
+  clearApprovalRequestNavigation,
   navigateToApprovalRequest,
 } from "./approvalRoute";
 
@@ -85,5 +86,27 @@ describe("Stage17 approval request deep link navigation", () => {
         hash: "#/enterprise/approvals?status=pending&request=request-17",
       }),
     ).toBe("request-17");
+  });
+
+  it("clears the request with replaceState, preserving history state and emitting one popstate", () => {
+    const historyState = { source: "approval-host" };
+    window.history.replaceState(
+      historyState,
+      "",
+      "/enterprise/approvals?status=pending&request=request-17",
+    );
+    const replaceState = vi.spyOn(window.history, "replaceState");
+    const dispatchEvent = vi.spyOn(window, "dispatchEvent");
+
+    clearApprovalRequestNavigation();
+
+    expect(replaceState).toHaveBeenCalledWith(
+      historyState,
+      "",
+      "/enterprise/approvals?status=pending",
+    );
+    expect(dispatchEvent.mock.calls.filter(([event]) => event.type === "popstate")).toHaveLength(1);
+    replaceState.mockRestore();
+    dispatchEvent.mockRestore();
   });
 });

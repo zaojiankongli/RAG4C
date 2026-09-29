@@ -46,7 +46,7 @@ const REQUIRED_IN_LIGHT_AND_DARK = [
 /** 尺寸类 token 只在 :root 定义一次即可（与主题配色无关）。 */
 const REQUIRED_IN_ROOT_ONLY = ["control-min-h", "control-min-h-compact"];
 
-/** anime 是浅粉底的第三主题：正文/底色**有意**继承 :root，只有身份色必须自带。 */
+/** anime 是独立的海蓝皮肤；以下是身份色与焦点色的最低契约，正文和表面也显式定义。 */
 const REQUIRED_IN_ANIME = [
   "color-eyebrow",
   "color-eyebrow-warning",

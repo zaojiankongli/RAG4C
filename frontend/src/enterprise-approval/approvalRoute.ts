@@ -1,3 +1,5 @@
+import { commitNavigationIntent } from "../run/navigationAdapter";
+
 export interface EnterpriseApprovalLocationLike {
   pathname: string;
   search?: string;
@@ -97,16 +99,17 @@ export function approvalRequestNavigationUrl(
 
 export function navigateToApprovalRequest(requestId: string): void {
   if (typeof window === "undefined") return;
-  window.history.pushState({}, "", approvalRequestNavigationUrl(window.location, requestId));
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  commitNavigationIntent(
+    { mode: "history", url: approvalRequestNavigationUrl(window.location, requestId) },
+    { historyState: {} },
+  );
 }
 
 export function clearApprovalRequestNavigation(): void {
   if (typeof window === "undefined") return;
   const url = approvalRequestClearNavigationUrl(window.location);
   if (!enterpriseApprovalRouteFromLocation(window.location)) return;
-  window.history.replaceState(window.history.state, "", url);
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  commitNavigationIntent({ mode: "history", url }, { historyAction: "replace" });
 }
 
 export { APPROVAL_PATH as ENTERPRISE_APPROVAL_PATH };

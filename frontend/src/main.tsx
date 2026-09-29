@@ -6,6 +6,7 @@ import "tdesign-react/es/style/index.css";
 import AppProviders from "./AppProviders";
 import "./styles.css";
 import "./shell/enterprise-shell.css";
+import "./shell/workspace-experience.css";
 // anime.css 最后加载：二次元主题覆盖需要最高优先级（覆盖 TDesign/styles/shell 默认样式）
 import "./theme/anime.css";
 

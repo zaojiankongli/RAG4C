@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 vi.mock("./context/ConnectionContext", () => ({
   useConnection: () => ({
@@ -59,6 +59,7 @@ describe("App Stage18 registry route", () => {
 
     expect(await screen.findByRole("region", { name: "企业知识库注册表页面" })).toBeTruthy();
     expect(screen.getByText("知识库注册表")).toBeTruthy();
-    expect(screen.getByText("组织与权限")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "系统" }));
+    expect(screen.getByRole("button", { name: "组织与权限" })).toBeTruthy();
   });
 });

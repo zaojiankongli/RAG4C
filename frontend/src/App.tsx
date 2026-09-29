@@ -1,30 +1,16 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- compatibility callback types during TDesign migration */
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Layout, Menu, Tooltip } from "./ui/index";
-import {
-  DeploymentUnitOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  MoonOutlined,
-  ReloadOutlined,
-  SunOutlined,
-  InfoCircleOutlined,
-} from "./ui/icons";
-import ModeBanner from "./components/ModeBanner";
-import PageState from "./components/PageState";
-import ErrorBoundary from "./components/ErrorBoundary";
-import QueryPage from "./pages/QueryPage";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useConnection } from "./context/ConnectionContext";
+import { getServiceStatus } from "./components/serviceStatusModel";
 import type { ThemeMode } from "./theme/tokens";
 import { OnboardingTour } from "./onboarding/OnboardingTour";
+import AppLayout from "./AppLayout";
+import AppRoutes, { type AppRouteContext } from "./AppRoutes";
 import {
-  PAGE_KEYS,
-  mainNavigationKey,
   navigationIntent,
   parsePageLocation,
   type PageKey,
 } from "./run/appRoute";
-import { MENU_ITEMS } from "./run/appNav";
+import { commitNavigationIntent } from "./run/navigationAdapter";
 import {
   safeAutomationHandoff,
   safeKnowledgeServingHandoff,
@@ -36,12 +22,11 @@ import {
   resolveKnowledgeWorkspaceScope,
 } from "./knowledge/workspaceScope";
 import { useOptionalKnowledgeWorkspace } from "./knowledge/KnowledgeWorkspaceContext";
-import { WorkspaceScopeBar } from "./ui/enterprise";
+import type { WorkspaceScopeBarProps } from "./ui/enterprise/WorkspaceScopeBar";
 import { fetchEnterpriseContext } from "./enterprise-admin/api/enterpriseAdminApi";
 import type { EnterpriseContext } from "./enterprise-admin/model";
+import { resolveEnterpriseCapabilityStates } from "./enterprise-admin/capabilityPolicy";
 import { useEnterpriseWorkspaceSelector } from "./enterprise-workspace";
-import KnowledgeBaseResourceShell from "./enterprise-knowledge-base-shell/KnowledgeBaseResourceShell";
-import KnowledgeServingPage from "./enterprise-knowledge-base-shell/KnowledgeServingPageLoader";
 import { useEnterpriseNotifications } from "./enterprise-notification-center/hooks/useEnterpriseNotifications";
 import NotificationBell from "./enterprise-notification-center/components/NotificationBell";
 import type { NotificationHandoffContext } from "./enterprise-notification-center/components/notificationCenterShared";
@@ -60,37 +45,12 @@ import {
   type KnowledgeBaseResourceSection,
 } from "./enterprise-knowledge-base-shell/knowledgeBaseResourceRoute";
 
-const KnowledgeOverviewPage = lazy(() => import("./pages/KnowledgeOverviewPage"));
-const DocumentsPage = lazy(() => import("./pages/DocumentsPage"));
-const ChunkWorkbenchPage = lazy(() => import("./pages/ChunkWorkbenchPage"));
-const KnowledgeTaxonomyPage = lazy(() => import("./pages/KnowledgeTaxonomyPage"));
-const KnowledgeGovernancePage = lazy(() => import("./pages/KnowledgeGovernancePage"));
-const KnowledgeSourcesPage = lazy(() => import("./pages/KnowledgeSourcesPage"));
-const RetrievalLabPage = lazy(() => import("./pages/RetrievalLabPage"));
-const VisualizePage = lazy(() => import("./pages/VisualizePage"));
-const MonitorPage = lazy(() => import("./pages/MonitorPage"));
-const ConsistencyPage = lazy(() => import("./pages/ConsistencyPage"));
-const EvalPage = lazy(() => import("./pages/EvalPage"));
-const ConfigPage = lazy(() => import("./pages/ConfigPage"));
-const EnterpriseAdminPage = lazy(() => import("./pages/EnterpriseAdminPage"));
-const EnterpriseKnowledgeBasePage = lazy(() => import("./pages/EnterpriseKnowledgeBasePage"));
-const EnterpriseKnowledgeBaseWorkspacePage = lazy(
-  () => import("./pages/EnterpriseKnowledgeBaseWorkspacePage"),
-);
-const NotificationCenter = lazy(
-  () => import("./enterprise-notification-center/components/NotificationCenter"),
-);
 const NotificationDrawer = lazy(
   () => import("./enterprise-notification-center/components/NotificationDrawer"),
 );
 const NotificationDetailDrawer = lazy(
   () => import("./enterprise-notification-center/components/NotificationDetailDrawer"),
 );
-const EnterpriseContentRecoveryPage = lazy(
-  () => import("./enterprise-content-recovery/ContentRecoveryPage"),
-);
-const TaskOperationsPage = lazy(() => import("./enterprise-task-operations/TaskOperationsPage"));
-const AutomationPage = lazy(() => import("./enterprise-automation-workflows/AutomationPage"));
 
 const ENTERPRISE_ROLE_LABELS: Record<string, string> = {
   owner: "所有者",
@@ -99,15 +59,13 @@ const ENTERPRISE_ROLE_LABELS: Record<string, string> = {
   member: "成员",
 };
 
-const { Sider } = Layout;
-const PRIMARY_NAV_ID = "primary-navigation";
-
 interface Props {
   themeMode: ThemeMode;
   onToggleTheme: () => void;
+  onSetTheme?: (mode: ThemeMode) => void;
 }
 
-export default function App({ themeMode, onToggleTheme }: Props) {
+export default function App({ themeMode, onToggleTheme, onSetTheme }: Props) {
   const { online, checking, health, refresh } = useConnection();
   const knowledgeWorkspace = useOptionalKnowledgeWorkspace();
   const workspaceSyncRef = useRef<string>("");
@@ -117,6 +75,20 @@ export default function App({ themeMode, onToggleTheme }: Props) {
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const mobileNavToggleRef = useRef<HTMLButtonElement>(null);
+  const mobileNavRef = useRef<HTMLElement>(null);
+  const appContentRef = useRef<HTMLDivElement>(null);
+  const openMobileNavigation = useCallback(() => setMobileNavOpen(true), []);
+  const closeMobileNavigation = useCallback(
+    (focusTarget: "toggle" | "main" | "none" = "toggle") => {
+      setMobileNavOpen(false);
+      window.setTimeout(() => {
+        if (focusTarget === "main" && isMobile) document.getElementById("main-content")?.focus();
+        else if (focusTarget === "toggle") mobileNavToggleRef.current?.focus();
+      }, 0);
+    },
+    [isMobile],
+  );
   const [acl, setAcl] = useState<string[]>([]);
   const [mountedPages, setMountedPages] = useState<PageKey[]>(() => [page]);
   const [documentsWorkspaceDirty, setDocumentsWorkspaceDirty] = useState(false);
@@ -125,11 +97,60 @@ export default function App({ themeMode, onToggleTheme }: Props) {
   const [enterpriseIdentity, setEnterpriseIdentity] = useState<EnterpriseContext | null>(null);
   const [notificationDrawerOpen, setNotificationDrawerOpen] = useState(false);
   const [notificationDetailOpen, setNotificationDetailOpen] = useState(false);
+  const onboardingReturnFocusRef = useRef<HTMLElement | null>(null);
   const notificationReturnFocusRef = useRef<HTMLElement | null>(null);
   const notificationDetailReturnFocusRef = useRef<HTMLElement | null>(null);
   const [enterpriseIdentityStatus, setEnterpriseIdentityStatus] = useState<
     "none" | "loading" | "ready" | "unavailable"
   >("none");
+
+  useLayoutEffect(() => {
+    const content = appContentRef.current;
+    const contentIsInert = isMobile && mobileNavOpen;
+    if (contentIsInert) mobileNavRef.current?.focus();
+    if (content) {
+      content.toggleAttribute("inert", contentIsInert);
+      content.inert = contentIsInert;
+    }
+  }, [isMobile, mobileNavOpen]);
+
+  useEffect(() => {
+    if (!isMobile || !mobileNavOpen || onboardingOpen) return;
+    const handleMobileNavigationKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeMobileNavigation();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const rail = document.querySelector<HTMLElement>("aside.app-sider.is-mobile");
+      if (!rail) return;
+      const focusable = Array.from(
+        rail.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => !element.hasAttribute("inert") && element.getAttribute("aria-hidden") !== "true");
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) {
+        event.preventDefault();
+        mobileNavRef.current?.focus();
+        return;
+      }
+      const active = document.activeElement;
+      const currentIndex = focusable.indexOf(active as HTMLElement);
+      if (currentIndex < 0 || (event.shiftKey && currentIndex === 0)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && currentIndex === focusable.length - 1) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleMobileNavigationKeydown);
+    return () => window.removeEventListener("keydown", handleMobileNavigationKeydown);
+  }, [closeMobileNavigation, isMobile, mobileNavOpen, onboardingOpen]);
 
   useEffect(() => {
     setMountedPages((prev) => (prev.includes(page) ? prev : [...prev, page]));
@@ -139,6 +160,7 @@ export default function App({ themeMode, onToggleTheme }: Props) {
     const onHashChange = () => {
       const key = parsePageLocation(window.location);
       if (key) setPage(key);
+      if (mobileNavOpen) closeMobileNavigation(onboardingOpen ? "none" : "main");
       setRouteRevision((current) => current + 1);
     };
     window.addEventListener("hashchange", onHashChange);
@@ -147,7 +169,7 @@ export default function App({ themeMode, onToggleTheme }: Props) {
       window.removeEventListener("hashchange", onHashChange);
       window.removeEventListener("popstate", onHashChange);
     };
-  }, []);
+  }, [closeMobileNavigation, mobileNavOpen, onboardingOpen]);
 
   const navigate = useCallback(
     (key: PageKey) => {
@@ -165,18 +187,23 @@ export default function App({ themeMode, onToggleTheme }: Props) {
         setWorkbenchDirty(false);
       }
       setPage(key);
-      setMobileNavOpen(false);
+      closeMobileNavigation("main");
       setNotificationDrawerOpen(false);
       setNotificationDetailOpen(false);
       if (parsePageLocation(window.location) !== key) {
         const intent = navigationIntent(window.location, key);
-        if (intent.mode === "history") {
-          window.history.pushState(window.history.state, "", intent.url);
-          window.dispatchEvent(new PopStateEvent("popstate"));
-        } else window.location.hash = intent.url;
+        commitNavigationIntent(intent);
       }
     },
-    [documentsWorkspaceDirty, page, workbenchDirty],
+    [closeMobileNavigation, documentsWorkspaceDirty, page, workbenchDirty],
+  );
+
+  const handleOnboardingNavigate = useCallback(
+    (target: string) => {
+      onboardingReturnFocusRef.current = document.getElementById("main-content");
+      navigate(target as PageKey);
+    },
+    [navigate],
   );
 
   const handleGlobalSearch = useCallback((value: string) => {
@@ -185,14 +212,9 @@ export default function App({ themeMode, onToggleTheme }: Props) {
     const intent = navigationIntent(window.location, "documents");
     const url = `${intent.url}?q=${encodeURIComponent(query)}`;
     setPage("documents");
-    setMobileNavOpen(false);
-    if (intent.mode === "history") {
-      window.history.pushState(window.history.state, "", url);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    } else {
-      window.location.hash = url;
-    }
-  }, []);
+    closeMobileNavigation("main");
+    commitNavigationIntent({ ...intent, url });
+  }, [closeMobileNavigation]);
 
   const actorToken = readKnowledgeActorToken();
   const workspaceScope = resolveKnowledgeWorkspaceScope({ actorToken });
@@ -318,39 +340,23 @@ export default function App({ themeMode, onToggleTheme }: Props) {
       : online === true
         ? "本地模式"
         : "演示模式";
-  const notificationsCapabilityReady =
-    Boolean(actorToken) &&
-    enterpriseIdentity?.tenant.id === workspaceScope.tenantId &&
-    enterpriseIdentity.capabilities.enterprise_notification_center?.state === "ready";
-  const notificationsReadOnly =
-    online !== true || health?.status === "degraded" || health?.status === "down";
-  const recoveryCapabilityReady =
-    Boolean(actorToken) &&
-    enterpriseIdentity?.tenant.id === workspaceScope.tenantId &&
-    enterpriseIdentity.capabilities.enterprise_content_recovery?.state === "ready";
-  const recoveryReadOnly =
-    online !== true || health?.status === "degraded" || health?.status === "down";
-  const taskOperationsCapabilityReady =
-    Boolean(actorToken) &&
-    enterpriseIdentity?.tenant.id === workspaceScope.tenantId &&
-    enterpriseIdentity.capabilities.enterprise_task_operations?.state === "ready";
-  const taskOperationsReadOnly =
-    online !== true || health?.status === "degraded" || health?.status === "down";
-  const automationCapabilityReady =
-    Boolean(actorToken) &&
-    enterpriseIdentity?.tenant.id === workspaceScope.tenantId &&
-    enterpriseIdentity.capabilities.enterprise_automation_workflows?.state === "ready";
-  const automationReadOnly =
-    online !== true || health?.status === "degraded" || health?.status === "down";
-  const knowledgeServingCapabilityReady =
-    Boolean(actorToken) &&
-    enterpriseIdentity?.tenant.id === workspaceScope.tenantId &&
-    enterpriseIdentity.capabilities.enterprise_knowledge_serving_reliability?.state === "ready";
-  const knowledgeServingReadOnly =
-    online !== true ||
-    health?.status === "degraded" ||
-    health?.status === "down" ||
-    enterpriseIdentity?.effective_permissions.includes("knowledge.manage") !== true;
+  const enterpriseCapabilityStates = resolveEnterpriseCapabilityStates({
+    actorToken,
+    tenantId: workspaceScope.tenantId,
+    identity: enterpriseIdentity,
+    online,
+    healthStatus: health?.status,
+  });
+  const notificationsCapabilityReady = enterpriseCapabilityStates.notifications.ready;
+  const notificationsReadOnly = enterpriseCapabilityStates.notifications.readOnly;
+  const recoveryCapabilityReady = enterpriseCapabilityStates.contentRecovery.ready;
+  const recoveryReadOnly = enterpriseCapabilityStates.contentRecovery.readOnly;
+  const taskOperationsCapabilityReady = enterpriseCapabilityStates.taskOperations.ready;
+  const taskOperationsReadOnly = enterpriseCapabilityStates.taskOperations.readOnly;
+  const automationCapabilityReady = enterpriseCapabilityStates.automationWorkflows.ready;
+  const automationReadOnly = enterpriseCapabilityStates.automationWorkflows.readOnly;
+  const knowledgeServingCapabilityReady = enterpriseCapabilityStates.knowledgeServing.ready;
+  const knowledgeServingReadOnly = enterpriseCapabilityStates.knowledgeServing.readOnly;
   const notificationsController = useEnterpriseNotifications(
     { tenantId: workspaceScope.tenantId, actorToken: actorToken ?? "" },
     { enabled: notificationsCapabilityReady, readOnly: notificationsReadOnly },
@@ -380,15 +386,10 @@ export default function App({ themeMode, onToggleTheme }: Props) {
     setNotificationDrawerOpen(false);
     setNotificationDetailOpen(false);
     setPage(target.page);
-    setMobileNavOpen(false);
+    closeMobileNavigation("main");
     const mode = navigationIntent(window.location, target.page).mode;
-    if (mode === "history") {
-      window.history.pushState(window.history.state, "", target.url);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    } else {
-      window.location.hash = target.url;
-    }
-  }, []);
+    commitNavigationIntent({ mode, url: target.url });
+  }, [closeMobileNavigation]);
 
   const handleNotificationMarkRead = useCallback(
     (detail: NotificationDetail) => {
@@ -426,62 +427,89 @@ export default function App({ themeMode, onToggleTheme }: Props) {
     const normalized = approvalRequestId.trim();
     if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(normalized)) return;
     setPage("enterprise");
-    setMobileNavOpen(false);
+    closeMobileNavigation("main");
     const url = `/enterprise/approvals?request=${encodeURIComponent(normalized)}`;
     const mode = navigationIntent(window.location, "enterprise").mode;
-    if (mode === "history") {
-      window.history.pushState(window.history.state, "", url);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    } else {
-      window.location.hash = url;
-    }
-  }, []);
+    commitNavigationIntent({ mode, url });
+  }, [closeMobileNavigation]);
   const handleTaskHandoff = useCallback((route: TaskRoute) => {
     const target = safeTaskHandoff(route);
     if (!target) return;
     setPage(target.page);
-    setMobileNavOpen(false);
+    closeMobileNavigation("main");
     const mode = navigationIntent(window.location, target.page).mode;
-    if (mode === "history") {
-      window.history.pushState(window.history.state, "", target.url);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    } else {
-      window.location.hash = target.url;
-    }
-  }, []);
+    commitNavigationIntent({ mode, url: target.url });
+  }, [closeMobileNavigation]);
   const handleAutomationHandoff = useCallback((route: AutomationRoute) => {
     const target = safeAutomationHandoff(route);
     if (!target) return;
     setPage(target.page);
-    setMobileNavOpen(false);
+    closeMobileNavigation("main");
     const mode = navigationIntent(window.location, target.page).mode;
-    if (mode === "history") {
-      window.history.pushState(window.history.state, "", target.url);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    } else window.location.hash = target.url;
-  }, []);
+    commitNavigationIntent({ mode, url: target.url });
+  }, [closeMobileNavigation]);
+
+  const handleOpenOnboarding = useCallback(() => {
+    onboardingReturnFocusRef.current = isMobile
+      ? mobileNavToggleRef.current
+      : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    if (isMobile && mobileNavOpen) closeMobileNavigation("none");
+    setOnboardingOpen(true);
+  }, [closeMobileNavigation, isMobile, mobileNavOpen]);
+  const handleCloseOnboarding = useCallback(() => {
+    setOnboardingOpen(false);
+    const returnFocus = onboardingReturnFocusRef.current;
+    window.setTimeout(() => {
+      const returnFocusIsUsable =
+        returnFocus &&
+        document.contains(returnFocus) &&
+        !returnFocus.closest("[inert], [aria-hidden=\"true\"]");
+      if (returnFocusIsUsable) returnFocus.focus();
+      else if (isMobile) mobileNavToggleRef.current?.focus();
+      else document.getElementById("main-content")?.focus();
+      onboardingReturnFocusRef.current = null;
+    }, 0);
+  }, [isMobile]);
 
   const siderCollapsed = isMobile ? !mobileNavOpen : collapsed;
-  const healthStatus = health?.status;
-  const degraded = online === true && (healthStatus === "degraded" || healthStatus === "down");
-  const connLabel =
-    online === null
-      ? "正在检查服务"
-      : degraded
-        ? "部分服务不可用"
-        : online
-          ? "服务已连接"
-          : "演示模式";
-  const connDotClass =
-    online === null ? "processing" : degraded ? "warning" : online ? "online" : "warning";
-  const connTip =
-    online === null
-      ? "正在探测后端服务"
-      : degraded
-        ? "基础问答可用，部分辅助能力暂不可用"
-        : online
-          ? "已连接后端服务，页面展示真实数据"
-          : "后端服务未连接，页面展示演示数据";
+  const serviceStatus = getServiceStatus({ online, checking, health });
+  const connLabel = serviceStatus.label;
+  const connDotClass = serviceStatus.state === "checking" ? "processing" : serviceStatus.tone === "success" ? "online" : "warning";
+  const connTip = serviceStatus.description;
+  const handleSiderBreakpoint = useCallback(
+    (broken: boolean) => {
+      const focusWasInSider =
+        document.activeElement instanceof HTMLElement &&
+        document.activeElement.closest("aside.app-sider") !== null;
+      const focusWasOnMobileToggle = document.activeElement === mobileNavToggleRef.current;
+      setIsMobile(broken);
+      if (broken && focusWasInSider) closeMobileNavigation();
+      else {
+        setMobileNavOpen(false);
+        if (!broken && focusWasOnMobileToggle) {
+          window.setTimeout(() => mobileNavRef.current?.focus(), 0);
+        }
+      }
+    },
+    [closeMobileNavigation],
+  );
+  const handleSiderCollapse = useCallback(
+    (next: boolean) => {
+      if (isMobile) {
+        if (next) closeMobileNavigation();
+        else openMobileNavigation();
+      } else {
+        setCollapsed(next);
+      }
+    },
+    [closeMobileNavigation, isMobile, openMobileNavigation],
+  );
+  const handleToggleSider = useCallback(() => {
+    if (isMobile) closeMobileNavigation();
+    else setCollapsed((value) => !value);
+  }, [closeMobileNavigation, isMobile]);
 
   const resourceDatasetId = useMemo(() => {
     void routeRevision;
@@ -509,406 +537,162 @@ export default function App({ themeMode, onToggleTheme }: Props) {
         section,
       });
       setPage(nextPage);
-      setMobileNavOpen(false);
-      if (intent.mode === "history") {
-        window.history.pushState(window.history.state, "", intent.url);
-        window.dispatchEvent(new PopStateEvent("popstate"));
-      } else {
-        window.location.hash = intent.url;
-      }
+      closeMobileNavigation("main");
+      commitNavigationIntent(intent);
       return true;
     },
-    [documentsWorkspaceDirty, page, resourceDatasetId],
+    [closeMobileNavigation, documentsWorkspaceDirty, page, resourceDatasetId],
   );
   const handleKnowledgeServingHandoff = useCallback(
     (route: unknown) => {
       const target = safeKnowledgeServingHandoff(route, resourceDatasetId, window.location);
       if (!target) return;
       setPage(target.page);
-      setMobileNavOpen(false);
-      if (target.mode === "history") {
-        window.history.pushState(window.history.state, "", target.url);
-        window.dispatchEvent(new PopStateEvent("popstate"));
-      } else {
-        window.location.hash = target.url;
-      }
+      closeMobileNavigation("main");
+      commitNavigationIntent({ mode: target.mode, url: target.url });
     },
-    [resourceDatasetId],
+    [closeMobileNavigation, resourceDatasetId],
   );
 
-  const pageNodes: Record<PageKey, JSX.Element> = {
-    overview: <KnowledgeOverviewPage />,
-    query: <QueryPage acl={acl} onAclChange={setAcl} />,
-    documents: (
-      <KnowledgeBaseResourceShell
-        active={page === "documents"}
-        section="documents"
-        onSectionChange={handleResourceSectionChange}
-      >
-        <DocumentsPage
-          active={page === "documents"}
-          embedded
-          onDirtyChange={setDocumentsWorkspaceDirty}
-          contentRecoveryCapabilityReady={recoveryCapabilityReady}
-          contentRecoveryReadOnly={recoveryReadOnly}
-        />
-      </KnowledgeBaseResourceShell>
-    ),
-    "recycle-bin": (
-      <EnterpriseContentRecoveryPage
-        tenantId={workspaceScope.tenantId}
-        actorToken={actorToken ?? ""}
-        capabilityReady={recoveryCapabilityReady}
-        tenantLabel={organizationLabel}
-        readOnly={recoveryReadOnly}
-        mobile={isMobile}
-        onApprovalHandoff={handleRecoveryApprovalHandoff}
+  const connectionStatus = {
+    tooltip: connTip,
+    label: connLabel,
+    dotClass: connDotClass,
+    checking,
+    onRefresh: () => void refresh(),
+  };
+  const workspaceScopeBar: WorkspaceScopeBarProps = {
+    organizationLabel,
+    knowledgeBaseLabel,
+    environmentLabel: online === true ? "本地环境" : "演示环境",
+    healthLabel: serviceStatus.label,
+    compactHealthLabel: serviceStatus.label,
+    healthTone: serviceStatus.tone === "pending" ? "default" : serviceStatus.tone,
+    actorLabel,
+    actorRole,
+    workspaceValue: enterpriseWorkspaceSelector.value,
+    workspaceOptions: enterpriseWorkspaceOptions,
+    workspaceStatus: enterpriseWorkspaceSelector.status,
+    onWorkspaceChange: handleWorkspaceChange,
+    onSearch: handleGlobalSearch,
+    notificationControl: (
+      <NotificationBell
+        summary={notificationsController.summary}
+        capabilityReady={notificationsCapabilityReady}
+        onOpen={handleOpenNotifications}
       />
     ),
-    tasks: (
-      <TaskOperationsPage
-        tenantId={workspaceScope.tenantId}
-        accountId={enterpriseIdentity?.actor.id}
-        actorToken={actorToken ?? ""}
-        capabilityReady={taskOperationsCapabilityReady}
-        tenantLabel={organizationLabel}
-        readOnly={taskOperationsReadOnly}
-        mobile={isMobile}
-        onTaskHandoff={handleTaskHandoff}
-      />
-    ),
-    automations: (
-      <AutomationPage
-        tenantId={workspaceScope.tenantId}
-        accountId={enterpriseIdentity?.actor.id}
-        actorToken={actorToken ?? ""}
-        capabilityReady={automationCapabilityReady}
-        tenantLabel={organizationLabel}
-        readOnly={automationReadOnly}
-        mobile={isMobile}
-        onAutomationHandoff={handleAutomationHandoff}
-      />
-    ),
-    taxonomy: (
-      <KnowledgeBaseResourceShell
-        active={page === "taxonomy"}
-        section="taxonomy"
-        onSectionChange={handleResourceSectionChange}
-      >
-        <KnowledgeTaxonomyPage embedded />
-      </KnowledgeBaseResourceShell>
-    ),
-    governance: (
-      <KnowledgeBaseResourceShell
-        active={page === "governance"}
-        section="governance"
-        onSectionChange={handleResourceSectionChange}
-      >
-        <KnowledgeGovernancePage embedded />
-      </KnowledgeBaseResourceShell>
-    ),
-    sources: (
-      <KnowledgeBaseResourceShell
-        active={page === "sources"}
-        section="sources"
-        onSectionChange={handleResourceSectionChange}
-      >
-        <KnowledgeSourcesPage active={page === "sources"} embedded />
-      </KnowledgeBaseResourceShell>
-    ),
-    "parse-intervention": <ChunkWorkbenchPage onDirtyChange={setWorkbenchDirty} />,
-    "retrieval-lab": <RetrievalLabPage />,
-    visualize: <VisualizePage />,
-    eval: <EvalPage />,
-    monitor: <MonitorPage active={page === "monitor"} />,
-    consistency: <ConsistencyPage />,
-    enterprise: <EnterpriseAdminPage />,
-    notifications: notificationsCapabilityReady ? (
-      <NotificationCenter
-        controller={notificationsController}
-        capabilityReady
-        readOnly={notificationsReadOnly}
-        mobile={isMobile}
-        tenantLabel={organizationLabel}
-        onHandoff={handleNotificationHandoff}
-      />
-    ) : (
-      <div className="page-shell">
-        <div className="page-shell-inner">
-          <PageState
-            status={enterpriseIdentityStatus === "loading" ? "loading" : "error"}
-            title={
-              enterpriseIdentityStatus === "loading"
-                ? "正在读取通知中心权威"
-                : "通知中心权威暂不可用"
-            }
-            description="仅在服务端能力与当前账号身份均可验证后开放通知权威。"
-          />
-        </div>
-      </div>
-    ),
-    "knowledge-bases": (
-      <EnterpriseKnowledgeBasePage
-        scope={{
-          tenantId: workspaceScope.tenantId,
-          datasetId: activeDatasetId,
-          actorToken: actorToken ?? "",
-        }}
-        context={enterpriseIdentity}
-        workspaceOptions={enterpriseWorkspaceOptions}
-      />
-    ),
-    "knowledge-base-workspace":
-      workspaceResourceSection === "serving" ? (
-        <KnowledgeBaseResourceShell
-          active={page === "knowledge-base-workspace"}
-          section="serving"
-          tenantId={workspaceScope.tenantId}
-          datasetId={resourceDatasetId}
-          actorToken={actorToken ?? ""}
-          onSectionChange={handleResourceSectionChange}
-        >
-          <KnowledgeServingPage
-            active={page === "knowledge-base-workspace"}
-            tenantId={workspaceScope.tenantId}
-            accountId={enterpriseIdentity?.actor.id}
-            actorToken={actorToken ?? ""}
-            datasetId={resourceDatasetId}
-            capabilityReady={knowledgeServingCapabilityReady}
-            tenantLabel={organizationLabel}
-            readOnly={knowledgeServingReadOnly}
-            mobile={isMobile}
-            onServingHandoff={handleKnowledgeServingHandoff}
-          />
-        </KnowledgeBaseResourceShell>
-      ) : (
-        <EnterpriseKnowledgeBaseWorkspacePage
-          active={page === "knowledge-base-workspace"}
-          section={workspaceResourceSection}
-          tenantId={workspaceScope.tenantId}
-          datasetId={resourceDatasetId}
-          actorToken={actorToken ?? ""}
-          onSectionChange={handleResourceSectionChange}
-        />
-      ),
-    config: <ConfigPage />,
+  };
+
+  const routeContext: AppRouteContext = {
+    scope: {
+      tenantId: workspaceScope.tenantId,
+      datasetId: activeDatasetId,
+      actorToken: actorToken ?? "",
+    },
+    identity: enterpriseIdentity,
+    identityStatus: enterpriseIdentityStatus,
+    tenantLabel: organizationLabel,
+    workspaceOptions: enterpriseWorkspaceOptions,
+    activeDatasetId,
+    resourceDatasetId,
+    resourceSection: workspaceResourceSection,
+    mobile: isMobile,
+    acl,
+    onAclChange: setAcl,
+    contentRecovery: { ready: recoveryCapabilityReady, readOnly: recoveryReadOnly },
+    taskOperations: {
+      ready: taskOperationsCapabilityReady,
+      readOnly: taskOperationsReadOnly,
+    },
+    automationWorkflows: { ready: automationCapabilityReady, readOnly: automationReadOnly },
+    knowledgeServing: {
+      ready: knowledgeServingCapabilityReady,
+      readOnly: knowledgeServingReadOnly,
+    },
+    notifications: {
+      controller: notificationsController,
+      capabilityReady: notificationsCapabilityReady,
+      readOnly: notificationsReadOnly,
+      onHandoff: handleNotificationHandoff,
+    },
+    onResourceSectionChange: handleResourceSectionChange,
+    onDocumentsDirtyChange: setDocumentsWorkspaceDirty,
+    onWorkbenchDirtyChange: setWorkbenchDirty,
+    onRecoveryApprovalHandoff: handleRecoveryApprovalHandoff,
+    onTaskHandoff: handleTaskHandoff,
+    onAutomationHandoff: handleAutomationHandoff,
+    onKnowledgeServingHandoff: handleKnowledgeServingHandoff,
   };
 
   return (
     <>
       <OnboardingTour
-        onNavigate={(p) => navigate(p as PageKey)}
+        onNavigate={handleOnboardingNavigate}
         defaultOpen={onboardingOpen}
-        onClose={() => setOnboardingOpen(false)}
+        onClose={handleCloseOnboarding}
       />
-      <Layout className="app-layout">
-      <a
-        className="skip-link"
-        href="#main-content"
-        onClick={(event) => {
-          event.preventDefault();
-          document.getElementById("main-content")?.focus();
-        }}
-      >
-        跳到主内容
-      </a>
-      <Sider
-        width={232}
-        theme="light"
-        className={isMobile ? "app-sider is-mobile" : "app-sider"}
-        collapsible
-        breakpoint="md"
-        collapsedWidth={isMobile ? 0 : 72}
-        collapsed={siderCollapsed}
-        onBreakpoint={(broken: any) => {
-          setIsMobile(broken);
-          if (broken) setMobileNavOpen(false);
-        }}
-        onCollapse={(next: any) => {
-          if (isMobile) {
-            setMobileNavOpen(!next);
-          } else {
-            setCollapsed(next);
-          }
-        }}
-        trigger={null}
-      >
-        <div className="sider-brand">
-          <div className="brand-logo" aria-hidden="true">
-            <DeploymentUnitOutlined />
-          </div>
-          {!siderCollapsed && (
-            <div className="brand-content">
-              {/* 这里原本也是 <h1>，与 PageTopbar 的页面标题构成同页两个 h1，
-                  读屏的标题大纲会出现两个并列的一级标题。品牌名不是页面主题，
-                  降级为普通元素，h1 只留给 PageTopbar。 */}
-              <div className="brand-title">RAG4C</div>
-              <div className="brand-sub">企业知识库平台</div>
-            </div>
-          )}
-        </div>
-
-        <nav id={PRIMARY_NAV_ID} className="app-nav" aria-label="主导航" tabIndex={0}>
-          <Menu
-            mode="inline"
-            selectedKeys={[mainNavigationKey(page)]}
-            items={MENU_ITEMS}
-            onClick={(e: any) => navigate(e.key as PageKey)}
-          />
-        </nav>
-
-        <div className="sider-foot">
-          {!siderCollapsed && (
-            <Tooltip title={connTip}>
-              <div className="conn-pill">
-                <span className={"status-dot " + connDotClass} aria-hidden="true" />
-                <span className="conn-text">{connLabel}</span>
-                <Button
-                  type="text"
-                  size="small"
-                  aria-label="重新检查服务连接"
-                  icon={<ReloadOutlined />}
-                  loading={checking}
-                  onClick={() => void refresh()}
+      <AppLayout
+        page={page}
+        isMobile={isMobile}
+        mobileNavOpen={mobileNavOpen}
+        siderCollapsed={siderCollapsed}
+        themeMode={themeMode}
+        mobileNavToggleRef={mobileNavToggleRef}
+        mobileNavRef={mobileNavRef}
+        appContentRef={appContentRef}
+        connection={connectionStatus}
+        workspaceScopeBar={workspaceScopeBar}
+        onNavigate={navigate}
+        onBreakpoint={handleSiderBreakpoint}
+        onCollapse={handleSiderCollapse}
+        onToggleSider={handleToggleSider}
+        onToggleTheme={onToggleTheme}
+        onSetTheme={onSetTheme}
+        onOpenOnboarding={handleOpenOnboarding}
+        onOpenMobileNavigation={openMobileNavigation}
+        onCloseMobileNavigation={closeMobileNavigation}
+        overlays={
+          <>
+            {notificationDrawerOpen ? (
+              <Suspense fallback={null}>
+                <NotificationDrawer
+                  controller={notificationsController}
+                  visible
+                  mobile={isMobile}
+                  readOnly={notificationsReadOnly}
+                  onClose={() => setNotificationDrawerOpen(false)}
+                  onOpenDetail={handleOpenNotificationDetail}
+                  onHandoff={handleNotificationHandoff}
+                  returnFocusRef={notificationReturnFocusRef}
                 />
-              </div>
-            </Tooltip>
-          )}
-          <div className={siderCollapsed ? "sider-actions is-collapsed" : "sider-actions"}>
-            <Tooltip title={siderCollapsed ? "展开侧栏" : "收起侧栏"} placement="right">
-              <Button
-                type="text"
-                size="small"
-                aria-label={siderCollapsed ? "展开侧栏" : "收起侧栏"}
-                icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-                onClick={() => {
-                  if (isMobile) {
-                    setMobileNavOpen(false);
-                  } else {
-                    setCollapsed((value) => !value);
-                  }
-                }}
-              />
-            </Tooltip>
-            <Tooltip
-              title={themeMode === "light" ? "切换到深色主题" : "切换到浅色主题"}
-              placement="right"
-            >
-              <Button
-                type="text"
-                size="small"
-                aria-label={themeMode === "light" ? "切换到深色主题" : "切换到浅色主题"}
-                icon={themeMode === "light" ? <MoonOutlined /> : <SunOutlined />}
-                onClick={onToggleTheme}
-              />
-            </Tooltip>
-            <Tooltip title={siderCollapsed ? "新手引导" : "重看新手引导"} placement="right">
-              <Button
-                type="text"
-                size="small"
-                aria-label="重看新手引导"
-                icon={<InfoCircleOutlined />}
-                onClick={() => setOnboardingOpen(true)}
-              />
-            </Tooltip>
-          </div>
-        </div>
-      </Sider>
-
-      <div className="app-content">
-        {isMobile && (
-          <Button
-            className={mobileNavOpen ? "mobile-nav-toggle is-open" : "mobile-nav-toggle"}
-            type="text"
-            size="small"
-            aria-label={mobileNavOpen ? "关闭导航" : "打开导航"}
-            aria-controls={PRIMARY_NAV_ID}
-            aria-expanded={mobileNavOpen}
-            icon={mobileNavOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
-            onClick={() => setMobileNavOpen((open) => !open)}
-          />
-        )}
-        <div className="enterprise-shell-header">
-          <WorkspaceScopeBar
-            organizationLabel={organizationLabel}
-            knowledgeBaseLabel={knowledgeBaseLabel}
-            environmentLabel={online === true ? "本地环境" : "演示环境"}
-            healthLabel={
-              online === null
-                ? "连接检测中"
-                : degraded
-                  ? "能力降级"
-                  : online
-                    ? "本地连接"
-                    : "离线演示"
-            }
-            compactHealthLabel={
-              online === null ? "检测" : degraded ? "降级" : online ? "在线" : "离线"
-            }
-            healthTone={
-              online === null ? "default" : degraded ? "warning" : online ? "success" : "warning"
-            }
-            actorLabel={actorLabel}
-            actorRole={actorRole}
-            workspaceValue={enterpriseWorkspaceSelector.value}
-            workspaceOptions={enterpriseWorkspaceOptions}
-            workspaceStatus={enterpriseWorkspaceSelector.status}
-            onWorkspaceChange={handleWorkspaceChange}
-            onSearch={handleGlobalSearch}
-            onOpenNotifications={handleOpenNotifications}
-            notificationControl={
-              <NotificationBell
-                summary={notificationsController.summary}
-                capabilityReady={notificationsCapabilityReady}
-                onOpen={handleOpenNotifications}
-              />
-            }
-          />
-        </div>
-        <ModeBanner />
-        <main id="main-content" className="page-slot" tabIndex={-1}>
-          {PAGE_KEYS.filter((key: PageKey) => mountedPages.includes(key)).map((key: PageKey) => (
-            <div key={key} className={page === key ? "page-slot" : "page-slot is-hidden"}>
-              <ErrorBoundary>
-                <Suspense fallback={<PageState status="loading" title="加载中…" />}>
-                  {pageNodes[key]}
-                </Suspense>
-              </ErrorBoundary>
-            </div>
-          ))}
-        </main>
-      </div>
-      {notificationDrawerOpen ? (
-        <Suspense fallback={null}>
-          <NotificationDrawer
-            controller={notificationsController}
-            visible
-            mobile={isMobile}
-            readOnly={notificationsReadOnly}
-            onClose={() => setNotificationDrawerOpen(false)}
-            onOpenDetail={handleOpenNotificationDetail}
-            onHandoff={handleNotificationHandoff}
-            returnFocusRef={notificationReturnFocusRef}
-          />
-        </Suspense>
-      ) : null}
-      {notificationDetailOpen ? (
-        <Suspense fallback={null}>
-          <NotificationDetailDrawer
-            visible
-            state={notificationsController.detail}
-            readOnly={notificationsReadOnly}
-            loading={notificationsController.mutation.status === "saving"}
-            onClose={() => setNotificationDetailOpen(false)}
-            onHandoff={handleNotificationHandoff}
-            onMarkRead={handleNotificationMarkRead}
-            onMarkUnread={handleNotificationMarkUnread}
-            onArchive={handleNotificationArchive}
-            returnFocusRef={notificationDetailReturnFocusRef}
-          />
-        </Suspense>
-      ) : null}
-    </Layout>
+              </Suspense>
+            ) : null}
+            {notificationDetailOpen ? (
+              <Suspense fallback={null}>
+                <NotificationDetailDrawer
+                  visible
+                  state={notificationsController.detail}
+                  readOnly={notificationsReadOnly}
+                  loading={notificationsController.mutation.status === "saving"}
+                  onClose={() => setNotificationDetailOpen(false)}
+                  onHandoff={handleNotificationHandoff}
+                  onMarkRead={handleNotificationMarkRead}
+                  onMarkUnread={handleNotificationMarkUnread}
+                  onArchive={handleNotificationArchive}
+                  returnFocusRef={notificationDetailReturnFocusRef}
+                />
+              </Suspense>
+            ) : null}
+          </>
+        }
+      >
+        <AppRoutes
+          activePage={page}
+          mountedPages={mountedPages}
+          context={routeContext}
+        />
+      </AppLayout>
     </>
   );
 }

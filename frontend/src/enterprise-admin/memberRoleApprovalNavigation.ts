@@ -1,3 +1,5 @@
+import { commitNavigationIntent } from "../run/navigationAdapter";
+
 export interface ApprovalCenterLocationLike {
   pathname: string;
   hash?: string;
@@ -18,6 +20,8 @@ export function approvalCenterNavigationUrl(location: ApprovalCenterLocationLike
 
 export function navigateToApprovalCenter(): void {
   if (typeof window === "undefined") return;
-  window.history.pushState({}, "", approvalCenterNavigationUrl(window.location));
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  commitNavigationIntent(
+    { mode: "history", url: approvalCenterNavigationUrl(window.location) },
+    { historyState: {} },
+  );
 }

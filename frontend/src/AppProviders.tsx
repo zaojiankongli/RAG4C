@@ -8,14 +8,14 @@ import { RunMonitorProvider } from "./run/RunMonitorContext";
 import { useThemeMode } from "./theme/useThemeMode";
 
 export default function AppProviders() {
-  const { mode, toggle } = useThemeMode();
+  const { mode, toggle, setMode } = useThemeMode();
   return (
     <ConfigProvider globalConfig={zhCN}>
       <ConnectionProvider>
         <KnowledgeWorkspaceProvider>
           <KnowledgeBaseDrawerCoordinatorProvider>
             <RunMonitorProvider>
-              <App themeMode={mode} onToggleTheme={toggle} />
+              <App themeMode={mode} onToggleTheme={toggle} onSetTheme={setMode} />
             </RunMonitorProvider>
           </KnowledgeBaseDrawerCoordinatorProvider>
         </KnowledgeWorkspaceProvider>

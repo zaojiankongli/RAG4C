@@ -19,7 +19,7 @@ afterEach(() => {
 /**
  * 这里守的是「在 3 值枚举上做 2 元判断」这一类缺陷：
  * `theme-color` 原先写成 `mode === "dark" ? "#12161f" : "#ffffff"`，
- * anime 静默落到 else 拿到纯白，而它的画布顶边是 #fff0f4 粉。
+ * anime 静默落到 else 拿到纯白，而它的画布顶边是 #f2f7fc 蓝。
  * 逐主题给一张表，任何一列被改回兜底分支都会红在这里。
  *
  * 第三列 `colorScheme` 同样按主题钉住，但含义相反：
@@ -30,7 +30,7 @@ afterEach(() => {
 const CHROME_BY_MODE = [
   ["light", "#ffffff", "light"],
   ["dark", "#12161f", "dark"],
-  ["anime", "#fff0f4", "light"],
+  ["anime", "#f2f7fc", "light"],
 ] as const;
 
 describe("useThemeMode browser chrome sync", () => {

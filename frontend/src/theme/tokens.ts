@@ -1,7 +1,9 @@
 /**
  * RAG4C design tokens shared by TDesign components, app CSS, and charts.
  */
-export type ThemeMode = "light" | "dark" | "anime";
+import { getThemeModeSpec, type ThemeMode } from "./themeModeRegistry";
+
+export type { ThemeMode } from "./themeModeRegistry";
 
 export const BRAND = {
   primary: "#3164F4",
@@ -56,8 +58,8 @@ export const TRANSITIONS = {
 /** Synchronize the app theme contract with TDesign's DOM theme contract. */
 export function applyThemeMode(mode: ThemeMode): void {
   const root = document.documentElement;
-  root.dataset.theme = mode;
-  // anime 是浅色底的自定义主题，浏览器原生 colorScheme 保持 light
-  root.style.colorScheme = mode === "dark" ? "dark" : "light";
+  const spec = getThemeModeSpec(mode);
+  root.dataset.theme = spec.mode;
+  root.style.colorScheme = spec.colorScheme;
 }
 

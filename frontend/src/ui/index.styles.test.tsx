@@ -17,10 +17,20 @@ describe("compatibility control visual contracts", () => {
     expect(css).toContain(".rag-tag.is-danger");
     expect(css).toContain(".rag-tag.is-warning");
     expect(css).toContain(".rag-tag.is-primary");
+    expect(css).toContain(".rag-tag.is-light-outline");
+    expect(css).toContain(".rag-tag.is-small");
   });
 
   it("distinguishes successful and failed fallback progress bars", () => {
     expect(css).toContain(".rag-progress.is-success > span");
     expect(css).toContain(".rag-progress.is-error > span");
+  });
+
+  it("gives fallback drawers a fixed overlay, placement, and scrollable body", () => {
+    expect(css).toContain(".rag-drawer-shell");
+    expect(css).toContain(".rag-drawer-mask");
+    expect(css).toContain(".rag-drawer.is-right");
+    expect(css).toContain(".rag-drawer.is-bottom");
+    expect(css).toContain(".rag-drawer-body");
   });
 });

@@ -4,7 +4,7 @@
  * 首次使用显示引导；完成/跳过后写入 localStorage["rag4c.onboarding.v1"]，
  * 不再自动弹出。兼容旧键 rag4c.onboarding_done。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { MessageCircle, Database, BarChart3, Sparkles, X } from "lucide-react";
 
 const STORAGE_KEY = "rag4c.onboarding.v1";
@@ -64,6 +64,8 @@ export function OnboardingTour({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [step, setStep] = useState(0);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (defaultOpen) {
@@ -78,6 +80,39 @@ export function OnboardingTour({
     setOpen(false);
     onClose?.();
   }, [onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    closeButtonRef.current?.focus();
+    const handleDialogKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) return;
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !dialog.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleDialogKeydown);
+    return () => window.removeEventListener("keydown", handleDialogKeydown);
+  }, [close, open]);
 
   const next = useCallback(() => {
     if (step < STEPS.length - 1) {
@@ -103,6 +138,7 @@ export function OnboardingTour({
 
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
       role="dialog"
       aria-modal="true"
@@ -110,8 +146,10 @@ export function OnboardingTour({
     >
       <div className="w-full max-w-md rounded-[24px] bg-white p-6 shadow-[0_16px_48px_rgba(255,127,165,0.25)] border border-pink-100 relative">
         <button
+          ref={closeButtonRef}
           type="button"
           onClick={close}
+          autoFocus
           aria-label="关闭引导"
           className="absolute top-4 right-4 p-1.5 rounded-full text-pink-300 hover:bg-pink-50 hover:text-pink-500 transition-colors"
         >

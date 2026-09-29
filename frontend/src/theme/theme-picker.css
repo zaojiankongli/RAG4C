@@ -1,0 +1,59 @@
+.theme-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.18fr;
+  gap: 3px;
+  padding: 4px;
+  margin-bottom: 10px;
+  border: 1px solid var(--sider-line);
+  border-radius: 12px;
+  background: var(--sider-hover-bg);
+}
+.theme-picker-option,
+.theme-picker-cycle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 6px 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sider-text-strong);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.theme-picker-option:hover,
+.theme-picker-cycle:hover {
+  background: var(--sider-hover-bg);
+}
+.theme-picker-option[aria-pressed="true"] {
+  background: var(--sider-active-bg);
+  border-color: var(--sider-text-faint);
+  color: var(--sider-active-text);
+  font-weight: 650;
+}
+.theme-picker-bow {
+  display: block;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  background: url("/themes/yanami/materials/iridescent-bow.svg") center / contain no-repeat;
+}
+.theme-picker-cycle {
+  width: 40px;
+  margin: 0 auto 8px;
+}
+.theme-picker button:focus-visible,
+.theme-picker-cycle:focus-visible {
+  outline: 2px solid var(--sider-text-strong);
+  outline-offset: 2px;
+}
+@media (max-width: 768px) {
+  .theme-picker-option,
+  .theme-picker-cycle {
+    min-height: 44px;
+  }
+}

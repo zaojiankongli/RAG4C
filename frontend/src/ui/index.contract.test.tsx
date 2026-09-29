@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { Button, Card, Layout, Menu, Progress, Table, Tag, Tooltip } from "./index";
+import { Button, Card, Empty, Layout, Menu, Progress, Table, Tag, Tooltip } from "./index";
 
 afterEach(cleanup);
 
@@ -16,6 +16,31 @@ describe("TDesign compatibility contracts", () => {
 
     const button = screen.getByRole("button", { name: "↻刷新" });
     expect(within(button).getByTestId("button-icon")).toBeTruthy();
+  });
+
+  it("renders an app-owned empty state without leaking TDesign-only props", () => {
+    render(
+      <Empty
+        type="empty"
+        title="暂无对账事项"
+        description="运行状态一致，暂不需要人工介入。"
+        data-testid="empty-state"
+        id="native-empty-id"
+        role="status"
+        tabIndex={0}
+        aria-label="暂无对账事项"
+      />,
+    );
+
+    const empty = screen.getByTestId("empty-state");
+    expect(empty.classList.contains("rag-empty")).toBe(true);
+    expect(within(empty).getByText("暂无对账事项")).toBeTruthy();
+    expect(within(empty).getByText("运行状态一致，暂不需要人工介入。")).toBeTruthy();
+    expect(empty.getAttribute("type")).toBeNull();
+    expect(empty.id).toBe("native-empty-id");
+    expect(empty.getAttribute("role")).toBe("status");
+    expect(empty.getAttribute("tabindex")).toBe("0");
+    expect(empty.getAttribute("aria-label")).toBe("暂无对账事项");
   });
 
   it("preserves card title, extra actions, ARIA attributes, and root style", () => {
@@ -36,6 +61,36 @@ describe("TDesign compatibility contracts", () => {
     expect(card.style.minHeight).toBe("180px");
     expect(within(card).getByText("知识健康度")).toBeTruthy();
     expect(within(card).getByRole("button", { name: "查看详情" })).toBeTruthy();
+  });
+
+  it("maps the historical card header prop without leaking it to native DOM", () => {
+    render(
+      <Card
+        title="不应覆盖"
+        header={<h2>历史标题</h2>}
+        bordered={false}
+        data-testid="header-card"
+      >
+        内容
+      </Card>,
+    );
+
+    const card = screen.getByTestId("header-card");
+    expect(within(card).getByText("历史标题")).toBeTruthy();
+    expect(within(card).queryByText("不应覆盖")).toBeNull();
+    expect(card.getAttribute("header")).toBeNull();
+    expect(card.classList.contains("is-borderless")).toBe(true);
+    expect(card.getAttribute("bordered")).toBeNull();
+  });
+
+  it("falls back to title when the historical header slot is falsy", () => {
+    render(
+      <Card title="标题回退" header="" data-testid="falsy-header-card">
+        内容
+      </Card>,
+    );
+
+    expect(within(screen.getByTestId("falsy-header-card")).getByText("标题回退")).toBeTruthy();
   });
 
   it("shows tooltip content for pointer hover and keyboard focus", () => {
@@ -67,6 +122,22 @@ describe("TDesign compatibility contracts", () => {
     render(<Tag color={color}>状态</Tag>);
 
     expect(screen.getByText("状态").classList.contains(stateClass)).toBe(true);
+  });
+
+  it("normalizes TDesign Tag metadata for native rendering without leaking props", () => {
+    render(
+      <Tag theme="success" variant="light-outline" size="small" data-testid="native-tag">
+        兼容标签
+      </Tag>,
+    );
+
+    const tag = screen.getByTestId("native-tag");
+    expect(tag.classList.contains("is-success")).toBe(true);
+    expect(tag.classList.contains("is-light-outline")).toBe(true);
+    expect(tag.classList.contains("is-small")).toBe(true);
+    expect(tag.getAttribute("theme")).toBeNull();
+    expect(tag.getAttribute("variant")).toBeNull();
+    expect(tag.getAttribute("size")).toBeNull();
   });
 
   it("keeps grouped navigation valid as a native list", () => {
@@ -137,5 +208,28 @@ describe("TDesign compatibility contracts", () => {
 
     expect(screen.getByRole("cell", { name: "7" })).toBeTruthy();
     expect(screen.getByRole("cell", { name: "128 ms" })).toBeTruthy();
+  });
+
+  it("keeps table sizing, alignment, and overflow focus at the shared boundary", () => {
+    render(
+      <Table
+        size="small"
+        verticalAlign="top"
+        scroll={{ x: 900 }}
+        scrollContainerProps={{ tabIndex: 0, "aria-label": "可横向滚动的表格" }}
+        pagination={false}
+        dataSource={[{ id: "task", label: "任务" }]}
+        rowKey="id"
+        columns={[{ title: "任务", dataIndex: "label" }]}
+      />,
+    );
+
+    const scroll = screen.getByLabelText("可横向滚动的表格");
+    expect(scroll.classList.contains("rag-table-scroll")).toBe(true);
+    expect(scroll.getAttribute("tabindex")).toBe("0");
+    const table = within(scroll).getByRole("table");
+    expect(table.classList.contains("is-small")).toBe(true);
+    expect(table.classList.contains("is-align-top")).toBe(true);
+    expect((table as HTMLTableElement).style.minWidth).toBe("900px");
   });
 });

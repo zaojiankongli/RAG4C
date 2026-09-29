@@ -1,6 +1,8 @@
 import { Button } from "../ui/index";
 import { SettingOutlined } from "../ui/icons";
 import { readKnowledgeActorToken } from "../knowledge/workspaceScope";
+import { navigationIntent } from "../run/appRoute";
+import { commitNavigationIntent } from "../run/navigationAdapter";
 
 export interface AuthRecoveryHintProps {
   /** 覆盖默认标题 */
@@ -47,7 +49,7 @@ export default function AuthRecoveryHint({
           className="auth-recovery-control-min-h"
           onClick={() => {
             if (typeof window !== "undefined") {
-              window.location.hash = "#/config";
+              commitNavigationIntent(navigationIntent(window.location, "config"));
             }
           }}
         >

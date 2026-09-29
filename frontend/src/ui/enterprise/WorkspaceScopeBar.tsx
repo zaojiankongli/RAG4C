@@ -19,6 +19,7 @@ export interface WorkspaceScopeBarProps {
   healthLabel: string;
   compactHealthLabel?: string;
   healthTone?: WorkspaceHealthTone;
+  healthControl?: ReactNode;
   actorLabel: string;
   actorRole: string;
   workspaceValue?: string;
@@ -45,6 +46,7 @@ export default function WorkspaceScopeBar({
   healthLabel,
   compactHealthLabel = healthLabel,
   healthTone = "default",
+  healthControl,
   actorLabel,
   actorRole,
   workspaceValue = "",
@@ -117,22 +119,24 @@ export default function WorkspaceScopeBar({
             <span className="enterprise-workspace-scope__environment">{environmentLabel}</span>
           </div>
         </div>
-        <Tag
-          className={`enterprise-workspace-scope__health is-${healthTone}`}
-          theme={healthTone}
-          variant="light-outline"
-          shape="round"
-          size="small"
-          aria-label={`服务健康状态：${healthLabel}`}
-        >
-          <span className="enterprise-workspace-scope__health-dot" aria-hidden="true" />
-          <span className="enterprise-workspace-scope__health-label">{healthLabel}</span>
-          {compactHealthLabel !== healthLabel ? (
-            <span className="enterprise-workspace-scope__health-label-compact" aria-hidden="true">
-              {compactHealthLabel}
-            </span>
-          ) : null}
-        </Tag>
+        {healthControl ?? (
+          <Tag
+            className={`enterprise-workspace-scope__health is-${healthTone}`}
+            theme={healthTone}
+            variant="light-outline"
+            shape="round"
+            size="small"
+            aria-label={`服务健康状态：${healthLabel}`}
+          >
+            <span className="enterprise-workspace-scope__health-dot" aria-hidden="true" />
+            <span className="enterprise-workspace-scope__health-label">{healthLabel}</span>
+            {compactHealthLabel !== healthLabel ? (
+              <span className="enterprise-workspace-scope__health-label-compact" aria-hidden="true">
+                {compactHealthLabel}
+              </span>
+            ) : null}
+          </Tag>
+        )}
       </div>
 
       {hasWorkspaceSelector ? (

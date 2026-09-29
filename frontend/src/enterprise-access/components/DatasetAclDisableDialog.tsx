@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Checkbox, Dialog, InputNumber, Tag, Textarea } from "tdesign-react";
 import { ArrowRightIcon, CheckCircleIcon, LockOnIcon } from "tdesign-icons-react";
+import { approvalCenterNavigationUrl } from "../../enterprise-admin/memberRoleApprovalNavigation";
 import type { EnterpriseScope } from "../../enterprise-admin/model";
 import { approvalStatusLabel } from "../../enterprise-approval/enterpriseApprovalModel";
+import { commitNavigationIntent } from "../../run/navigationAdapter";
 import type { PersistentDatasetAccessSummary } from "../enterpriseAccessModel";
 import type {
   DatasetAclApprovalRequiredHint,
@@ -50,8 +52,10 @@ function expiryLabel(policy: DatasetAclApprovalPolicyFacts): string {
 }
 
 function navigateToApprovalCenter(): void {
-  window.history.pushState({}, "", "/enterprise/approvals");
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  commitNavigationIntent(
+    { mode: "history", url: approvalCenterNavigationUrl(window.location) },
+    { historyState: {} },
+  );
 }
 
 export default function DatasetAclDisableDialog({

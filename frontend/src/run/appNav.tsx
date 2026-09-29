@@ -1,3 +1,4 @@
+import ThemedNavIcon from "../theme/ThemedNavIcon";
 import type { MenuProps } from "../ui/index";
 import {
   ApartmentOutlined,
@@ -27,20 +28,68 @@ export const MENU_ITEMS: MenuProps["items"] = [
     type: "group",
     label: "智能问答",
     children: [
-      { key: "query", icon: <MessageOutlined />, label: "知识问答" },
+      {
+        key: "query",
+        icon: (
+          <ThemedNavIcon name="agent">
+            <MessageOutlined />
+          </ThemedNavIcon>
+        ),
+        label: "知识问答",
+      },
       { key: "visualize", icon: <ApartmentOutlined />, label: "回答过程" },
-      { key: "retrieval-lab", icon: <FileSearchOutlined />, label: "检索调试" },
+      {
+        key: "retrieval-lab",
+        icon: (
+          <ThemedNavIcon name="search">
+            <FileSearchOutlined />
+          </ThemedNavIcon>
+        ),
+        label: "检索调试",
+      },
     ],
   },
   {
     type: "group",
     label: "知识库",
     children: [
-      { key: "overview", icon: <DatabaseOutlined />, label: "知识概览" },
-      { key: "documents", icon: <FolderOpenOutlined />, label: "文档管理" },
-      { key: "parse-intervention", icon: <FileSearchOutlined />, label: "解析干预" },
+      {
+        key: "overview",
+        icon: (
+          <ThemedNavIcon name="knowledge">
+            <DatabaseOutlined />
+          </ThemedNavIcon>
+        ),
+        label: "知识概览",
+      },
+      {
+        key: "documents",
+        icon: (
+          <ThemedNavIcon name="documents">
+            <FolderOpenOutlined />
+          </ThemedNavIcon>
+        ),
+        label: "文档管理",
+      },
+      {
+        key: "parse-intervention",
+        icon: (
+          <ThemedNavIcon name="search">
+            <FileSearchOutlined />
+          </ThemedNavIcon>
+        ),
+        label: "解析干预",
+      },
       { key: "taxonomy", icon: <TagsOutlined />, label: "知识组织" },
-      { key: "sources", icon: <CloudServerOutlined />, label: "数据来源" },
+      {
+        key: "sources",
+        icon: (
+          <ThemedNavIcon name="integration">
+            <CloudServerOutlined />
+          </ThemedNavIcon>
+        ),
+        label: "数据来源",
+      },
       { key: "knowledge-bases", icon: <ApartmentOutlined />, label: "知识库注册表" },
       { key: "recycle-bin", icon: <DeleteOutlined />, label: "回收站" },
     ],
@@ -53,7 +102,15 @@ export const MENU_ITEMS: MenuProps["items"] = [
       { key: "monitor", icon: <LineChartOutlined />, label: "运行监控" },
       { key: "consistency", icon: <BranchesOutlined />, label: "一致性控制台" },
       { key: "governance", icon: <DeploymentUnitOutlined />, label: "内容治理" },
-      { key: "tasks", icon: <CloudServerOutlined />, label: "任务中心" },
+      {
+        key: "tasks",
+        icon: (
+          <ThemedNavIcon name="integration">
+            <CloudServerOutlined />
+          </ThemedNavIcon>
+        ),
+        label: "任务中心",
+      },
       { key: "automations", icon: <BranchesOutlined />, label: "自动化中心" },
     ],
   },
@@ -61,9 +118,25 @@ export const MENU_ITEMS: MenuProps["items"] = [
     type: "group",
     label: "系统",
     children: [
-      { key: "enterprise", icon: <TeamOutlined />, label: "组织与权限" },
+      {
+        key: "enterprise",
+        icon: (
+          <ThemedNavIcon name="organization">
+            <TeamOutlined />
+          </ThemedNavIcon>
+        ),
+        label: "组织与权限",
+      },
       { key: "notifications", icon: <BellOutlined />, label: "通知中心" },
-      { key: "config", icon: <SettingOutlined />, label: "系统设置" },
+      {
+        key: "config",
+        icon: (
+          <ThemedNavIcon name="settings">
+            <SettingOutlined />
+          </ThemedNavIcon>
+        ),
+        label: "系统设置",
+      },
     ],
   },
 ];

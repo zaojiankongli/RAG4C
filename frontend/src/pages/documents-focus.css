@@ -1,0 +1,75 @@
+/* Document-first workspace. Diagnostics and less frequent filters stay available on demand. */
+.documents-workbench-layout.documents-workbench--focused {
+  display: block;
+}
+.documents-tools-disclosure {
+  margin: 8px 0 20px;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+.documents-tools-disclosure > summary {
+  min-height: 48px;
+  padding: 14px 4px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+}
+.documents-tools-disclosure > summary::marker {
+  color: var(--color-text-tertiary);
+}
+.documents-tools-disclosure > summary:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 3px;
+}
+.documents-tools-disclosure > summary > span:first-child {
+  color: var(--color-text);
+  font-weight: 550;
+}
+.documents-tools-hint {
+  margin-inline-start: 16px;
+  font-size: 12px;
+}
+.documents-tools-body {
+  padding: 12px 4px 20px;
+}
+.documents-tools-body .stat-grid {
+  margin-bottom: 24px;
+}
+.workspace-layout .documents-tools-body .documents-facet-rail {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  position: static;
+  gap: 24px;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  overflow: visible;
+}
+.workspace-layout .documents-tools-body .facet-rail-title {
+  display: none;
+}
+.documents-tools-body .facet-item {
+  min-height: 40px;
+}
+.documents-workbench--focused .docs-toolbar {
+  gap: 16px;
+}
+@media (max-width: 768px) {
+  .workspace-layout .documents-tools-body .documents-facet-rail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px 12px;
+  }
+  .documents-tools-hint {
+    display: block;
+    margin: 5px 0 0 18px;
+  }
+  .documents-tools-body .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 400px) {
+  .workspace-layout .documents-tools-body .documents-facet-rail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

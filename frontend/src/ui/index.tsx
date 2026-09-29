@@ -1,15 +1,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, react-refresh/only-export-components -- typed compatibility boundary over TDesign APIs */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Alert as TAlert,
   Button as TButton,
   Card as TCard,
+  Checkbox as TCheckbox,
   Col as TCol,
   Collapse as TCollapse,
   ConfigProvider as TConfigProvider,
   Dialog as TDialog,
   Drawer as TDrawer,
+  Empty as TEmpty,
   Input as TInput,
   InputNumber as TInputNumber,
   Layout as TLayout,
@@ -32,6 +34,7 @@ import {
   Typography as TTypography,
 } from "tdesign-react";
 import { message } from "./feedback";
+import { uiRendererAdapter } from "./rendererPolicy";
 
 const sizeOf = (size: any): any => (size === "middle" ? "medium" : size);
 const ariaDataProps = (props: Record<string, unknown>): Record<string, unknown> =>
@@ -46,11 +49,23 @@ const spaceGap = (size: unknown): string | number | undefined => {
   if (size === "middle" || size === "medium") return 16;
   return undefined;
 };
-// TDesign supplies the design tokens, locale, layout shell, menu, and icon system.
-// Data-heavy kept-alive pages use the app-owned facade below: direct TDesign
-// popup/form widgets currently enter a browser render loop with this architecture.
-const canRenderTDesign = () => false;
-
+const isCardRootProp = (key: string): boolean =>
+  key === "id" ||
+  key === "role" ||
+  key === "tabIndex" ||
+  key.startsWith("aria-") ||
+  key.startsWith("data-") ||
+  /^on[A-Z]/.test(key);
+const splitCardRootProps = (
+  props: Record<string, unknown>,
+): { root: Record<string, unknown>; component: Record<string, unknown> } => {
+  const root: Record<string, unknown> = {};
+  const component: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(props)) {
+    (isCardRootProp(key) ? root : component)[key] = value;
+  }
+  return { root, component };
+};
 export const Button: any = React.forwardRef<any, any>(function Button(
   { type, danger, size, htmlType, block, ghost, loading, className, children, icon, ...props },
   ref,
@@ -66,7 +81,7 @@ export const Button: any = React.forwardRef<any, any>(function Button(
           : type === "primary"
             ? "base"
             : "outline";
-  if (!canRenderTDesign())
+  if (!uiRendererAdapter.useTDesign("button"))
     return (
       <button
         ref={ref}
@@ -107,16 +122,41 @@ export const Button: any = React.forwardRef<any, any>(function Button(
 });
 
 export const Card: any = React.forwardRef<any, any>(function Card(
-  { children, bodyStyle, styles, size, hoverable, title, extra, ...props },
+  {
+    children,
+    bodyStyle,
+    styles,
+    size,
+    hoverable,
+    title,
+    header,
+    extra,
+    bordered = true,
+    className,
+    style,
+    ...props
+  },
   ref,
 ) {
   const body = bodyStyle ?? styles?.body;
-  if (!canRenderTDesign())
+  const cardHeader = header || title;
+  if (!uiRendererAdapter.useTDesign("card"))
     return (
-      <div ref={ref} {...props} className={["rag-card", props.className].filter(Boolean).join(" ")}>
-        {(title || extra) && (
+      <div
+        ref={ref}
+        {...props}
+        className={[
+          "rag-card",
+          bordered === false ? "is-borderless" : "",
+          className,
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        style={style}
+      >
+        {(cardHeader || extra) && (
           <div className="rag-card-header">
-            <strong>{title}</strong>
+            {header ? header : <strong>{title}</strong>}
             <span>{extra}</span>
           </div>
         )}
@@ -125,46 +165,202 @@ export const Card: any = React.forwardRef<any, any>(function Card(
         </div>
       </div>
     );
-  return (
+  const { root: rootProps, component: componentProps } = splitCardRootProps(props);
+  const tdesignCard = (
     <TCard
-      ref={ref}
-      {...props}
-      title={title}
+      ref={Object.keys(rootProps).length ? undefined : ref}
+      {...componentProps}
+      title={header ? undefined : title}
+      header={header}
       actions={extra}
+      bordered={bordered}
       bodyStyle={body}
       size={sizeOf(size)}
       hoverShadow={hoverable}
+      className={className}
+      style={style}
     >
       {children}
     </TCard>
+  );
+  if (Object.keys(rootProps).length)
+    return (
+      <div ref={ref} {...rootProps}>
+        {tdesignCard}
+      </div>
+    );
+  return (
+    tdesignCard
   );
 });
 
 export const Alert: any = ({
   type,
-  message: title,
+  theme: themeProp,
+  title: titleProp,
+  message: messageProp,
   description,
+  operation,
   showIcon: _showIcon = true,
+  className,
+  id,
+  role,
+  style,
   ...props
-}: any) =>
-  !canRenderTDesign() ? (
+}: any) => {
+  const alertTheme = type ?? themeProp ?? "info";
+  const alertTitle =
+    titleProp !== undefined && titleProp !== null ? titleProp : messageProp;
+  const alertDescription =
+    titleProp !== undefined && titleProp !== null ? messageProp ?? description : description;
+  if (!uiRendererAdapter.useTDesign("alert"))
+    return (
     <div
-      role="alert"
-      className={["rag-alert", `is-${type ?? "info"}`, props.className].filter(Boolean).join(" ")}
+      {...ariaDataProps(props)}
+      id={id}
+      role={role ?? "alert"}
+      style={style}
+      className={["rag-alert", `is-${alertTheme}`, className].filter(Boolean).join(" ")}
     >
-      {title}
-      {description ? <div>{description}</div> : null}
+      {titleProp !== undefined && titleProp !== null ? <strong>{alertTitle}</strong> : alertTitle}
+      {alertDescription ? <div>{alertDescription}</div> : null}
+      {operation ? <div className="rag-alert-operation">{operation}</div> : null}
     </div>
-  ) : (
+    );
+  return (
     <TAlert
       {...props}
+      id={id}
+      role={role ?? "alert"}
+      style={style}
+      className={className}
       icon={typeof document === "undefined" ? false : undefined}
-      theme={type === "error" ? "error" : type}
-      title={description ? title : undefined}
-      message={description ?? title}
+      theme={alertTheme === "error" ? "error" : alertTheme}
+      title={
+        titleProp !== undefined && titleProp !== null
+          ? titleProp
+          : description
+            ? messageProp
+            : undefined
+      }
+      message={description ?? messageProp ?? titleProp}
+      operation={operation}
       maxLine={0}
     />
   );
+};
+export const Empty: any = ({
+  type,
+  title,
+  description,
+  image,
+  children,
+  className,
+  id,
+  role,
+  tabIndex,
+  style,
+  ...props
+}: any) => {
+  if (!uiRendererAdapter.useTDesign("empty"))
+    return (
+      <div
+        {...ariaDataProps(props)}
+        id={id}
+        role={role}
+        tabIndex={tabIndex}
+        className={["rag-empty", className].filter(Boolean).join(" ")}
+        style={style}
+      >
+        {image ? <div className="rag-empty-image">{image}</div> : null}
+        {title ? <strong className="rag-empty-title">{title}</strong> : null}
+        {description ? <p className="rag-empty-description">{description}</p> : null}
+        {children}
+      </div>
+    );
+  const rootProps = {
+    ...ariaDataProps(props),
+    ...(id === undefined ? {} : { id }),
+    ...(role === undefined ? {} : { role }),
+    ...(tabIndex === undefined ? {} : { tabIndex }),
+  };
+  const tdesignProps = { ...props };
+  for (const key of Object.keys(rootProps)) delete tdesignProps[key];
+  const tdesignEmpty = (
+    <TEmpty
+      {...tdesignProps}
+      type={type}
+      title={title}
+      description={description}
+      image={image}
+      className={className}
+      style={style}
+    >
+      {children}
+    </TEmpty>
+  );
+  return Object.keys(rootProps).length ? <div {...rootProps}>{tdesignEmpty}</div> : tdesignEmpty;
+};
+export const Checkbox: any = ({
+  checked = false,
+  onChange,
+  disabled = false,
+  children,
+  className,
+  id,
+  name,
+  value,
+  title,
+  tabIndex,
+  required,
+  autoFocus,
+  readOnly,
+  onClick,
+  ...props
+}: any) => {
+  if (!uiRendererAdapter.useTDesign("checkbox"))
+    return (
+      <label className={["rag-checkbox", className].filter(Boolean).join(" ")}>
+        <input
+          {...ariaDataProps(props)}
+          id={id}
+          name={name}
+          value={value}
+          title={title}
+          type="checkbox"
+          checked={Boolean(checked)}
+          disabled={Boolean(disabled)}
+          tabIndex={tabIndex}
+          required={required}
+          autoFocus={autoFocus}
+          readOnly={readOnly}
+          onClick={onClick}
+          onChange={(event) => onChange?.(event.target.checked)}
+        />
+        <span>{children}</span>
+      </label>
+    );
+  return (
+    <TCheckbox
+      {...props}
+      id={id}
+      name={name}
+      value={value}
+      title={title}
+      checked={checked}
+      disabled={disabled}
+      tabIndex={tabIndex}
+      required={required}
+      autoFocus={autoFocus}
+      readOnly={readOnly}
+      onClick={onClick}
+      className={className}
+      onChange={(value: boolean) => onChange?.(value)}
+    >
+      {children}
+    </TCheckbox>
+  );
+};
 export const Tooltip: any = ({ title, children, trigger = "hover", ...props }: any) => {
   const [visible, setVisible] = useState(false);
   const tooltipId = React.useId();
@@ -185,7 +381,7 @@ export const Tooltip: any = ({ title, children, trigger = "hover", ...props }: a
       if (triggers.includes("focus")) setVisible(false);
     },
   };
-  if (canRenderTDesign())
+  if (uiRendererAdapter.useTDesign("tooltip"))
     return (
       <TTooltip
         {...props}
@@ -213,7 +409,7 @@ export const Tooltip: any = ({ title, children, trigger = "hover", ...props }: a
   );
 };
 export const Popover: any = ({ content, children, trigger = "hover", ...props }: any) =>
-  !canRenderTDesign() ? (
+  !uiRendererAdapter.useTDesign("popover") ? (
     <>{children}</>
   ) : (
     <Popup {...props} content={content} trigger={trigger}>
@@ -230,7 +426,7 @@ function CompatPopconfirm({
   ...props
 }: any) {
   const [open, setOpen] = useState(false);
-  if (canRenderTDesign())
+  if (uiRendererAdapter.useTDesign("popconfirm"))
     return (
       <TPopconfirm
         {...props}
@@ -299,14 +495,15 @@ function CompatPopconfirm({
 export const Popconfirm: any = CompatPopconfirm;
 
 const CompatTextArea = React.forwardRef<any, any>(function CompatTextArea(
-  { onChange, onPressEnter, autoSize, className, ...props },
+  { onChange, onPressEnter, autoSize, className, maxLength, ...props },
   ref,
 ) {
-  if (!canRenderTDesign())
+  if (!uiRendererAdapter.useTDesign("input-text-area"))
     return (
       <textarea
         ref={ref}
         {...props}
+        maxLength={maxLength}
         className={["rag-textarea", className].filter(Boolean).join(" ")}
         style={{
           ...props.style,
@@ -322,6 +519,8 @@ const CompatTextArea = React.forwardRef<any, any>(function CompatTextArea(
     <Textarea
       ref={ref}
       {...props}
+      maxlength={maxLength}
+      autosize={autoSize}
       onChange={(value, context) => onChange?.({ target: { value }, nativeEvent: context?.e })}
       onKeydown={(_value, context) => {
         if (context?.e?.key === "Enter") onPressEnter?.(context.e);
@@ -330,14 +529,15 @@ const CompatTextArea = React.forwardRef<any, any>(function CompatTextArea(
   );
 });
 const CompatSearch = React.forwardRef<any, any>(function CompatSearch(
-  { enterButton, onSearch, onChange, className, ...props },
+  { enterButton, onSearch, onChange, className, maxLength, ...props },
   ref,
 ) {
-  if (!canRenderTDesign())
+  if (!uiRendererAdapter.useTDesign("input-search"))
     return (
       <input
         ref={ref}
         {...props}
+        maxLength={maxLength}
         className={["rag-input", className].filter(Boolean).join(" ")}
         onChange={onChange}
         onKeyDown={(event) => {
@@ -349,6 +549,7 @@ const CompatSearch = React.forwardRef<any, any>(function CompatSearch(
     <TInput
       ref={ref}
       {...props}
+      maxlength={maxLength}
       suffixIcon={enterButton}
       onChange={(value, context) => onChange?.({ target: { value }, nativeEvent: context?.e })}
       onEnter={(value, context) => onSearch?.(value, context)}
@@ -357,14 +558,40 @@ const CompatSearch = React.forwardRef<any, any>(function CompatSearch(
 });
 export const Input: any = Object.assign(
   React.forwardRef<any, any>(function Input(
-    { allowClear, prefix, onPressEnter, onChange, className, ...props },
+    { allowClear, prefix, onPressEnter, onChange, className, maxLength, ...props },
     ref,
   ) {
-    if (!canRenderTDesign())
+    const tdesignRef = React.useRef<any>(null);
+    const previousInnerProps = React.useRef<Record<string, unknown>>({});
+    const assignTDesignRef = (value: any) => {
+      tdesignRef.current = value;
+      if (typeof ref === "function") ref(value);
+      else if (ref) ref.current = value;
+    };
+    const { id, ...tdesignProps } = props;
+    const innerDomProps = {
+      ...ariaDataProps(tdesignProps),
+      ...(id === undefined ? {} : { id }),
+    };
+    const tdesignComponentProps = { ...tdesignProps };
+    for (const key of Object.keys(innerDomProps)) delete tdesignComponentProps[key];
+    React.useLayoutEffect(() => {
+      if (!uiRendererAdapter.useTDesign("input")) return;
+      const input = tdesignRef.current?.inputElement as HTMLInputElement | undefined;
+      if (!input) return;
+      for (const key of Object.keys(previousInnerProps.current)) input.removeAttribute(key);
+      for (const [key, value] of Object.entries(innerDomProps)) {
+        if (value === undefined || value === null || value === false) continue;
+        input.setAttribute(key, String(value));
+      }
+      previousInnerProps.current = innerDomProps;
+    });
+    if (!uiRendererAdapter.useTDesign("input"))
       return (
         <input
           ref={ref}
           {...props}
+          maxLength={maxLength}
           className={["rag-input", className].filter(Boolean).join(" ")}
           onChange={onChange}
           onKeyDown={(event) => {
@@ -374,8 +601,9 @@ export const Input: any = Object.assign(
       );
     return (
       <TInput
-        ref={ref}
-        {...props}
+        ref={assignTDesignRef}
+        {...tdesignComponentProps}
+        maxlength={maxLength}
         clearable={allowClear}
         prefixIcon={prefix}
         onChange={(value, context) => onChange?.({ target: { value }, nativeEvent: context?.e })}
@@ -418,7 +646,7 @@ export const Select: any = React.forwardRef<any, any>(function Select(
   ref,
 ) {
   const multiple = mode === "multiple" || props.multiple === true;
-  if (!canRenderTDesign()) {
+  if (!uiRendererAdapter.useTDesign("select")) {
     const nativeValue =
       value === undefined
         ? undefined
@@ -502,27 +730,60 @@ export const InputNumber: any = ({
   disabled,
   style,
   className,
+  id,
+  inputProps,
   ...props
-}: any) =>
-  !canRenderTDesign() ? (
-    <input
-      type="number"
-      {...ariaDataProps(props)}
-      className={["rag-input", className].filter(Boolean).join(" ")}
-      style={style}
-      min={min}
-      max={max}
-      step={step}
-      disabled={Boolean(disabled)}
-      value={value ?? ""}
-      onChange={(event) => {
-        const raw = event.target.value;
-        onChange?.(raw === "" ? undefined : Number(raw));
-      }}
-    />
-  ) : (
+}: any) => {
+  const tdesignRef = React.useRef<any>(null);
+  const previousInnerProps = React.useRef<Record<string, unknown>>({});
+  const inputPropsRecord =
+    inputProps && typeof inputProps === "object" ? (inputProps as Record<string, unknown>) : {};
+  const forwardedTopLevelProps = ariaDataProps(props);
+  const innerDomProps = {
+    ...ariaDataProps(inputPropsRecord),
+    ...forwardedTopLevelProps,
+    ...(id === undefined ? {} : { id }),
+  };
+  const tdesignProps = { ...props };
+  for (const key of Object.keys(forwardedTopLevelProps)) delete tdesignProps[key];
+  React.useLayoutEffect(() => {
+    if (!uiRendererAdapter.useTDesign("input-number")) return;
+    const nestedInputRef = tdesignRef.current?.inputElement;
+    const input = (nestedInputRef?.inputElement ?? nestedInputRef) as
+      | HTMLInputElement
+      | undefined;
+    if (!input || typeof input.setAttribute !== "function") return;
+    for (const key of Object.keys(previousInnerProps.current)) input.removeAttribute(key);
+    for (const [key, current] of Object.entries(innerDomProps)) {
+      if (current === undefined || current === null || current === false) continue;
+      input.setAttribute(key, String(current));
+    }
+    previousInnerProps.current = innerDomProps;
+  });
+  if (!uiRendererAdapter.useTDesign("input-number")) {
+    return (
+      <input
+        type="number"
+        {...forwardedTopLevelProps}
+        id={id}
+        className={["rag-input", className].filter(Boolean).join(" ")}
+        style={style}
+        min={min}
+        max={max}
+        step={step}
+        disabled={Boolean(disabled)}
+        value={value ?? ""}
+        onChange={(event) => {
+          const raw = event.target.value;
+          onChange?.(raw === "" ? undefined : Number(raw));
+        }}
+      />
+    );
+  }
+  return (
     <TInputNumber
-      {...props}
+      ref={tdesignRef}
+      {...tdesignProps}
       className={className}
       style={style}
       min={min}
@@ -530,11 +791,13 @@ export const InputNumber: any = ({
       step={step}
       disabled={disabled}
       value={value}
+      inputProps={inputProps}
       onChange={onChange}
     />
   );
+};
 export const Switch: any = ({ checked, onChange, disabled, ...props }: any) =>
-  !canRenderTDesign() ? (
+  !uiRendererAdapter.useTDesign("switch") ? (
     /* 兜底分支原先只取 checked/onChange，其余全部静默丢弃，两个后果：
        1) `aria-label` 丢失 → 视觉门禁实测 /config 270 个里的 189 个"无可访问名控件"全部来自这里
           （调用方写的是 `<Switch aria-label="启用 xxx" />`，作者做对了但被吞掉）；
@@ -552,9 +815,16 @@ export const Switch: any = ({ checked, onChange, disabled, ...props }: any) =>
     <TSwitch {...props} disabled={disabled} value={checked} onChange={onChange} />
   );
 export const Spin: any = ({ spinning = true, children, tip, size, ...props }: any) =>
-  !canRenderTDesign() ? (
-    <div>
-      {spinning && tip ? <span>{tip}</span> : null}
+  !uiRendererAdapter.useTDesign("spin") ? (
+    <div
+      {...ariaDataProps(props)}
+      className={["rag-spin", size ? `is-${size}` : ""].filter(Boolean).join(" ")}
+      role={spinning ? "status" : undefined}
+      aria-busy={spinning}
+      aria-live="polite"
+    >
+      {spinning ? <span className="rag-spin-indicator" aria-hidden="true" /> : null}
+      {spinning && tip ? <span className="rag-spin-tip">{tip}</span> : null}
       {children}
     </div>
   ) : (
@@ -584,7 +854,7 @@ export const Progress: any = ({
   const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
   const progressStatus =
     status === "exception" ? "error" : status === "success" ? "success" : "active";
-  if (!canRenderTDesign())
+  if (!uiRendererAdapter.useTDesign("progress"))
     return (
       <div
         {...ariaDataProps(props)}
@@ -619,16 +889,64 @@ export const Progress: any = ({
     />
   );
 };
-export const Skeleton: any = ({ active: _active, title, paragraph, ...props }: any) => (
-  <TSkeleton
-    {...props}
-    animation="gradient"
-    rowCol={[
-      ...(title === false ? [] : [{}]),
-      ...Array.from({ length: paragraph?.rows ?? 3 }, () => ({})),
-    ]}
-  />
-);
+const skeletonRows = (paragraph: unknown): number => {
+  if (paragraph === false) return 0;
+  const rows =
+    paragraph !== null && typeof paragraph === "object"
+      ? (paragraph as { rows?: unknown }).rows
+      : undefined;
+  const parsed = Number(rows);
+  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 3;
+};
+
+export const Skeleton: any = ({
+  active = true,
+  title = true,
+  paragraph,
+  className,
+  style,
+  id,
+  role,
+  tabIndex,
+  ...props
+}: any) => {
+  const rows = skeletonRows(paragraph);
+  if (!uiRendererAdapter.useTDesign("skeleton")) {
+    return (
+      <div
+        {...ariaDataProps(props)}
+        id={id}
+        role={role}
+        tabIndex={tabIndex}
+        className={["rag-skeleton", active === false ? "" : "is-active", className]
+          .filter(Boolean)
+          .join(" ")}
+        style={style}
+        aria-busy="true"
+      >
+        {title !== false ? <span className="rag-skeleton-title rag-skeleton-line" /> : null}
+        {Array.from({ length: rows }, (_, index) => (
+          <span key={index} className="rag-skeleton-line" />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <TSkeleton
+      {...props}
+      id={id}
+      role={role}
+      tabIndex={tabIndex}
+      animation="gradient"
+      rowCol={[
+        ...(title === false ? [] : [{}]),
+        ...Array.from({ length: rows }, () => ({})),
+      ]}
+      className={className}
+      style={style}
+    />
+  );
+};
 
 const COLOR_THEME: Record<string, string> = {
   success: "success",
@@ -640,13 +958,38 @@ const COLOR_THEME: Record<string, string> = {
   red: "danger",
   orange: "warning",
 };
-export const Tag: any = ({ color, icon, children, bordered, ...props }: any) => {
-  const theme = COLOR_THEME[color] ?? "default";
-  if (!canRenderTDesign())
+const TAG_THEMES = new Set(["default", "primary", "success", "warning", "danger"]);
+export const Tag: any = ({
+  color,
+  theme: themeProp,
+  variant,
+  icon,
+  children,
+  bordered,
+  size,
+  className,
+  ...props
+}: any) => {
+  const requestedTheme = COLOR_THEME[color] ?? themeProp ?? "default";
+  const theme = TAG_THEMES.has(requestedTheme) ? requestedTheme : "default";
+  const nativeVariant =
+    variant === "light" || variant === "light-outline" || variant === "outline"
+      ? variant
+      : "";
+  if (!uiRendererAdapter.useTDesign("tag"))
     return (
       <span
         {...props}
-        className={["rag-tag", `is-${theme}`, props.className].filter(Boolean).join(" ")}
+        className={[
+          "rag-tag",
+          `is-${theme}`,
+          nativeVariant ? `is-${nativeVariant}` : "",
+          size ? `is-${size}` : "",
+          bordered === false ? "is-borderless" : "",
+          className,
+        ]
+          .filter(Boolean)
+          .join(" ")}
       >
         {icon}
         {children}
@@ -657,7 +1000,9 @@ export const Tag: any = ({ color, icon, children, bordered, ...props }: any) => 
       {...props}
       icon={icon}
       theme={theme as any}
-      variant={bordered === false ? "light" : "light-outline"}
+      variant={variant ?? (bordered === false ? "light" : "light-outline")}
+      size={size}
+      className={className}
     >
       {children}
     </TTag>
@@ -692,7 +1037,7 @@ function splitInlineProps(props: any): { inline: any; dom: any } {
 const Text: any = ({ type, strong, style, children, ...props }: any) => {
   const mergedStyle = strong ? { ...style, fontWeight: 600 } : style;
   const { inline, dom } = splitInlineProps(props);
-  if (!canRenderTDesign()) {
+  if (!uiRendererAdapter.useTDesign("text")) {
     // code 用真 <code>：既拿到原生等宽语义（读屏器也会念作代码），也不会透传布尔属性。
     // 类名 rag-inline-code 让 fallback 的 <code> 与 TDesign 分支的 `.t-typography code`
     // 共用同一条样式（styles.css 里两者并列），否则同一个 code 语义在两条分支下长得不一样。
@@ -721,12 +1066,13 @@ const Text: any = ({ type, strong, style, children, ...props }: any) => {
   );
 };
 const Title: any = ({ level = 1, children, ...props }: any) => {
-  if (canRenderTDesign()) return <TTypography.Title {...props} level={`h${level}` as any} />;
+  if (uiRendererAdapter.useTDesign("title"))
+    return <TTypography.Title {...props} level={`h${level}` as any} />;
   const { inline, dom } = splitInlineProps(props);
   return React.createElement(`h${level}`, { ...dom, ...(inline.delete ? { style: { textDecoration: "line-through" } } : {}) }, children);
 };
 const Paragraph: any = ({ type, ...props }: any) => {
-  if (canRenderTDesign()) {
+  if (uiRendererAdapter.useTDesign("paragraph")) {
     return <TTypography.Paragraph {...props} theme={type === "danger" ? "error" : type} />;
   }
   return <p {...splitInlineProps(props).dom} />;
@@ -749,7 +1095,7 @@ export const Space: any = ({
   onKeyDown,
   ...props
 }: any) =>
-  !canRenderTDesign() ? (
+  !uiRendererAdapter.useTDesign("space") ? (
     <div
       {...ariaDataProps(props)}
       id={id}
@@ -791,7 +1137,7 @@ export const Space: any = ({
     </TSpace>
   );
 export const Col: any = ({ xs = 24, md = 24, children, className, ...props }: any) =>
-  !canRenderTDesign() ? (
+  !uiRendererAdapter.useTDesign("col") ? (
     <div
       {...props}
       className={["rag-col", className].filter(Boolean).join(" ")}
@@ -805,7 +1151,7 @@ export const Col: any = ({ xs = 24, md = 24, children, className, ...props }: an
     </TCol>
   );
 export const Row: any = ({ children, gutter, className, ...props }: any) =>
-  !canRenderTDesign() ? (
+  !uiRendererAdapter.useTDesign("row") ? (
     <div
       {...props}
       className={["rag-row", className].filter(Boolean).join(" ")}
@@ -818,11 +1164,85 @@ export const Row: any = ({ children, gutter, className, ...props }: any) =>
       {children}
     </TRow>
   );
-export const Statistic: any = TStatistic;
+const CompatStatistic: any = ({
+  title,
+  value,
+  prefix,
+  suffix,
+  precision,
+  formatter,
+  valueStyle,
+  className,
+  id,
+  role,
+  tabIndex,
+  style,
+  ...props
+}: any) => {
+  const tdesignValueStyle =
+    valueStyle && typeof valueStyle === "object" ? valueStyle : undefined;
+  const tdesignColor =
+    tdesignValueStyle && typeof tdesignValueStyle.color === "string"
+      ? tdesignValueStyle.color
+      : undefined;
+  const displayValue =
+    typeof formatter === "function"
+      ? formatter(value)
+      : typeof value === "number" && typeof precision === "number"
+        ? value.toFixed(precision)
+        : value;
+  if (!uiRendererAdapter.useTDesign("statistic")) {
+    return (
+      <div
+        {...ariaDataProps(props)}
+        id={id}
+        role={role}
+        tabIndex={tabIndex}
+        className={["rag-statistic", className].filter(Boolean).join(" ")}
+        style={style}
+      >
+        {title !== undefined && title !== null ? (
+          <div className="rag-statistic-title">{title}</div>
+        ) : null}
+        <div className="rag-statistic-content" style={valueStyle}>
+          {prefix !== undefined && prefix !== null ? (
+            <span className="rag-statistic-prefix">{prefix}</span>
+          ) : null}
+          <span className="rag-statistic-value">{displayValue}</span>
+          {suffix !== undefined && suffix !== null ? (
+            <span className="rag-statistic-suffix">{suffix}</span>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <TStatistic
+      {...props}
+      title={title}
+      value={value}
+      prefix={prefix}
+      suffix={suffix}
+      decimalPlaces={precision}
+      format={formatter}
+      color={tdesignColor}
+      id={id}
+      role={role}
+      tabIndex={tabIndex}
+      style={{ ...style, ...tdesignValueStyle }}
+      className={className}
+    />
+  );
+};
+export const Statistic: any = CompatStatistic;
 export const ConfigProvider: any = TConfigProvider;
 
 const CompatRadioButton: any = ({ children, ...props }: any) =>
-  canRenderTDesign() ? <TRadio.Button {...props}>{children}</TRadio.Button> : <>{children}</>;
+  uiRendererAdapter.useTDesign("radio-button") ? (
+    <TRadio.Button {...props}>{children}</TRadio.Button>
+  ) : (
+    <>{children}</>
+  );
 
 const CompatRadioGroup: any = ({
   children,
@@ -838,7 +1258,7 @@ const CompatRadioGroup: any = ({
   ...props
 }: any) => {
   const generatedName = React.useId();
-  if (canRenderTDesign()) {
+  if (uiRendererAdapter.useTDesign("radio-group")) {
     return (
       <TRadio.Group
         {...props}
@@ -900,17 +1320,257 @@ export const Radio: any = Object.assign(TRadio, {
   Group: CompatRadioGroup,
   Button: CompatRadioButton,
 });
-export const Collapse: any = ({ items = [], ...props }: any) => (
-  <TCollapse {...props}>
-    {items.map((item: any) => (
-      <TCollapse.Panel key={item.key} value={item.key} header={item.label}>
-        {item.children}
-      </TCollapse.Panel>
-    ))}
-  </TCollapse>
-);
+const isSafeCollapseKey = (value: unknown): value is string | number =>
+  (typeof value === "string" || typeof value === "number") &&
+  String(value).length > 0 &&
+  !["__proto__", "prototype", "constructor", "toString"].includes(String(value));
+
+const normalizeCollapseItems = (items: unknown): any[] => {
+  if (!Array.isArray(items)) return [];
+  const safeItems: any[] = [];
+  const seenKeys = new Set<string>();
+  for (const candidate of items) {
+    try {
+      if (
+        candidate === null ||
+        typeof candidate !== "object" ||
+        !isSafeCollapseKey((candidate as { key?: unknown }).key)
+      ) {
+        continue;
+      }
+      const item = candidate as { key: string | number };
+      const normalizedKey = String(item.key);
+      if (seenKeys.has(normalizedKey)) continue;
+      seenKeys.add(normalizedKey);
+      safeItems.push({
+        key: normalizedKey,
+        label: (candidate as { label?: unknown }).label,
+        children: (candidate as { children?: React.ReactNode }).children,
+        disabled: Boolean((candidate as { disabled?: unknown }).disabled),
+      });
+    } catch {
+      // A hostile/untrusted item must not break the entire disclosure surface.
+    }
+  }
+  return safeItems;
+};
+
+const normalizeCollapseValue = (
+  candidate: unknown,
+  validKeys: ReadonlySet<string>,
+  accordion: boolean,
+): string[] | undefined => {
+  if (candidate === undefined) return undefined;
+  const values = Array.isArray(candidate) ? candidate : candidate == null ? [] : [candidate];
+  const normalized = values.map(String).filter((key) => validKeys.has(key));
+  return accordion ? normalized.slice(0, 1) : Array.from(new Set(normalized));
+};
+
+const nextCollapseValue = (activeKeys: string[], key: string, accordion: boolean): string[] =>
+  activeKeys.includes(key)
+    ? activeKeys.filter((activeKey) => activeKey !== key)
+    : accordion
+      ? [key]
+      : [...activeKeys, key];
+
+const CompatCollapse: any = ({
+  items = [],
+  value,
+  defaultValue,
+  onChange,
+  accordion = false,
+  ghost = false,
+  borderless = false,
+  size,
+  disabled = false,
+  className,
+  style,
+  id,
+  role,
+  ...props
+}: any) => {
+  const safeItems = normalizeCollapseItems(items);
+  const validKeys = new Set(safeItems.map((item: any) => String(item.key)));
+  const normalizeKeys = (candidate: unknown): string[] => {
+    return normalizeCollapseValue(candidate, validKeys, accordion) ?? [];
+  };
+  const controlled = value !== undefined;
+  const [uncontrolledKeys, setUncontrolledKeys] = useState<string[]>(() =>
+    normalizeKeys(defaultValue),
+  );
+  const activeKeys = normalizeKeys(controlled ? value : uncontrolledKeys);
+  const toggle = (key: string) => {
+    const next = nextCollapseValue(activeKeys, key, accordion);
+    if (!controlled) setUncontrolledKeys(next);
+    onChange?.(next);
+  };
+  const uid = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
+  return (
+    <div
+      {...ariaDataProps(props)}
+      id={id}
+      role={role}
+      style={style}
+      className={[
+        "rag-collapse",
+        ghost ? "is-ghost" : "",
+        borderless ? "is-borderless" : "",
+        size ? `is-${size}` : "",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {safeItems.map((item: any, index: number) => {
+        const key = String(item.key);
+        const triggerId = `rag-collapse-${uid}-trigger-${index}`;
+        const panelId = `rag-collapse-${uid}-panel-${index}`;
+        const expanded = activeKeys.includes(key);
+        return (
+          <div className="rag-collapse-item" key={key}>
+            <button
+              type="button"
+              id={triggerId}
+              className="rag-collapse-trigger"
+              aria-expanded={expanded}
+              aria-controls={panelId}
+              disabled={Boolean(disabled || item.disabled)}
+              onClick={() => toggle(key)}
+            >
+              <span>{item.label}</span>
+              <span className="rag-collapse-chevron" aria-hidden="true">
+                {expanded ? "−" : "+"}
+              </span>
+            </button>
+            <div
+              id={panelId}
+              className="rag-collapse-panel"
+              role="region"
+              aria-labelledby={triggerId}
+              hidden={!expanded}
+            >
+              {item.children}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+const CompatTDesignCollapse: any = ({
+  safeItems,
+  validKeys,
+  value,
+  defaultValue,
+  onChange,
+  accordion,
+  disabled,
+  ...props
+}: any) => {
+  const controlled = value !== undefined;
+  const [uncontrolledKeys, setUncontrolledKeys] = useState<string[]>(
+    () => normalizeCollapseValue(defaultValue, validKeys, accordion) ?? [],
+  );
+  const activeKeys =
+    normalizeCollapseValue(controlled ? value : uncontrolledKeys, validKeys, accordion) ?? [];
+  const uid = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
+  const handleChange = (nextValue: unknown, context: unknown) => {
+    const normalized = normalizeCollapseValue(nextValue, validKeys, accordion) ?? [];
+    if (!controlled) setUncontrolledKeys(normalized);
+    onChange?.(nextValue, context);
+  };
+
+  return (
+    <TCollapse
+      {...props}
+      disabled={disabled}
+      expandMutex={accordion}
+      value={activeKeys}
+      onChange={handleChange}
+    >
+      {safeItems.map((item: any, index: number) => {
+        const key = String(item.key);
+        const triggerId = `rag-collapse-${uid}-trigger-${index}`;
+        const panelId = `rag-collapse-${uid}-panel-${index}`;
+        const expanded = activeKeys.includes(key);
+        const itemDisabled = Boolean(disabled || item.disabled);
+        return (
+          <TCollapse.Panel
+            key={key}
+            value={key}
+            header={
+              <span
+                id={triggerId}
+                role="button"
+                tabIndex={itemDisabled ? -1 : 0}
+                aria-expanded={expanded}
+                aria-controls={panelId}
+                aria-disabled={itemDisabled}
+                onKeyDown={(event: React.KeyboardEvent<HTMLSpanElement>) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  event.currentTarget.click();
+                }}
+              >
+                {item.label}
+              </span>
+            }
+            disabled={item.disabled}
+          >
+            <div id={panelId} role="region" aria-labelledby={triggerId} hidden={!expanded}>
+              {item.children}
+            </div>
+          </TCollapse.Panel>
+        );
+      })}
+    </TCollapse>
+  );
+};
+
+export const Collapse: any = ({
+  items = [],
+  value,
+  defaultValue,
+  onChange,
+  accordion = false,
+  disabled = false,
+  ...props
+}: any) => {
+  const safeItems = normalizeCollapseItems(items);
+  const validKeys = new Set(safeItems.map((item: any) => String(item.key)));
+  const normalizedValue = normalizeCollapseValue(value, validKeys, accordion);
+  const normalizedDefaultValue = normalizeCollapseValue(defaultValue, validKeys, accordion);
+  if (uiRendererAdapter.useTDesign("collapse")) {
+    return (
+      <CompatTDesignCollapse
+        {...props}
+        safeItems={safeItems}
+        validKeys={validKeys}
+        value={normalizedValue}
+        defaultValue={normalizedDefaultValue}
+        disabled={disabled}
+        accordion={accordion}
+        onChange={(nextValue: unknown, context: unknown) =>
+          onChange?.(normalizeCollapseValue(nextValue, validKeys, accordion) ?? [], context)
+        }
+      />
+    );
+  }
+  return (
+    <CompatCollapse
+      items={safeItems}
+      value={normalizedValue}
+      defaultValue={normalizedDefaultValue}
+      onChange={onChange}
+      accordion={accordion}
+      disabled={disabled}
+      {...props}
+    />
+  );
+};
 export const Segmented: any = ({ options = [], value, onChange, disabled, ...props }: any) =>
-  !canRenderTDesign() ? (
+  !uiRendererAdapter.useTDesign("segmented") ? (
     <div className="rag-segmented">
       {options.map((option: any) => {
         const item = typeof option === "string" ? { label: option, value: option } : option;
@@ -989,7 +1649,7 @@ export const Tabs: any = ({
     // 渲染期更新：React 会立刻用新 state 重跑本组件，不会先把"面板还没挂载"这一帧提交出去。
     setVisited([...visited, current]);
   }
-  if (!canRenderTDesign())
+  if (!uiRendererAdapter.useTDesign("tabs"))
     return (
       <div className={props.className}>
         <div role="tablist" {...ariaDataProps(props)}>
@@ -1053,34 +1713,549 @@ export const Tabs: any = ({
   );
 };
 Tabs.TabPanel = TabPanelPlaceholder;
-export const Drawer: any = ({
+
+const trapDrawerTabKey = (event: KeyboardEvent, drawer: HTMLElement) => {
+  const focusable = Array.from(
+    drawer.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((element) => !element.closest("[hidden], [inert], [aria-hidden='true']"));
+  const active = document.activeElement;
+  if (!focusable.length) {
+    event.preventDefault();
+    drawer.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && (active === drawer || active === first || !drawer.contains(active))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (active === drawer || active === last || !drawer.contains(active))) {
+    event.preventDefault();
+    first.focus();
+  }
+};
+const isTopmostModal = (modal: HTMLElement): boolean => {
+  const modals = Array.from(
+    document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]'),
+  ).filter(
+    (dialog) => !dialog.hidden && dialog.getAttribute("aria-hidden") !== "true",
+  );
+  return modals[modals.length - 1] === modal;
+};
+
+const CompatDrawer = ({
   open,
+  visible,
   title,
+  header,
   onClose,
+  onCancel,
+  onConfirm,
   width,
-  destroyOnClose,
+  height,
+  size,
+  placement = "right",
+  destroyOnClose = false,
+  footer = false,
+  closeBtn = false,
+  showOverlay = true,
+  closeOnOverlayClick = true,
+  closeOnEscKeydown = true,
+  attach,
   children,
+  className,
+  style,
   ...props
-}: any) =>
-  !canRenderTDesign() ? (
-    open ? (
-      <div role="dialog" className={props.className}>
-        {title}
-        {children}
+}: any) => {
+  const resolvedOpen = open ?? visible ?? false;
+  const resolvedTitle = title ?? header;
+  const safePlacement = ["left", "right", "top", "bottom"].includes(placement)
+    ? placement
+    : "right";
+  const resolvedSize =
+    safePlacement === "top" || safePlacement === "bottom" ? height ?? size : width ?? size;
+  const [mounted, setMounted] = useState(Boolean(resolvedOpen));
+  const drawerRef = useRef<HTMLDivElement | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const previousOpenRef = useRef(false);
+  const titleId = React.useId();
+  const ariaProps = Object.fromEntries(
+    Object.entries(props).filter(([key]) => key === "id" || key.startsWith("aria-")),
+  );
+  const hasExplicitAriaLabel = Object.prototype.hasOwnProperty.call(ariaProps, "aria-label");
+  const explicitAriaLabelledby =
+    typeof ariaProps["aria-labelledby"] === "string" ? ariaProps["aria-labelledby"] : undefined;
+  const dataProps = Object.fromEntries(
+    Object.entries(props).filter(([key]) => key.startsWith("data-")),
+  );
+
+  useEffect(() => {
+    if (resolvedOpen) setMounted(true);
+    else if (destroyOnClose) setMounted(false);
+  }, [destroyOnClose, resolvedOpen]);
+
+  React.useLayoutEffect(() => {
+    if (resolvedOpen && !previousOpenRef.current) {
+      returnFocusRef.current =
+        typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      drawerRef.current?.focus();
+    } else if (!resolvedOpen && previousOpenRef.current) {
+      returnFocusRef.current?.focus();
+      returnFocusRef.current = null;
+    }
+    previousOpenRef.current = resolvedOpen;
+  }, [resolvedOpen]);
+
+  useEffect(() => {
+    if (!resolvedOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Tab") {
+        if (drawerRef.current && isTopmostModal(drawerRef.current))
+          trapDrawerTabKey(event, drawerRef.current);
+        return;
+      }
+      if (event.key !== "Escape") return;
+      if (!closeOnEscKeydown) return;
+      if (!drawerRef.current || !isTopmostModal(drawerRef.current)) return;
+      event.stopPropagation();
+      onClose?.({ e: event, trigger: "keydown-esc" });
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [closeOnEscKeydown, onClose, resolvedOpen]);
+
+  if (!resolvedOpen && !mounted) return null;
+
+  const drawerStyle = {
+    ...style,
+    ...(safePlacement === "left" || safePlacement === "right"
+      ? resolvedSize === undefined
+        ? {}
+        : { width: typeof resolvedSize === "number" ? `${resolvedSize}px` : resolvedSize }
+      : resolvedSize === undefined
+        ? {}
+        : { height: typeof resolvedSize === "number" ? `${resolvedSize}px` : resolvedSize }),
+  };
+  const closeControl =
+    closeBtn && React.isValidElement(closeBtn) ? (
+      closeBtn
+    ) : closeBtn ? (
+      <button
+        type="button"
+        className="rag-drawer-close"
+        aria-label="关闭抽屉"
+        onClick={(event) => onClose?.({ e: event, trigger: "click-close-btn" })}
+      >
+        {typeof closeBtn === "string" ? closeBtn : "×"}
+      </button>
+    ) : null;
+  const footerContent =
+    footer === true ? (
+      <>
+        <Button onClick={onCancel}>取消</Button>
+        <Button type="primary" onClick={onConfirm}>
+          确认
+        </Button>
+      </>
+    ) : (
+      footer
+    );
+
+  const drawerContent = (
+    <div
+      {...dataProps}
+      className={["rag-drawer-shell", resolvedOpen ? "is-open" : "is-closed"].join(" ")}
+      hidden={!resolvedOpen}
+      aria-hidden={!resolvedOpen}
+    >
+      {showOverlay ? (
+        <div
+          className="rag-drawer-mask"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && closeOnOverlayClick)
+              onClose?.({ e: event, trigger: "click-overlay" });
+          }}
+        />
+      ) : null}
+      <div
+        {...ariaProps}
+        ref={drawerRef}
+        role="dialog"
+        aria-modal={resolvedOpen ? true : undefined}
+        aria-labelledby={
+          explicitAriaLabelledby ??
+          (hasExplicitAriaLabel && explicitAriaLabelledby === undefined
+            ? undefined
+            : resolvedTitle
+              ? titleId
+              : undefined)
+        }
+        tabIndex={-1}
+        className={["rag-drawer", `is-${safePlacement}`, className].filter(Boolean).join(" ")}
+        style={drawerStyle}
+      >
+        {closeControl}
+        {resolvedTitle !== false && resolvedTitle !== undefined ? (
+          <div id={titleId} className="rag-drawer-header">
+            {resolvedTitle}
+          </div>
+        ) : null}
+        <div className="rag-drawer-body">{children}</div>
+        {footerContent ? <div className="rag-drawer-footer">{footerContent}</div> : null}
       </div>
-    ) : null
-  ) : (
+    </div>
+  );
+  if (attach === "body" && typeof document !== "undefined")
+    return createPortal(drawerContent, document.body);
+  return drawerContent;
+};
+
+export const Drawer: any = (props: any) => {
+  const {
+    open,
+    visible,
+    title,
+    header,
+    onClose,
+    width,
+    height,
+    size,
+    placement = "right",
+    destroyOnClose,
+    children,
+    ...rest
+  } = props;
+  const resolvedOpen = open ?? visible ?? false;
+  const resolvedTitle = title ?? header;
+  const resolvedSize =
+    placement === "top" || placement === "bottom" ? height ?? size : width ?? size;
+  const facadeId = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
+  const facadeClassName = `rag-drawer-facade-${facadeId}`;
+  const usesTDesign = uiRendererAdapter.useTDesign("drawer");
+  const explicitAriaLabel = typeof rest["aria-label"] === "string" ? rest["aria-label"] : "";
+  const explicitAriaLabelledby =
+    typeof rest["aria-labelledby"] === "string" ? rest["aria-labelledby"] : "";
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const previousOpenRef = useRef(false);
+
+  React.useLayoutEffect(() => {
+    if (!usesTDesign) return;
+    if (resolvedOpen && !previousOpenRef.current) {
+      returnFocusRef.current =
+        typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+    } else if (!resolvedOpen && previousOpenRef.current) {
+      returnFocusRef.current?.focus();
+      returnFocusRef.current = null;
+    }
+    previousOpenRef.current = resolvedOpen;
+  }, [resolvedOpen, usesTDesign]);
+
+  useEffect(() => {
+    if (!usesTDesign || typeof document === "undefined") return;
+    const sync = () => {
+      const drawer = document.querySelector<HTMLElement>(`.${facadeClassName}`);
+      if (!drawer) return false;
+      drawer.setAttribute("role", "dialog");
+      if (resolvedOpen) drawer.setAttribute("aria-modal", "true");
+      else drawer.removeAttribute("aria-modal");
+
+      if (explicitAriaLabel) {
+        drawer.setAttribute("aria-label", explicitAriaLabel);
+        drawer.removeAttribute("aria-labelledby");
+        return true;
+      }
+      if (explicitAriaLabelledby) {
+        drawer.removeAttribute("aria-label");
+        drawer.setAttribute("aria-labelledby", explicitAriaLabelledby);
+        return true;
+      }
+      drawer.removeAttribute("aria-label");
+      if (resolvedTitle !== false && resolvedTitle !== undefined && resolvedTitle !== null) {
+        const heading = drawer.querySelector<HTMLElement>(".t-drawer__header");
+        if (heading) {
+          heading.id = `rag-drawer-title-${facadeId}`;
+          drawer.setAttribute("aria-labelledby", heading.id);
+        }
+      } else {
+        drawer.removeAttribute("aria-labelledby");
+      }
+      return true;
+    };
+    if (sync()) return;
+    const observer = new MutationObserver(() => {
+      if (sync()) observer.disconnect();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [
+    explicitAriaLabel,
+    explicitAriaLabelledby,
+    facadeClassName,
+    facadeId,
+    resolvedOpen,
+    resolvedTitle,
+    usesTDesign,
+  ]);
+
+  useEffect(() => {
+    if (!usesTDesign || !resolvedOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const drawer = document.querySelector<HTMLElement>(`.${facadeClassName}`);
+      if (drawer && isTopmostModal(drawer)) trapDrawerTabKey(event, drawer);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [facadeClassName, resolvedOpen, usesTDesign]);
+
+  if (!usesTDesign)
+    return <CompatDrawer {...props} />;
+  return (
     <TDrawer
-      {...props}
-      visible={open}
-      header={title}
+      {...rest}
+      visible={resolvedOpen}
+      header={resolvedTitle}
       onClose={onClose}
-      size={width}
+      placement={placement}
+      size={resolvedSize}
       destroyOnClose={destroyOnClose}
+      className={[rest.className, facadeClassName].filter(Boolean).join(" ")}
     >
       {children}
     </TDrawer>
   );
+};
+
+const dialogButtonConfig = (button: any, fallback: string): any => {
+  if (button === false) return null;
+  if (typeof button === "string") return { content: button };
+  return button ?? { content: fallback };
+};
+
+const CompatDialog = ({
+  open,
+  visible,
+  title,
+  header,
+  onClose,
+  onCancel,
+  onConfirm,
+  confirmBtn,
+  cancelBtn,
+  confirmLoading = false,
+  closeBtn = false,
+  closeOnOverlayClick = true,
+  closeOnEscKeydown = true,
+  destroyOnClose = false,
+  attach,
+  footer,
+  children,
+  className,
+  style,
+  ...props
+}: any) => {
+  const resolvedOpen = open ?? visible ?? false;
+  const resolvedTitle = title ?? header;
+  const [mounted, setMounted] = useState(Boolean(resolvedOpen));
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const previousOpenRef = useRef(false);
+  const titleId = React.useId();
+  const explicitAriaLabel = typeof props["aria-label"] === "string" ? props["aria-label"] : "";
+  const explicitAriaLabelledby =
+    typeof props["aria-labelledby"] === "string" ? props["aria-labelledby"] : "";
+  const ariaProps = Object.fromEntries(
+    Object.entries(props).filter(
+      ([key]) => key === "id" || key === "role" || key.startsWith("aria-"),
+    ),
+  );
+  const dataProps = Object.fromEntries(
+    Object.entries(props).filter(([key]) => key.startsWith("data-")),
+  );
+  const confirmConfig = dialogButtonConfig(confirmBtn, "确定");
+  const cancelConfig = dialogButtonConfig(cancelBtn, "取消");
+  const closeDialog = useCallback((event?: unknown) => onClose?.(event), [onClose]);
+
+  useEffect(() => {
+    if (resolvedOpen) setMounted(true);
+    else if (destroyOnClose) setMounted(false);
+  }, [destroyOnClose, resolvedOpen]);
+
+  React.useLayoutEffect(() => {
+    if (resolvedOpen && !previousOpenRef.current) {
+      returnFocusRef.current =
+        typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      dialogRef.current?.focus();
+    } else if (!resolvedOpen && previousOpenRef.current) {
+      returnFocusRef.current?.focus();
+      returnFocusRef.current = null;
+    }
+    previousOpenRef.current = resolvedOpen;
+  }, [resolvedOpen]);
+
+  useEffect(() => {
+    if (!resolvedOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Tab") {
+        if (dialogRef.current && isTopmostModal(dialogRef.current))
+          trapDrawerTabKey(event, dialogRef.current);
+        return;
+      }
+      if (event.key !== "Escape" || !closeOnEscKeydown) return;
+      if (!dialogRef.current || !isTopmostModal(dialogRef.current)) return;
+      event.stopPropagation();
+      closeDialog({ e: event, trigger: "keydown-esc" });
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [closeDialog, closeOnEscKeydown, resolvedOpen]);
+
+  if (!resolvedOpen && !mounted) return null;
+
+  const closeControl =
+    closeBtn && React.isValidElement(closeBtn) ? (
+      closeBtn
+    ) : closeBtn ? (
+      <button
+        type="button"
+        className="rag-dialog-close"
+        aria-label="关闭对话框"
+        onClick={closeDialog}
+      >
+        ×
+      </button>
+    ) : null;
+  const footerContent =
+    footer !== undefined ? (
+      footer
+    ) : (
+      <>
+        {cancelConfig ? (
+          <Button
+            type="default"
+            disabled={Boolean(cancelConfig.disabled)}
+            onClick={onCancel ?? closeDialog}
+          >
+            {cancelConfig.content ?? "取消"}
+          </Button>
+        ) : null}
+        {confirmConfig ? (
+          <Button
+            type={
+              confirmConfig.theme === "primary" || confirmConfig.theme === "danger"
+                ? "primary"
+                : "default"
+            }
+            danger={confirmConfig.theme === "danger"}
+            loading={Boolean(confirmLoading || confirmConfig.loading)}
+            disabled={Boolean(confirmConfig.disabled)}
+            onClick={onConfirm}
+          >
+            {confirmConfig.content ?? "确定"}
+          </Button>
+        ) : null}
+      </>
+    );
+  const dialogContent = (
+    <div
+      {...dataProps}
+      className={["rag-dialog-shell", resolvedOpen ? "is-open" : "is-closed"].join(" ")}
+      hidden={!resolvedOpen}
+      aria-hidden={!resolvedOpen}
+    >
+      <div
+        className="rag-dialog-mask"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget && closeOnOverlayClick) closeDialog(event);
+        }}
+      />
+      <div
+        {...ariaProps}
+        ref={dialogRef}
+        role={typeof ariaProps.role === "string" ? ariaProps.role : "dialog"}
+        aria-modal={resolvedOpen ? true : undefined}
+        aria-label={explicitAriaLabel || undefined}
+        aria-labelledby={
+          explicitAriaLabel || explicitAriaLabelledby
+            ? explicitAriaLabelledby || undefined
+            : resolvedTitle
+              ? titleId
+              : undefined
+        }
+        tabIndex={-1}
+        className={["rag-dialog", className].filter(Boolean).join(" ")}
+        style={style}
+      >
+        {closeControl}
+        {resolvedTitle !== false && resolvedTitle !== undefined ? (
+          <div id={titleId} className="rag-dialog-header">
+            {resolvedTitle}
+          </div>
+        ) : null}
+        <div className="rag-dialog-body">{children}</div>
+        {footerContent ? <div className="rag-dialog-footer">{footerContent}</div> : null}
+      </div>
+    </div>
+  );
+  if (attach === "body" && typeof document !== "undefined")
+    return createPortal(dialogContent, document.body);
+  return dialogContent;
+};
+
+export const Dialog: any = (props: any) => {
+  const {
+    open,
+    visible,
+    title,
+    header,
+    onClose,
+    onCancel,
+    onConfirm,
+    confirmBtn,
+    cancelBtn,
+    confirmLoading,
+    closeBtn,
+    ...rest
+  } = props;
+  const resolvedOpen = open ?? visible ?? false;
+  const resolvedTitle = title ?? header;
+  const sameCloseHandler = Boolean(onClose && onCancel && onClose === onCancel);
+  const closeGuardRef = useRef(false);
+  const guardCloseHandler = (handler: any) => {
+    if (!handler || !sameCloseHandler) return handler;
+    return (event: unknown) => {
+      if (closeGuardRef.current) return;
+      closeGuardRef.current = true;
+      handler(event);
+      Promise.resolve().then(() => {
+        closeGuardRef.current = false;
+      });
+    };
+  };
+  if (!uiRendererAdapter.useTDesign("dialog")) return <CompatDialog {...props} />;
+  return (
+    <TDialog
+      {...rest}
+      visible={resolvedOpen}
+      header={resolvedTitle}
+      onClose={guardCloseHandler(onClose)}
+      onCancel={guardCloseHandler(onCancel)}
+      onConfirm={onConfirm}
+      confirmBtn={confirmBtn}
+      cancelBtn={cancelBtn}
+      confirmLoading={confirmLoading}
+      closeBtn={closeBtn}
+    />
+  );
+};
 export const Modal: any = ({
   open,
   title,
@@ -1094,7 +2269,7 @@ export const Modal: any = ({
   children,
   ...props
 }: any) =>
-  !canRenderTDesign() ? (
+  !uiRendererAdapter.useTDesign("modal") ? (
     open ? (
       <div className="rag-modal-mask">
         <div role="dialog" className="rag-modal">
@@ -1146,6 +2321,11 @@ function CompatTable({
   loading,
   className,
   scroll,
+  scrollContainerProps,
+  size,
+  verticalAlign = "middle",
+  hover = true,
+  bordered = true,
 }: any) {
   const [page, setPage] = useState(1);
   const [expandedKeys, setExpandedKeys] = useState<Array<string | number>>([]);
@@ -1195,19 +2375,47 @@ function CompatTable({
     setExpandedKeys((current) =>
       current.includes(key) ? current.filter((item) => item !== key) : [...current, key],
     );
+  const {
+    className: scrollContainerClassName,
+    style: scrollContainerStyle,
+    tabIndex: scrollContainerTabIndex,
+    onKeyDown: scrollContainerOnKeyDown,
+    ...rawScrollContainerProps
+  } = scrollContainerProps ?? {};
+  const safeVerticalAlign = ["top", "middle", "bottom"].includes(verticalAlign)
+    ? verticalAlign
+    : "middle";
+  const tableClassName = [
+    "rag-table",
+    size === "small" ? "is-small" : "",
+    `is-align-${safeVerticalAlign}`,
+    hover === false ? "is-hover-disabled" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const tableStyle = scroll?.x
+    ? { minWidth: typeof scroll.x === "number" ? scroll.x : undefined }
+    : undefined;
 
   return (
     <div
-      className={["rag-table-shell", className].filter(Boolean).join(" ")}
+      className={[
+        "rag-table-shell",
+        bordered === false ? "is-borderless" : "",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
       aria-busy={Boolean(loading)}
     >
       <div
-        className="rag-table-scroll"
-        style={
-          scroll?.x ? { minWidth: typeof scroll.x === "number" ? scroll.x : undefined } : undefined
-        }
+        {...ariaDataProps(rawScrollContainerProps)}
+        className={["rag-table-scroll", scrollContainerClassName].filter(Boolean).join(" ")}
+        style={scrollContainerStyle}
+        tabIndex={scrollContainerTabIndex}
+        onKeyDown={scrollContainerOnKeyDown}
       >
-        <table className="rag-table">
+        <table className={tableClassName} style={tableStyle}>
           <thead>
             <tr>
               {rowSelection && (

@@ -62,12 +62,13 @@ describe("App document landmarks", () => {
     expect(screen.getByRole("searchbox", { name: "全局知识搜索" })).toBeTruthy();
     expect(screen.getByText("RAG4C 工作区")).toBeTruthy();
     expect(screen.getByText("默认知识库")).toBeTruthy();
-    expect(screen.getByText("本地连接")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "服务健康状态：已就绪，查看详情" })).toBeTruthy();
+    expect(document.querySelector(".mode-banner")).toBeNull();
     expect(screen.getByText("未连接身份")).toBeTruthy();
-    expect(screen.getByText("智能问答")).toBeTruthy();
-    expect(screen.getByText("知识库")).toBeTruthy();
-    expect(screen.getByText("质量与运维")).toBeTruthy();
-    expect(screen.getByText("系统")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "智能问答" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "知识库" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "质量与运维" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "系统" })).toBeTruthy();
 
     const search = screen.getByRole("searchbox", { name: "全局知识搜索" });
     fireEvent.change(search, { target: { value: "  员工手册  " } });
