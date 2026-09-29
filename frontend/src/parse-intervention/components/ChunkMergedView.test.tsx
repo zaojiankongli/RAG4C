@@ -164,4 +164,27 @@ describe("切片列表与整篇合并视图的切换", () => {
     expect(region.textContent).toContain("总数未知");
     expect(region.textContent).toContain("命中数而不是全篇切片数");
   });
+
+  it("同一 chunkId 以正文和墓碑两种形态出现时不撞 React key（防御：模型层去重回归也不该让视图崩）", async () => {
+    const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // buildMergedDocument 现按 seq 排序不去重；若未来去重被移除或来源混杂
+      // （深链钉入的头部与列表重复载入同一条），chunkId 可能成对出现。
+      // key 现含 kind 后缀，body/tombstone 同 id 也不再撞。
+      renderPane({
+        chunks: [
+          head("c1"),
+          head("c1", { enabled: false, text: "" }),
+          head("c2"),
+        ],
+      });
+      await userEvent.setup().click(screen.getByRole("button", { name: "整篇合并" }));
+      const region = await waitFor(() => screen.getByRole("region", { name: "整篇合并视图" }));
+      expect(region.textContent).toContain("正文 c1");
+      expect(region.textContent).toContain("此处已被人工停用");
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("same key"), expect.anything(), expect.anything());
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
