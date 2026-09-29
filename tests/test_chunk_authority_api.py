@@ -568,12 +568,11 @@ def test_restore_after_tombstone_reprojects_through_the_real_worker(
     assert len(milvus.upserted) == 1, "停用不应重新写入投影"
     tombstone = chunk_catalog.get_head("chunk-1")
     assert tombstone.enabled is False
-    # 观察到的既有行为（非本切片引入，也未在本切片改动）：tombstone 的 delete 操作成功后
-    # ChunkHead 仍停在 index_status=pending / indexed_revision<desired，于是
-    # _projection 的 projection_pending 对"已成功停用"的切片永远报真。
-    # 语义上"投影里没有它"就是期望态，所以这更像对账口径问题而非写失败；
-    # 已登记 docs/compose/智能体交接审查.md §9，改它需要单独裁定。
-    assert tombstone.index_status == "pending"
+    # 2026-09-27 裁定（交接审查 §9 第 8 条）：delete 成功后 worker 与 edit 对称地
+    # mark_indexed——"投影里已无此 chunk"就是期望态，墓碑头必须记 ready/追平，
+    # 不再让 projection_pending 对已成功停用的切片恒真。
+    assert tombstone.index_status == "ready"
+    assert tombstone.indexed_revision == tombstone.desired_index_revision
     # 本文件的 FakeCatalog 是记录型桩：set_document_status 只 append，不改 self.doc。
     # 计数同步本身已在 tests/test_chunk_count_reconciliation.py 用持久化桩证过；
     # 这里按真实 catalog 的行为把桩推进到下一步应有的状态，只 isolate 投影这一段。
@@ -597,6 +596,83 @@ def test_restore_after_tombstone_reprojects_through_the_real_worker(
     last_chunks = last_upsert[0] if isinstance(last_upsert, tuple) else last_upsert
     assert [chunk.text for chunk in last_chunks] == ["edited body"]
     assert graph.built[-1] == ([("chunk-1", "edited body")], "tenant-1")
+    engine.dispose()
+
+
+def test_revert_through_the_real_worker_reprojects_the_historical_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Revert must reproject through the same real worker, not only update the head.
+
+    交接 §9 第 7 条的闭环一半：restore 走真 worker 已由上一条用例覆盖，revert 在
+    此前只到 catalog 层（``tests/test_chunk_revisions.py``）。这条用真
+    ``IndexOperationWorker`` 证明"编辑 -> 回滚到初版"后，投影里真的是初版正文。
+    """
+    from indexing.index_worker import IndexOperationWorker
+    from indexing.projection_handlers import ProjectionHandlers
+    from server.chunk_operations import revert_document_chunk_artifacts
+    from models.orm import Dataset, Tenant
+
+    engine, chunk_catalog, queue, ledger = _authority_state(tmp_path)
+    with Session(engine) as session:
+        tenant = session.get(Tenant, "tenant-1")
+        dataset = session.get(Dataset, "dataset-1")
+        assert tenant is not None and dataset is not None
+        tenant.chunk_count = dataset.chunk_count = 1
+        session.commit()
+    chunk_catalog.upsert_head(
+        chunk_id="chunk-1", tenant_id="tenant-1", dataset_id="dataset-1",
+        document_id="doc-1", parent_chunk_id=None, chunk_index=0, chunk_role="flat",
+        document_revision=2, source_content="original body", content="original body",
+    )
+
+    milvus, embedder, graph = FakeMilvus(), FakeEmbedder(), FakeGraph()
+    pipeline = SimpleNamespace(milvus=milvus, embedder=embedder, graph_builder=graph)
+    catalog_api = FakeCatalog()
+    monkeypatch.setattr("server.chunk_operations.cache_epoch.bump", lambda *_a, **_k: None)
+    monkeypatch.setattr("indexing.index_worker.cache_epoch.bump", lambda *_a, **_k: None)
+    handlers = ProjectionHandlers(
+        chunk_catalog=chunk_catalog, embedder=embedder, milvus=milvus, graph_builder=graph
+    )
+    worker = IndexOperationWorker(queue, handlers=handlers.as_mapping(), worker_id="w-revert")
+
+    def drain() -> int:
+        total = 0
+        for _ in range(8):
+            outcome = worker.run_once(limit=10)
+            if not outcome.claimed:
+                break
+            total += outcome.claimed
+        return total
+
+    def kwargs(**extra):
+        base = dict(
+            authority_mode="active", catalog_api=catalog_api, pipeline=pipeline,
+            chunk_catalog=chunk_catalog, operation_queue=queue, ledger=ledger,
+        )
+        base.update(extra)
+        return base
+
+    update_document_chunk_artifacts("doc-1", "chunk-1", "edited body", expected_revision=0, **kwargs())
+    assert drain() == 2
+    assert [chunk.text for chunk in (milvus.upserted[-1][0] if isinstance(milvus.upserted[-1], tuple) else milvus.upserted[-1])] == ["edited body"]
+
+    reverted = revert_document_chunk_artifacts(
+        "doc-1", "chunk-1", target_revision=0, expected_revision=1,
+        reason="回滚误改", **{k: v for k, v in kwargs().items() if k != "ledger"},
+    )
+    assert len(reverted.operation_ids) == 2
+    assert drain() == 2
+
+    head = chunk_catalog.get_head("chunk-1")
+    assert head.content == "original body"
+    assert head.content_revision == 2 and head.edit_source == "revert"
+    assert head.index_status == "ready" and head.indexed_revision == head.desired_index_revision
+    # 投影里真的是初版正文，而不是 head 单方面翻回去。
+    last_upsert = milvus.upserted[-1]
+    last_chunks = last_upsert[0] if isinstance(last_upsert, tuple) else last_upsert
+    assert [chunk.text for chunk in last_chunks] == ["original body"]
+    assert graph.built[-1] == ([("chunk-1", "original body")], "tenant-1")
     engine.dispose()
 
 

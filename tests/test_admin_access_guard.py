@@ -163,6 +163,8 @@ def test_is_admin_path_matches_parameterized_document_writes() -> None:
     assert is_admin_path("/api/documents/doc-1/chunks/ch-9") is True
     assert is_admin_path("/api/knowledge-bases/ds-1/documents/batch-delete") is True
     assert is_admin_path("/api/knowledge-bases/ds-1/documents/doc-1/delete") is True
+    assert is_admin_path("/api/graph/search") is False
+    assert is_admin_path("/api/graph/subgraph") is False
     # 非管理读路径
     assert is_admin_path("/api/documents") is False
     assert is_admin_path("/api/documents/doc-1") is False

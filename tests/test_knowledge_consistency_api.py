@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 import json
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -184,6 +185,7 @@ def _report() -> ReconcileReport:
         documents_scanned=3,
         authoritative_heads=7,
         projection_chunks=6,
+        projection_read_incomplete_documents=0,
         missing_ids=(RAW_CHUNK_ID,),
         stale_ids=("raw-stale-secret",),
         orphaned_ids=("raw-orphan-secret",),
@@ -294,10 +296,12 @@ def test_summary_requires_read_runs_dry_run_and_never_exposes_raw_identifiers(ap
     }
     assert payload == {
         "mode": "report-only",
+        "projection_read_status": "best_effort",
         "counts": {
             "documents_scanned": 3,
             "authoritative_heads": 7,
             "projection_chunks": 6,
+            "projection_read_incomplete_documents": 0,
             "missing_chunks": 1,
             "stale_chunks": 1,
             "orphaned_chunks": 1,
@@ -330,6 +334,30 @@ def test_summary_requires_read_runs_dry_run_and_never_exposes_raw_identifiers(ap
         "dataset-a",
     ):
         assert secret not in serialized
+
+
+def test_summary_exposes_incomplete_projection_reads_without_inventing_drift(api) -> None:
+    client, _engine, settings, _calls = api
+    report = replace(
+        _report(),
+        missing_ids=(),
+        stale_ids=(),
+        orphaned_ids=(),
+        stale_reasons={},
+        repair_blocked_document_ids=(),
+        projection_read_incomplete_documents=1,
+    )
+    client.app.state.knowledge_consistency_reconciler = lambda **_kwargs: report
+
+    response = client.get(
+        "/api/knowledge-bases/dataset-a/consistency/summary",
+        headers=_headers(settings, "member-a"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["projection_read_status"] == "incomplete"
+    assert response.json()["counts"]["projection_read_incomplete_documents"] == 1
+    assert response.json()["has_drift"] is False
 
 
 def test_repair_plan_requires_manage_and_fails_without_projection_snapshot_authority(api) -> None:
@@ -614,6 +642,7 @@ def _insert_regular_dead_letter(engine, *, suffix: str) -> str:
     ("suffix", "target_store", "operation_name"),
     [
         ("child", "milvus_chunks", "delete_document"),
+        ("graph-child", "graph_projection", "delete_document"),
         ("finalizer", "catalog_finalize", "finalize_document_delete"),
     ],
 )
@@ -1083,6 +1112,282 @@ def test_requeue_accepts_supported_ordinary_projection_pairs(
         letter = session.get(IndexDeadLetter, RAW_DEAD_LETTER_A)
         requeued = session.get(IndexOperation, letter.requeued_to_operation_id)
     assert (requeued.target_store, requeued.operation) == (target_store, operation_name)
+
+
+def test_custom_projection_requeue_dispatches_registered_validator_and_copies_original(
+    api,
+) -> None:
+    from core.projection_target_contract import (
+        ProjectionRequeuePolicy,
+        register_projection_requeue_policy,
+        unregister_projection_requeue_policy,
+    )
+
+    client, engine, settings, _ = api
+    target_store = "custom_vector"
+    seen: list[tuple[str, str, tuple[str, ...]]] = []
+
+    def validate_target(context) -> bool:
+        seen.append(
+            (
+                context.target_store,
+                context.operation,
+                context.payload["chunk_ids"],
+            )
+        )
+        return context.payload["chunk_ids"] == ("chunk-a",)
+
+    register_projection_requeue_policy(
+        target_store,
+        "upsert",
+        ProjectionRequeuePolicy("ordinary", validate_target),
+    )
+    try:
+        _configure_supported_ordinary_operation(
+            engine,
+            target_store=target_store,
+            operation_name="upsert",
+        )
+        ref = consistency_api._resource_ref(
+            RAW_DEAD_LETTER_A,
+            report_secret=REPORT_SECRET,
+            kind="dead-letter",
+        )
+
+        response = client.post(
+            f"/api/knowledge-bases/dataset-a/consistency/dead-letters/{ref}/requeue",
+            headers=_headers(settings, "owner-a", request_id="custom-vector-requeue"),
+            json={},
+        )
+
+        assert response.status_code == 202
+        assert seen == [(target_store, "upsert", ("chunk-a",))]
+        with Session(engine) as session:
+            letter = session.get(IndexDeadLetter, RAW_DEAD_LETTER_A)
+            original = session.get(IndexOperation, "op-a-dead")
+            requeued = session.get(IndexOperation, letter.requeued_to_operation_id)
+            audit_count = int(
+                session.scalar(
+                    select(func.count(KnowledgeAuditEvent.sequence)).where(
+                        KnowledgeAuditEvent.action == "consistency.dead_letter_requeued"
+                    )
+                )
+                or 0
+            )
+        assert original is not None
+        assert requeued is not None
+        assert (
+            requeued.target_store,
+            requeued.operation,
+            requeued.target_revision,
+            requeued.document_generation,
+            requeued.delete_operation_id,
+            dict(requeued.payload or {}),
+        ) == (
+            original.target_store,
+            original.operation,
+            original.target_revision,
+            original.document_generation,
+            original.delete_operation_id,
+            dict(original.payload or {}),
+        )
+        assert audit_count == 1
+    finally:
+        unregister_projection_requeue_policy(target_store, "upsert")
+
+
+def test_unregistered_custom_projection_requeue_fails_without_writes(api) -> None:
+    client, engine, settings, _ = api
+    target_store = "custom_vector"
+    _configure_supported_ordinary_operation(
+        engine,
+        target_store=target_store,
+        operation_name="upsert",
+    )
+    ref = consistency_api._resource_ref(
+        RAW_DEAD_LETTER_A,
+        report_secret=REPORT_SECRET,
+        kind="dead-letter",
+    )
+    before = _counts(engine)
+
+    response = client.post(
+        f"/api/knowledge-bases/dataset-a/consistency/dead-letters/{ref}/requeue",
+        headers=_headers(settings, "owner-a"),
+        json={},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "knowledge_consistency_dead_letter_target_conflict"
+    assert _counts(engine) == before
+    with Session(engine) as session:
+        letter = session.get(IndexDeadLetter, RAW_DEAD_LETTER_A)
+    assert letter is not None
+    assert letter.requeued_to_operation_id is None
+
+
+def test_custom_projection_requeue_fails_closed_when_live_registry_dispatch_is_bypassed(
+    api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.projection_target_contract import (
+        ProjectionRequeuePolicy,
+        register_projection_requeue_policy,
+        unregister_projection_requeue_policy,
+    )
+
+    client, engine, settings, _ = api
+    target_store = "custom_vector"
+    validator_calls: list[str] = []
+
+    def validate_target(context) -> bool:
+        validator_calls.append(context.target_store)
+        return True
+
+    register_projection_requeue_policy(
+        target_store,
+        "upsert",
+        ProjectionRequeuePolicy("ordinary", validate_target),
+    )
+    try:
+        _configure_supported_ordinary_operation(
+            engine,
+            target_store=target_store,
+            operation_name="upsert",
+        )
+        ref = consistency_api._resource_ref(
+            RAW_DEAD_LETTER_A,
+            report_secret=REPORT_SECRET,
+            kind="dead-letter",
+        )
+        monkeypatch.setattr(
+            consistency_api,
+            "resolve_projection_requeue_policy",
+            lambda *_args: None,
+        )
+        before = _counts(engine)
+
+        response = client.post(
+            f"/api/knowledge-bases/dataset-a/consistency/dead-letters/{ref}/requeue",
+            headers=_headers(settings, "owner-a"),
+            json={},
+        )
+
+        assert response.status_code == 409
+        assert (
+            response.json()["error"]["code"] == "knowledge_consistency_dead_letter_target_conflict"
+        )
+        assert validator_calls == []
+        assert _counts(engine) == before
+    finally:
+        unregister_projection_requeue_policy(target_store, "upsert")
+
+
+def test_custom_projection_validator_cannot_bypass_canonical_generation_fences(api) -> None:
+    from core.projection_target_contract import (
+        ProjectionRequeuePolicy,
+        register_projection_requeue_policy,
+        unregister_projection_requeue_policy,
+    )
+
+    client, engine, settings, _ = api
+    target_store = "custom_vector"
+    validator_calls: list[str] = []
+
+    def validate_target(context) -> bool:
+        validator_calls.append(context.target_store)
+        return True
+
+    register_projection_requeue_policy(
+        target_store,
+        "upsert",
+        ProjectionRequeuePolicy("ordinary", validate_target),
+    )
+    try:
+        _configure_supported_ordinary_operation(
+            engine,
+            target_store=target_store,
+            operation_name="upsert",
+        )
+        with Session(engine) as session:
+            document = session.get(Document, "doc-a")
+            assert document is not None
+            document.mutation_generation = 5
+            session.commit()
+        ref = consistency_api._resource_ref(
+            RAW_DEAD_LETTER_A,
+            report_secret=REPORT_SECRET,
+            kind="dead-letter",
+        )
+        before = _counts(engine)
+
+        response = client.post(
+            f"/api/knowledge-bases/dataset-a/consistency/dead-letters/{ref}/requeue",
+            headers=_headers(settings, "owner-a"),
+            json={},
+        )
+
+        assert response.status_code == 409
+        assert (
+            response.json()["error"]["code"] == "knowledge_consistency_dead_letter_lineage_conflict"
+        )
+        assert validator_calls == []
+        assert _counts(engine) == before
+    finally:
+        unregister_projection_requeue_policy(target_store, "upsert")
+
+
+def test_custom_projection_validator_can_only_reject_and_never_enqueue_on_failure(api) -> None:
+    from core.projection_target_contract import (
+        ProjectionRequeuePolicy,
+        register_projection_requeue_policy,
+        unregister_projection_requeue_policy,
+    )
+
+    client, engine, settings, _ = api
+    target_store = "custom_vector"
+    validator_calls: list[tuple[str, str]] = []
+
+    def reject_target(context) -> bool:
+        validator_calls.append((context.target_store, context.operation))
+        return False
+
+    register_projection_requeue_policy(
+        target_store,
+        "upsert",
+        ProjectionRequeuePolicy("ordinary", reject_target),
+    )
+    try:
+        _configure_supported_ordinary_operation(
+            engine,
+            target_store=target_store,
+            operation_name="upsert",
+        )
+        ref = consistency_api._resource_ref(
+            RAW_DEAD_LETTER_A,
+            report_secret=REPORT_SECRET,
+            kind="dead-letter",
+        )
+        before = _counts(engine)
+
+        response = client.post(
+            f"/api/knowledge-bases/dataset-a/consistency/dead-letters/{ref}/requeue",
+            headers=_headers(settings, "owner-a"),
+            json={},
+        )
+
+        assert response.status_code == 409
+        assert (
+            response.json()["error"]["code"] == "knowledge_consistency_dead_letter_lineage_conflict"
+        )
+        assert validator_calls == [(target_store, "upsert")]
+        assert _counts(engine) == before
+        with Session(engine) as session:
+            letter = session.get(IndexDeadLetter, RAW_DEAD_LETTER_A)
+        assert letter is not None
+        assert letter.requeued_to_operation_id is None
+    finally:
+        unregister_projection_requeue_policy(target_store, "upsert")
 
 
 def test_requeue_rejects_invalid_target_operation_pair(api) -> None:

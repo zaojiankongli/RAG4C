@@ -1,7 +1,7 @@
 ---
 feature: backend-extensibility-inventory
 status: delivered
-updated: 2026-09-23
+updated: 2026-09-25
 branch: main
 commits: 1d2e2e6, a50c697, b93e50d, fa32684, b532304, 4cdd051, 4d842e0, 0a825f6, fa52c4c,
   c5c02ee, 227f0f4
@@ -36,6 +36,7 @@ retrieval 12/4606、models 3/9344、config 2/1473；字面量等值分派点 247
 | **通知 source_kind 的投影（本轮，见 §AM）** | 声明式规格表 `NotificationSourceKindSpec`。投影三函数查表。回执与物化不在这张表里 | `tests/test_notification_source_kinds.py`（5 条：宿主字节不变 + ORM/迁移 CHECK 对账） |
 | **身份 provider 的投影（本轮，见 §AN）** | 声明式规格表 `IdentityProviderTypeSpec`。投影函数留在宿主，未知类型拒绝，不落到另一种 | `tests/test_identity_provider_types.py`（5 条：宿主字节不变 + IN 列表对账 + 字段组合 CHECK 对账） |
 | **通知回执 handoff（本轮，见 §AO）** | 策略表 `NotificationReceiptKindSpec`。`_handoff` 只查表。`_safe_route` 与物化不在这张表里 | `tests/test_notification_receipt_kinds.py`（2 条：未知 kind 不查审批 + 注册即派发且宿主字节不变） |
+| **投影死信重放策略（2026-09-24，见 §BB）** | 精确 `(target_store, operation)` `ProviderRegistry`；内置不可覆盖，自定义 target 必须注册同步校验器 | `tests/test_projection_requeue_policies.py`、`tests/test_knowledge_consistency_api.py` 与 target runtime 回归 |
 
 `core/embedding.py` / `core/llm.py` / `core/reranker.py` 经核实**本就已经到位**：
 全部经 `ProviderRegistry`，`server/` 与 `config/` 里没有任何残留 `if provider ==`；
@@ -49,26 +50,26 @@ reranker 要处理 HTTP 状态，共性只有名字）。
 |---|-----|--------------------------------|--------------------|-------|-------|----------|
 | 1 | ~~文档类型 ↔ 能力~~ **本轮已完成**，见 A 表与 §D 2/3 | — | 0（注册即全认） | 否 | `doc_type?: string`，非枚举 | 已落 `indexing/doc_types.py` |
 | 2 | ~~运行事件 `event_type` 的行为分区~~ **本轮已完成**，见 A 表与 §F | — | 0（一行声明 family/phase/rollup/effects） | 否 | `frontend/src/types/rag.ts:47-62` 手工镜像 `Literal` | 已落 `core/run_event_taxonomy.py` |
-| 3 | 投影目标 × 操作（`target_store` × `operation`） | `projection_handlers.py:36-40,125-132,208,460`、`index_worker.py:110-121,153,161,184,228-231,253,257`、`state_machine.py:531-542`、`document_deletion.py:43,1068,1392,1474,1491-1750,1728`、`knowledge_consistency_api.py:60-77` | 7–9（新目标）/ 4–5（新操作） | 否（无 CHECK） | 一致性响应里出现，前端仅当展示串 | Strategy+Registry，键 `store:operation`；**碰投影栅栏，风险最高** |
+| 3 | 投影目标 × 操作（`target_store` × `operation`；handler operation、revision advancement、attempt readiness、state-machine producer、durable-delete target/preflight、死信重放策略、chunk reader、文档级与 Catalog 对齐的报告级 target observation fence、显式 repair adapter 均已注册化；Graph engine Factory/Registry 与 Graph projection consumer Adapter 也已收口 GraphStoreFactory/GraphBuilder/GraphRetriever/集合初始化；Graph comparator 与跨 Catalog 删除目标仍未完成） | `projection_handlers.py`、`index_worker.py`、`state_machine.py:510-605`、`projection_target_runtime.py`、`document_delete_targets.py`、`document_deletion.py`、`projection_target_contract.py`、`core/projection_consistency_{readers,fences,report_fences,repairs}.py`、`core/graph_store_registry.py`、`core/graph_projection_adapters.py`、`scripts/reconcile_chunk_authority.py`、`knowledge_consistency_api.py` | 新 target 必须具备四个 operation、revision、attempt、delete target policy 与精确 pair requeue policy；若要参与读侧对账，注册 reader/fence/report-fence；若要允许 durable repair，另注册显式 repair adapter，reader 不会自动获得写能力；Graph engine 还须注册同步 factory，Graph consumer 还须实现对应 Adapter operation port | 否（无 CHECK） | 一致性响应里出现，前端仅当展示串 | Strategy+Registry + Adapter：handler/requeue 键 `store:operation`，reader/fence/report-fence/repair 键 `target_store`，Graph engine 使用 `ProviderRegistry` + alias declaration，Graph consumer 按 operation-specific method set 校验；state machine 与 delete request 写 authority/outbox 前做全量 preflight；**target observation 不是 Catalog authority**，Graph comparator、Catalog-deleted target enumeration 与 confirmable atomic repair 仍开放 |
 | 4 | ~~来源连接器 `SourceKind`~~ **本轮已完成**，见 A 表与 §D 6 | — | 0（注册 + 挂契约两处声明） | 否 | `openapi.ts:7103,7142,7166` | 已落 `SourcePlugin.config_model/preflight` + `attach_source_contract` |
-| 5 | 审批 `action_type`（控制面校验） | `enterprise_approval_control.py:236,246,269-286,316-355,2742` | 5 + 2 处 ORM CHECK + 1 迁移 | **是**（CHECK 阶梯 `catalog_schema.py:2740-2787` 记录了 6 次加宽） | openapi 5 hits | 声明式字段要求表；**必须保留独立 `if`（publish/rollback ∪ waiver 有重叠）** |
-| 6 | 任务 `source_kind` | API `enterprise_task_operations_api.py:26,39,64,77,81`；核心 `enterprise_task_operations{,_service}.py:20,65,138,143,1480,1489,1506-1522,335,996-1007`；ORM CHECK `orm.py:4980` | 8（~~含两处 `max_length=7`，第 9 个值会被 422 静默挡掉~~ **这句话把形状读错了**：那两个 7 是**列表长度上限**不是字符串宽度。病是真的但机制不同 —— 见 §AD，请求层已收成派生） | **是** | openapi `:6144,6961` | 三份 dict 合成一张 `TaskSourceKindSpec`；**请求层那一半已做（§AD）**，剩下的 8 个行为站点仍在 |
+| 5 | ~~审批 `action_type`（控制面校验）~~ **Python 侧已完成**，见 §AK；新增可持久化 action 仍需独立 CHECK/迁移切片 | `core/approval_fact_rules.py`、`enterprise_approval_control.py` | Python 侧 0（有序规则一行）；持久化新增仍需 ORM CHECK + migration | **是**（现有 CHECK 保持闭合） | OpenAPI/存储词汇保持闭合 | 有序 Strategy/规则表：命中规则叠加，保留 publish/rollback ∪ waiver 的先后与重叠语义 |
+| 6 | 任务 `source_kind` | API `enterprise_task_operations_api.py:26,39,64,77,81`；核心 `enterprise_task_operations{,_service}.py`；ORM CHECK `orm.py:4980` | Python 侧现由 `TaskSourceKindSpec` + `TaskRouteSpec` 统一派发；新增第 8 种可通过 registry 接入 canonical/category/route/adapter collection | **是** | openapi `:6144,6961` | Strategy+Registry：请求层派生（§AD）与核心/service source-kind 策略已收口；**存储 CHECK 仍闭合，新增可持久化 kind 必须另做迁移** |
 | 7 | ~~告警操作 acknowledge/suppress/resolve~~ **本轮已完成**，见 §M | — | 0（注册即全认；两条槽位栅栏 + 列名核对齐模型） | 否 | 否 | 已落 `core/quality_alert_operations.py` |
-| 8 | 通知 `source_kind` | 投影已收成 `core/notification_source_kinds.py`（§AM）。handoff 已收成 `core/notification_receipt_kinds.py`（§AO）。`_safe_route` 与两个物化函数仍是行为代码 | 投影 0，handoff 0。`_safe_route` 与物化不是加一行声明 | **存储仍是**（`orm.py:4183,4203-4210`，本轮没加宽） | 本轮没重测 OpenAPI。前端通知模型里有这个词，不代表契约层认它 | 投影与 handoff 已落。未知 kind 不再落到审批查询 |
-| 9 | `gate_reason → alert_type` 派生 | `alerts.py:1102-1133`（7 条顺序 if），`_ALERT_TYPES:71-80`，CHECK `orm.py:3799` | 3 | **是** | 否 | 有序 matcher 表，保末尾两条启发式的位置 |
+| 8 | 通知 `source_kind` | 投影 §AM、handoff §AO、safe-route Adapter §AR 与 materializer Strategy+Registry §AW 均已落地 | 投影/handoff/materializer 均按注册项派发；route 按 `(source_kind,route_code)` 注册 | 存储 CHECK 仍闭合（`orm.py:4183,4203-4210`），本轮未加宽 | OpenAPI 未重测；前端契约未扩展 | 注册策略不等于授权新增可持久化 kind |
+| 9 | ~~`gate_reason → alert_type` 派生~~ **本轮已完成**，见 §AB | `core/quality_alert_types.py`；宿主 `enterprise_release_quality_alerts.py:1085-1086` | 0（新增 rule 需注册锚点） | **是**（词汇保持闭合） | 否 | 有序 matcher/规则表，保末尾两条启发式的位置 |
 | 10 | 身份 provider `oidc/saml` | 投影已收成 `core/identity_provider_types.py`（§AN）。`_provider_values` 只查表。存储 IN 列表与字段组合 CHECK 没加宽 | 投影 0。能落库的新类型仍要 CHECK 迁移 | **是**（`orm.py` 的 IN 列表 + 字段组合 CHECK 在迁移 `0021` 与 API 测试 DDL，不在 ORM） | 本轮没重测 OpenAPI | 投影声明已落。未知类型仍拒绝。注册不会让它能落库 |
 | 11 | ~~身份吊销 `kind`~~ **本轮已完成**，见 §J | — | 0（注册即全认；栅栏由注册期拒绝而非约定） | 否 | 否 | 已落 `core/identity_revocations.py` |
-| 12 | 自动化 trigger/condition/action 码 | `enterprise_automation_workflows_api.py:225,233,241,556-563,568-598`；`service.py:68,2107-2291,2322,2307` | 3–4 | **是**（`orm.py:5588`） | openapi `:6371,6415` | `TRIGGER_ADAPTER_ORDER` 改为从注册表推导 |
+| 12 | 自动化 trigger/condition/action 码（trigger adapter 与 condition/action Strategy+Registry 已收口；持久化新 code 仍受 DB/API 合同约束） | `core/automation_rule_strategies.py`；`enterprise_automation_workflows.py:310-365,500-546`；`enterprise_automation_workflows_service.py:2319-2326`；`enterprise_automation_workflows_api.py:279-298,553-580` | 0（现有实现只需注册策略；新增持久化 code 仍需独立合同切片） | **是**（`orm.py:5588`） | openapi `:6371,6415` 保持闭合 | `ProviderRegistry` + Strategy：trigger adapter、condition evaluator/parameter declaration、action target adapter；未知/未注册持久化 code fail-closed |
 | 13 | ~~文档排序 `sort` / 游标耦合~~ **本轮已完成**，见 §L | — | 0（新增一个排序一行声明；**第二个 keyset 排序被注册期拒绝**） | 否 | openapi 枚举未动（加排序仍需同步枚举，见 §L 的诚实边界） | 已落 `core/document_sorts.py` |
 | 14 | ~~PDF 分类 → 引擎路由 `pdf_type`~~ **本轮已完成**，见 §K | — | 0（加一类分类结果一行声明） | 否 | `parser_meta` 自由串（新增 `route_reason`） | 已落 `indexing/pdf_type_routing.py` |
 | 15 | ~~就绪探测的方言证明~~ **本轮已完成**，见 §I | — | 0（注册即全认） | 否 | 否 | 已落 `core/read_only_dialects.py`；`knowledge_consistency_api.py:1180` 经核是**写事务栅栏**不是只读证明，刻意没并进来 |
 | 16 | ~~审计导出格式~~ **本轮已完成**，见 §N | — | 0（注册即全认；认不出的存储行改判完整性失败） | 否 | 否 | 已落 `core/audit_export_formats.py` |
-| 17 | **capability 状态生产者**（本轮 §U-2 新登记，未动手） | `core/catalog_schema.py`：11 个 `inspect_*_capability` 名字 / 18 个 def（其中 7 个名字是「冻结-重绑」垫片，**不是缺陷**，见 §U-2）；状态字面量另有 11 处 `return "not_available", ()` 与 61 处 `"unavailable"` | 当前 ≈2（通用垫片 + 各 producer 自己的 ladder 一行） | 否 | 否：`state` 是自由字符串，消费侧三处都已 total（见 §D-1 更正） | 声明表 + 单一 ladder 实现；**硬约束：必须保住 `_KNOWLEDGE_SERVING_ORIGINAL_*` 冻结版的行为等价**，风险与 §D-6 同源 |
+| 17 | **capability 状态生产者**（Stage17、23–32 active inspector 已注册化，见 §AX/§AY/§BC/§BE/§BF–§BK/§BN/§BO/§BP；当前范围已完成逐项 frozen fallback 对齐） | `core/catalog_schema.py`：11 个 `inspect_*_capability` 名字 / 18 个 def；每个公开 active inspector 现在由 `CatalogCapabilityPolicy` + 共享 `ProviderRegistry` 派发；`_KNOWLEDGE_SERVING_ORIGINAL_*` 保留为兼容 fallback/oracle | 新同类 producer 由一条 policy + shared producer；Stage17、23–32 的历史 fallback 已逐项证明；Capability policy 目前集中在 catalog schema 注册区 | 否 | 否：`state` 是自由字符串，消费侧三处都已 total（见 §D-1 更正） | `CatalogCapabilityPolicy` + `ProviderRegistry` Strategy dispatch + shared Template Method；**新增 capability 必须对齐冻结 producer** |
 
-**本轮之后仍为"待做"的原因**：5、6、8、9、10、12 六条要改数据库 CHECK → 按红线必须单独成切片；
-3 号虽无迁移但直接压在投影栅栏上，风险最高，需要独立设计与评审。 17 号是新登记的一条，不在「顺手可修」里：每次改动都要同时证明与冻结版行为等价，而收益只是少抄一处 ladder。
+**本轮之后仍为"待做"的原因**：#5、#6、#8、#10、#12 的 Python 侧已分别收口；若要增加新的可持久化成员，仍必须按红线单独完成 DB CHECK、migration、OpenAPI/前端合同切片。
+#9 的 Python 侧已完成，存储词汇仍刻意闭合。#3 的死信重放 pair contract、chunk reader、文档级与报告级 target observation 已注册化，但不能宣称任意 target 可被完整对账；当前没有 Dataset 级外部 target enumeration、可验证的 Catalog mutation generation、Graph comparator 或 target-specific atomic repair。该报告 reader 直接涉及投影 authority，仍需独立设计与评审。#17 Stage17、23–32 的历史 producer 对齐已在 §BN/§BO/§BP 汇总完成；未来新增 capability 仍需沿同一守卫落地。
 
-后来的更正：#5、#6、#9、#12 的 Python 侧已经各自收口，都没有加宽 CHECK。#8 的投影（§AM）和 handoff（§AO）已收，CHECK 没加宽；`_safe_route` 和两个物化函数没动。#10 只收了投影（§AN），注册一种类型仍不能落库。按这张表还开着的是 #8 的 `_safe_route`/物化、#3、#17。
+后来的更正：#5、#6、#9、#12 的 Python 侧已经各自收口，都没有加宽 CHECK。#8 的投影（§AM）、handoff（§AO）、`_safe_route` adapter（§AR）与 materializer（§AW）均已收，CHECK 没加宽。#10 只收了投影（§AN），注册一种类型仍不能落库。#3 的 worker、revision、attempt、producer、durable-delete 与死信重放均已按注册策略收口（§AZ/§BA/§BB）；一致性报告对账仍是 Milvus-only，故不能宣称任意自定义 store 已全面可读、可写、可删、可对账。#17 当前范围的 Stage17、Stage23–32 active inspector 已共用 `CatalogCapabilityPolicy` + `ProviderRegistry`，并且 frozen original 已逐项完成兼容矩阵；后续新增 capability 仍必须新增独立兼容矩阵与 review。
 
 ## C. 故意不转（这一节和上表同等重要）
 
@@ -798,14 +799,15 @@ DocumentsFilterState, (value: string) => void>` 两张表，回灌 / 单键写 /
    安全面重新当缺陷排优先级，白花一片预算。
 2. **`core/catalog_schema.py` 里 7 个 `inspect_*_capability` 名字各有两份定义**（11 个 distinct
    名字 / 18 个 def；`ast.unparse` 逐对比对确认同一名字的两份**不同**）。
-   **这不是缺陷**：:10975-10990 先把当时那版实现赋给 `_KNOWLEDGE_SERVING_ORIGINAL_*_CAPABILITY`，
-   随后才把公开名重绑到通用的 `_knowledge_serving_revision_compatible(...)` —— 刻意的
-   "冻结-重绑"行为等价垫片。差点把它写成 §D-8 那一类"两个分派器只改一边会静默失效"，
-   是查了 `_ORIGINAL_*` 的赋值点才没写错。
-   **但它决定了这条轴的改法**：状态字面量除声明表外还散着 11 处 `return "not_available", ()` 与
-   61 处 `"unavailable"` 字面量，且收成声明表时必须同时保住冻结版的行为等价（垫片每处都拿
-   ORIGINAL 版做对照）。归为 §B 候选**轴 #17（capability 状态生产者）**，
-   与 §D-6 同源风险，**不属于"顺手可修"**。
+   逐个核对后，只有六组是刻意的冻结-重绑：旧实现赋给
+   `_KNOWLEDGE_SERVING_ORIGINAL_*_CAPABILITY`，公开名再改为
+   `_knowledge_serving_revision_compatible(...)` wrapper。Automation 这一组不同：
+   旧定义被捕获为 `_KNOWLEDGE_SERVING_LEGACY_AUTOMATION_CAPABILITY`；2026-09-24 的 §AY
+   已将 active public inspector 接到共享 producer，捕获的旧函数保持不变。不要把它误称为
+   与六个 ORIGINAL fallback 相同的 wrapper。以上重复定义本身不自动构成缺陷，不能据此删旧函数。
+   **这决定了轴 #17 的改法与边界**：状态字面量还散在 producer 中；同构 active ladder 可由共享
+   policy/template 处理，但收敛历史 fallback 与其它独立探针时仍须逐项保住冻结行为，与 §D-6
+   同源风险，**不属于"顺手可修"**。
 
 ## V. §D-9 落地记录：一个别名只留一个主人（含一次"我以为会有缺口，结果没有"）
 
@@ -1509,3 +1511,777 @@ API 测试 DDL 里。ORM 的 `TenantIdentityProvider` 没有这条约束。本�
 `HOST_RESTORED True`。还原后的查表在 `_handoff:602`，拒绝在 :604。
 
 OpenAPI 本轮没有重测。权威 MySQL（192.168.100.128）本机连不上，上面的数字都是 sqlite 上的 pytest。
+
+
+## AP. 投影 handler 未知 operation fail-closed 基线（2026-09-23）
+
+独立只读审查发现 `handle_milvus` / `handle_graph` 仅将 `delete_document` 单独分派，未知 `operation` 会跌入重建路径；该列是无 CHECK 的持久化字符串。已先于 #3 全轴注册表设计，在两个 handler 第一行校验已知有效值 `upsert / reconcile / delete / delete_document`，未知值抛 `UnsupportedProjectionOperation`，且在 embedding 和外部投影副作用之前拒绝。
+
+此项只建立 fail-closed 边界，并未改变 `target_store × operation` 的多处耦合，因此 #3 仍 OPEN。详见 `docs/2026-09-23-projection-operation-dispatch.md`。测试 `tests/test_projection_handlers.py` 为 14 passed；移除校验的反向验证令新增两例红（DID NOT RAISE）。有效值 `reconcile` 是从 `indexing/reconciler.py` 和全文件回归补证的，不要删掉。
+
+
+## AQ. 投影 operation handler 策略注册（2026-09-23）
+
+在 AP 的 fail-closed 入口之上，`indexing/projection_handlers.py` 已使用 `core.providers.ProviderRegistry` 注册 `target_store:operation` 策略。当前四个有效 operation 在 Milvus/graph 两个目标上各有一条内置注册，handler 不再按 operation 写新的入口分支；策略必须在注册时通过单个 positional context 的签名绑定校验，未知 key 使用类型化 `UnknownProviderError`，策略内部异常不会混同为未知操作；动态注册 `custom_probe` 的真实路径测试已通过；provider 与 projection 两个文件合计 50 passed。
+
+这只收口 handler 选择层；`index_worker.py` 的 revision/attempt 语义、生产端、删除编排与投影栅栏仍未收成单一扩展轴，#3 继续 OPEN。详见 `docs/2026-09-23-projection-operation-registry.md`。
+
+
+## AR. 轴 #8 的安全 route Adapter（2026-09-23）
+
+`core/enterprise_notification_receipts.py::_safe_route` 已通过 `core.providers.ProviderRegistry` 按 `source_kind:route_code` 派发到 `core/notification_route_adapters.py` 的 Adapter。quality alert 与 approval 两种既有 DTO 形状分别保留原字段/租户/source 对齐与 safe path 构造；未知或错配组合 fail-closed，不会选择默认 route。注册期校验 callable/context 签名和重复项；宿主还约束策略输出为 `/enterprise/...` 相对路径、安全 query，并自行生成 canonical href。
+
+新增 `tests/test_notification_route_adapters.py` 覆盖动态注册真实 `_safe_route` 路径、未知/错配拒绝、注册错误、adapter 外链/路径遍历拒绝及两种 built-in legacy shape。暂时禁用 dispatch 后动态路径测试预期红，源文件随后还原；20 条 route/receipt 回归通过。数据库 CHECK、OpenAPI、物化、handoff 和 `_notification_payload` 一致性校验没有随之开放。详见 `docs/2026-09-23-notification-route-adapters.md`。
+
+
+## AS. 轴 #3 的 revision advance 策略（2026-09-23）
+
+`IndexOperationWorker._advance_projection_revision` 已改为按 target store 查 `core/projection_revision_strategies.py` 的策略注册。内置策略保留 Milvus desired/indexed revision 与 graph content/graph revision 的旧栅栏。普通 operation 会在 handler 副作用前确认 revision strategy 存在；缺失时走 retry 且 handler 不运行。动态 custom store 经真实 `IndexOperationWorker.run_once` 的测试已覆盖 revision 更新。
+
+这只完成 worker 生命周期的一项语义：primary/graph attempt readiness、state machine 生产目标、durable delete stores 与一致性投影仍有 target-store 分支；#3 仍 OPEN。详见 `docs/2026-09-23-projection-worker-revision-strategy.md`。
+
+
+## AT. 轴 #3 的 worker revision policy（2026-09-23）
+
+`IndexOperationWorker._advance_projection_revision` 已改为通过 `core/projection_revision_strategies.py` 按精确 `target_store` 查策略；Milvus 与 graph revision SQL/fence 保留旧行为。Worker 在 handler 前解析并 pin strategy，unknown/non-canonical target 不触碰外部 handler，只进入 durable retry；registry 在 handler 期间被替换也不会让当前 operation 用另一策略推进版本。revision policy 必须同步，注册期拒绝 async function/callable，意外 awaitable 在运行时关闭/取消并失败。
+
+独立 review 指出并促成三项约束：签名 async 实现、pin callback 防中途 registry 替换、以及旧 `graph_*` prefix implicit behavior 的去留。现在只支持明确内置/注册的精确 target，非精确大小写或其它 `graph_*` 在副作用前 retry；`graph_projection` 成功路径另有栅栏用例。相关 worker/projection/delete 测试 48 passed（含 1156 个既有 utcnow deprecation warnings）。
+
+这仍不是轴 #3 完成：attempt primary/graph readiness（`_advance_attempt_lifecycle`）、state-machine target production、durable-delete `_DELETE_STORES` 与一致性视图仍按既有 target 集合处理，新增存储需下一片逐边界完成。详见 `docs/2026-09-23-projection-worker-revision-strategy.md`。
+
+## AU. 轴 #3 的 projection attempt readiness 策略（2026-09-23）
+
+新增 `core/projection_attempt_lifecycle.py`，复用唯一 `ProviderRegistry`，按精确 `target_store` 注册 immutable policy（primary/secondary、pending finalization barrier、同步 readiness predicate）。`IndexOperationWorker` 在 handler 前解析并在长驻 worker 内按 attempt pin 住目标集合的策略；缺失目标在 projection 外部副作用前 retry。handler 与 revision advancement 之后、`complete_operation` 之前执行当前目标 readiness：false/异常走持久 retry/dead-letter；回调在独立 session 关闭后运行，最终化事务再次检查 `current_attempt_id`。
+
+Milvus stale target revision（`target_revision < desired_index_revision`）仍作为不推进 indexed revision 的 no-op succeeded；desired/indexed final fence 保留。Graph revision 由 graph policy 在其 operation complete 前校验。durable delete 仍绕过 ingestion attempt policy，本片未碰删除状态机或 schema。
+
+常驻测试覆盖真实动态 target、双 operation 的 attempt policy pinning、false/exception 后重试、并发新 attempt guard、未知 policy fail-closed、注册错误和无 store 字面值分支守卫。Worker/projection/delete 合并 **57 passed**；ruff 与 diff check 通过。禁用 pre-completion readiness gate 的反向验证使 false-readiness 测试以预期行为断言失败，源码逐字节还原。独立 reviewer 复核前 3 个 medium findings 均已解决，stale Milvus 兼容点 **1 passed**，无新 blocker。
+
+详见 `docs/2026-09-23-projection-attempt-lifecycle-policy.md` 与 `docs/plans/2026-09-23-projection-attempt-lifecycle-strategies-design.md`。该切片**不表示 #3 全轴关闭**；state-machine target production、durable delete store set/handlers/lifecycle 与 consistency projection 仍开放。
+
+
+## AV. Axis #3 state-machine target producer（2026-09-23）
+
+`DocumentIngestJob.run` 的投影 target 选择已收成 `core/projection_target_producers.py` 的 producer registry，复用 `ProviderRegistry`。默认仍是 Milvus 必选、Graph 可选，旧 target 顺序与 dedup identity 保持；注册 `custom_vector` 后可由真实公开 ingest 路径排入任务，不改宿主分支。内置 producer 不可替换/注销，动态 producer identity 与 canonical target 对齐。
+
+`tests/test_projection_target_producers.py` 14 passed；相关入库/权限/删除回归 53 passed。暂时禁用 dispatcher 的反向验证使真实 ingest 测试按预期失败，`indexing/state_machine.py` 已逐字节恢复。详见 `docs/2026-09-23-projection-target-producer-registry.md` 和设计文档。该切片只完成 #3 的生产目标边界；durable delete、consistency/readiness 的其它边界仍开放。
+
+## AW. Axis #8 notification materializer Strategy+Registry（2026-09-23）
+
+`core/notification_materializers.py` 通过现有 `ProviderRegistry` 按 `source_kind` 注册同步 materialize/discover 策略。两个旧公开物化函数保留签名与结果形状；quality alert order 10、approval order 20，仍保持质量告警先于审批。`reconcile_notification_sources` 在同一 discovery session 收集各策略请求，关闭该 session 后按 policy/order materialize。请求的 `source_scope` 会 copy + read-only freeze。
+
+首轮独立 review 找到 public mutable registry 可替换内置策略、保留 kind 的初始化竞态、缺少自定义 discovery 真实 reconcile 测试。修复为 private registry、预留内置 kind 并在同一锁内注册/安装、direct dispatch identity fence、以及动态 discovery 集成测试。复审发现 built-in installer 仍是 public，已改 private 并验证旧 public symbol 不存在；复审 PASS。DB source/category/route CHECK、OpenAPI、前端类型、receipt/handoff、route adapter、授权事务均未随本片扩宽。
+
+完整通知相关回归 65 passed；materializer suite 最终快照 21 passed；ruff、`git diff --check` 通过。临时禁用 dispatcher 后真实 dispatch 测试按预期失败，源码逐字节恢复。详见 `docs/2026-09-23-notification-materializer-registry.md` 与设计文档。
+
+
+## AX. Axis #17 Stage26/Stage27 shared capability producer（2026-09-24；历史基线）
+
+Stage26 Knowledge Serving 与 Stage27 Knowledge Operations 原本各自内联相同的
+revision/dialect/state ladder，只有 required tables、minimum revision、错误文案与领域
+checker 不同。现由 `core/catalog_capability_producers.py` 的 immutable
+`CatalogCapabilityPolicy` + shared Template Method 实现；`core/catalog_schema.py` 复用唯一
+`ProviderRegistry` 按能力名派发。新增同形 producer 注册一条 policy，不再复制 state ladder。
+
+策略注册期校验必需字段、非空表/方言集、同步 checker 签名和 minimum revision 必须同时存在于
+已知 migration graph 与能力 revision order（否则旧的 `-1` fallback 会错误满足门槛）。内置
+Stage26/27 key 可注册但不能被动态覆盖或移除。公开 inspector 名、Stage26 兼容 alias、
+`(state, issues)` 结果、错误文案、`not_available`/`unavailable` 区别及领域 checker 均保留。
+
+本片当时**只合并 Stage26/27 两个同构新式 ladder**，没有冻结历史
+fallback；2026-09-25 的 BP 切片补上了这两个能力自己的 frozen inspector。
+其它历史 inspector、Automation 自有 ladder 与存储契约仍不在本条初始范围内；
+轴 #17 仍 OPEN。无 migration / DB CHECK / OpenAPI / 前端类型 / 授权 consumer 变化。
+
+新增 `tests/test_catalog_capability_producers.py`：动态 policy 真实走公共 inspector、
+revision-aware checker 实收当前 revision、重复和异步 checker / 未知 minimum revision 注册拒绝、
+built-in replace/unregister 拒绝、旧 revision 无表返回 `not_available`、部分表仍 fail-closed。
+该测试 **8 passed**。含 Stage26/Stage27 readiness、Stage17 授权安全与通用 capability consumer
+回归合跑 **73 passed，959 个既有弃用警告**；Ruff / 新文件格式检查 / py_compile /
+`git diff --check` 通过。禁用 registry dispatch、绕过 minimum-revision 与 sync-checker guard
+后的常驻测试均按预期变红（process-local monkeypatch，无源码改写）。独立首轮 review 发现的
+P2/P3 已修复，follow-up **代码 review PASS**，无剩余 findings。reviewer 指出的交接状态
+滞后已同步，并确认文档 finding 关闭。实施交接与设计见
+`docs/2026-09-24-catalog-capability-producer.md`、
+`docs/plans/2026-09-24-catalog-capability-producer-design.md`。
+
+
+## AY. Axis #17 Stage25 Automation active capability producer（2026-09-24）
+
+Stage25 Automation 的 active public inspector 现复用 Stage26/27 的
+`CatalogCapabilityPolicy` + shared Template Method + `ProviderRegistry`。
+旧 Automation 实现仍以
+`_KNOWLEDGE_SERVING_LEGACY_AUTOMATION_CAPABILITY` 捕获且保持不变；Stage25 特有的
+missing/unknown/pre-minimum revision、0035 无表错误、后续 revision 无表
+`not_available` 语义由 policy 显式声明。历史 frozen fallback 和其它 inspector 未动，
+#17 仍 OPEN。
+
+Automation readiness/service/Admin API 首轮 **80 passed**；与 Stage26/27 readiness、
+Stage17 authorization security、通用 capability producer/consumer 合跑 **107 passed，
+1,365 个既有弃用警告**。Ruff、py_compile、格式与 diff 检查通过。禁用 dispatch 和移除
+0035 缺表策略的 process-local reverse validation 均改变了 public inspector 结果。
+详见 `docs/2026-09-24-automation-capability-producer.md` 与对应 plan。
+
+
+## AZ. Axis #3 incomplete projection target runtime fail-closed（2026-09-24）
+
+独立 review 指出，axis #3 的 state-machine producer 只证明 `custom_vector` 可进 outbox，
+却没有对应的 production worker handler/revision/attempt/delete/consistency 全链路。
+现在新增 `indexing/projection_target_runtime.py`，在 `_persist_authority_and_enqueue` 中
+先对完整 target snapshot 验证 `upsert/reconcile/delete/delete_document` handlers、
+revision strategy、attempt lifecycle policy 与 durable-delete target coverage，再写 authority
+或 enqueue。一个 target 不完整时整批拒绝，不产生部分 outbox。
+
+`ProjectionHandlers.as_mapping()` 为策略注册的 custom store 创建通用 worker 入口。
+`core/document_delete_targets.py` 将 durable-delete store set 收成有序 registry，但公开激活
+只能走 `register_projection_delete_target_runtime`：它先验证 handlers、revision、attempt 与
+consistency/requeue contract，policy 再于每次 delete request 前复验。request 一次性 snapshot
+targets 并把所有 children 写入 outbox；完成/死信/最终化按 persisted `delete_operation_id`
+children 计数，不受之后 registry 改动影响。测试还证明缺失 handler 时不会推进 generation 或
+写 outbox。retire custom target 只移除新的 ingest producer，保留 deletion target 与 handler；
+retire 后发起的新 delete 仍带旧 target child，防止外部残留数据被漏删。
+
+KnowledgeOps 的 dead-letter operation allowlist 与 preflight 共用
+`core/projection_target_contract.py`；read-side consistency projection 仍没有 per-target
+Strategy。因此这关闭了 durable-delete 选择/计数的一部分，不代表 #3 全轴已完成。
+operation handler 与 notification route adapter 的 async/generator 注册及意外 deferred-result
+也加入 fail-closed guard；strategy 自身 `UnknownProviderError` 保持原样。
+
+shared consistency allowlist regression **44 passed**；projection/worker/delete regression
+**76 passed**；notification/receipt/provider regression **54 passed**。reverse validation
+确认去掉一致性 pair guard 会放行 custom target。follow-up independent review **PASS**，未发现
+新的 P1/P2。Read-side consistency 仍开，#3 未完成。设计/实现交接见
+`docs/plans/2026-09-24-projection-target-runtime-preflight-design.md`、
+`docs/2026-09-24-projection-target-runtime-preflight.md`。
+
+
+## BA. Axis #3 durable-delete target registry（2026-09-24）
+
+`_DELETE_STORES` 已迁入 `core/document_delete_targets.py` 的 ordered `ProviderRegistry`。
+Milvus/Graph 内置次序保持 10/20、reserved 不可替换；自定义 target 只能经
+`register_projection_delete_target_runtime` 激活，要求四个 operation handler、revision、
+attempt lifecycle 与 consistency/requeue pair 已存在。delete policy 保存 runtime callback；
+`DocumentDeletionRepository.request_batch` 在幂等 replay 判断后、任何 CAS/写入前调用完整 target
+snapshot，因此配置失效会整单 fail-closed。
+
+每个 batch 只解析一次 targets，`required_store_count` 与所有 delete child 使用该快照。
+完成/失败/最终化计数改按 `delete_operation_id + delete_document` 读取持久化 children，不再按
+当前 registry 过滤。集成测试验证 custom child 入队、required/completed count=3、缺 handler 不改
+generation/不写 outbox，以及 retire 后 producer 不再选 custom target、未来 delete 仍保留其
+child，原 delete 的 persisted barrier 也可最终化。
+无 schema migration、CHECK、API/OpenAPI、前端契约变化。
+
+durable-delete 全套回归 **85 passed / 1 skipped**；登记与动态 child barrier 的后续 targeted
+复验 **3 passed**。reviewer 指出的 retire 后漏删 P1 已修复：retire 保留 delete policy/handlers，
+移除 producer；随后新 delete 仍生成 custom child 并通过 finalizer。Teardown 的私有测试清理由
+reviewer 复核确认，无剩余 P1/P2。设计/交接见
+`docs/plans/2026-09-24-durable-delete-target-registry-design.md`、
+`docs/2026-09-24-durable-delete-target-registry.md`。
+
+
+## BB. Axis #3 projection dead-letter requeue policy registry（2026-09-24）
+
+`core/projection_target_contract.py` 不再以静态 operation pair 集合作为唯一重放契约，
+改为复用唯一的 `ProviderRegistry`，按精确 `target_store:operation` 查询
+`ProjectionRequeuePolicy`。Milvus、Graph 与 catalog finalizer 的现有 pair 被保留为不可替换/
+不可撤销的 built-in。普通投影与 document-delete 仍走各自原有 lineage validator。
+
+自定义 pair 注册时必须提供同步 validator。它接收只读、深复制的操作/作用域/payload 快照，
+只能补充拒绝条件，不能替换宿主校验，也不接收数据库 session。dead-letter API 每次新重放都
+实时解析同一 registry；目标运行时 activation preflight 也从该 registry 检查必需的
+`upsert`、`delete`、`delete_document` pair。命中幂等已重放记录的顺序不变：先返回已关联的
+operation，再检查当前 generation。成功重放仍从原始 `IndexOperation` 复制字段并原子写审计。
+
+新增的 permanent regression 覆盖 registry 注册期形状校验、built-in 保留、required-pair
+preflight、真实 API 自定义 `upsert` dispatch、未知 target fail-closed、validator 反向拒绝、
+canonical generation fence 不可被 validator 绕过，以及 Graph document-delete built-in。
+最终受影响回归 **74 passed**；Ruff、format、py_compile 与 diff 检查通过。独立 code review
+首轮发现 raw registry 可绕过 helper 的 P2；改为私有 registry、按 key 复验 factory 策略并让
+preflight 解析每个必需 pair 后，reviewer 复审 **PASS**，P2 已关闭，无剩余阻塞问题。
+
+**边界更正**：本节关闭的是死信重放 target/operation 选择与校验策略，不是完整一致性报告读侧。
+`knowledge_consistency_api._default_reconcile()` 仍固定调用 Milvus 的
+`reconcile_chunk_authority`，当前响应仍是 best-effort / non-confirmable。让报告按自定义
+target 对账还需要独立定义 reader adapter、快照代次/一致性契约与失败语义；不可由 requeue
+policy 推断或冒称已完成。
+
+设计与交接：`docs/plans/2026-09-24-projection-requeue-policy-registry-design.md`、
+`docs/2026-09-24-projection-requeue-policy-registry.md`。
+
+
+## BC. Axis #17 Stage23 Content Recovery capability producer（2026-09-24）
+
+`inspect_enterprise_content_recovery_capability(bind)` 保留公开名称和返回 shape，现委托到
+`inspect_catalog_capability("content_recovery", bind)`。Stage23 通过既有
+`CatalogCapabilityPolicy` + Template Method + `ProviderRegistry` 声明 0033 minimum revision、
+required tables、Content Recovery issue checker 和旧错误文案；built-in 名称 reserved，不可由
+动态 policy 覆盖/撤销。方言检查仍由既有领域 checker 负责。
+
+兼容性矩阵有常驻测试：已知 0032 且无 Stage23 表为 `not_available`；同一 revision 出现部分表、
+0033 后缺表、未知/缺失版本或多版本都为 `unavailable`；现有完整 schema 仍为 `ready`。
+阶段回归 **24 passed**，readiness API 子集 **2 passed**，Ruff、格式、`py_compile` 与 diff
+检查通过。独立 code review **PASS**；reviewer 另行跑了 19 项定向测试，无 findings。
+
+本片只收 Stage23 active inspector，不改变 Stage23 表/迁移、readiness 消费者、授权逻辑或
+`_KNOWLEDGE_SERVING_ORIGINAL_*` 冻结 fallback。#17 仍 OPEN，其他历史 producer 仍需逐项对照。
+设计见 `docs/plans/2026-09-24-content-recovery-capability-producer-design.md`。
+
+
+## BD. Axis #3 chunk-projection consistency reader adapter（2026-09-24）
+
+新增 `core/projection_consistency_readers.py`，用唯一 `ProviderRegistry` 按精确
+`target_store` 构造 `ProjectionConsistencyReader` Adapter。读侧契约与 write handler、
+revision strategy、durable-delete policy、dead-letter requeue policy 分开；不能从“可写/可重放”
+推导“可读/可对账”。
+
+唯一内置 reader 是 `milvus_chunks`。`RagMilvusClient.query_chunks_by_doc()` 增加可选的
+dataset filter，一致性 Adapter 必须同时传入 tenant 和 dataset。best-effort 返回行必须有精确
+tenant/dataset/document scope；错误 scope、重复 chunk ID、deferred/generator result 均 fail-closed。
+Milvus 达 16,384 行上限或返回 scope 不完整时标记 `projection_read_status=incomplete`，该文档不参加
+漂移分类，也不进入 authoritative/projection 汇总；repair mode 在 enqueue 前拒绝不完整报告。
+CLI 保留旧 `complete` cursor 语义，并额外输出 `catalog_scan_complete` 与读侧状态。
+
+Graph 被 reader registry 明确保留为不支持：公开注册与 resolver（包括 raw private registry 注入）
+都不能把 entity/relation 当作 chunk。仍未声称外部投影与 Catalog 有共同 snapshot；Milvus summary
+仍是 best-effort、`complete=false`、non-confirmable。当前 API 不提供 multi-target selector。
+API 新增 `projection_read_status` 和 `projection_read_incomplete_documents`，ConsistencyPage 对
+incomplete 使用 warning/amber 状态，不显示 clean/green 分类标记。
+
+受影响后端回归 **86 passed**；最终 scope guard 后的 reader/reconcile 定向回归 **18 passed**；
+reviewer 独立 reader 复跑 **15 passed**。一致性 UI 子集 **20 passed**、目标 ESLint 通过、前端
+生产 build（7,123 modules）通过。API/OpenAPI 子集 **3 passed**，
+仓库 `.venv` 下 `scripts/export_openapi.py --check` 通过（259 paths / 201 schemas）。
+独立 follow-up review **PASS**：P1 scope 与 P2 Graph/incomplete/OpenAPI finding 已关闭，最后的
+空 scope 低层调用 guard 已确认，无新 finding。该 review 中 OpenAPI 的第一次失败由不同 Python
+环境生成产物造成，切换到仓库 `.venv` 导出并检查后契约一致。
+
+本片新增 chunk-shaped 读侧扩展缝，不关闭 axis #3：数据集级外部投影枚举、可与 Catalog 对齐的
+target generation/fence、Graph 专属 comparator 和 target-specific atomic repair 仍开放。
+设计：`docs/plans/2026-09-24-projection-consistency-reader-registry-design.md`；
+最终交接：`docs/2026-09-24-projection-consistency-reader-registry.md`。
+
+
+## BD.1. Axis #3 document-scoped target observation fence（2026-09-25）
+
+新增 `core/projection_consistency_fences.py`，复用唯一 `ProviderRegistry` 为
+chunk-shaped reader 增加独立的 target generation/snapshot observation Adapter。每次文档读取前后
+执行同步 `begin/finish`：`stable` 只标记为 `target_observation_stable`；`changed` 或
+`unavailable` 转为显式 incomplete，跳过该文档的漂移分类和汇总，避免把目标变化当成空投影。
+
+Reader 自带的 `snapshot_token` 不会获得信任；没有注册 fence 时 host 会清空它。Milvus 当前
+没有可验证的外部代次，`milvus_chunks` 的 fence 注册与 raw registry 注入都保持明确拒绝/不构造，
+所以现有 `unfenced`、`best_effort`、`catalog_only`、non-confirmable 语义未被放宽。Graph
+仍不允许通过 fence 绕过 chunk-shaped reader 的 unsupported 边界；已注册 factory 抛出的
+`UnknownProviderError` 也不会被误判成“未注册”。
+
+这一片**刻意不是报告级一致性 authority**：begin/finish 仍以单个文档为范围，没有把 target
+代次绑定到 Catalog mutation generation 或 document snapshot fingerprint，也不能枚举 Catalog
+中已删除文档对应的 target orphan。因此不设置 `confirmable`、不开放 custom repair、不改
+数据库/Milvus schema/OpenAPI/frontend contract；下一片需单独设计 Dataset-scoped observation
+fence 与 typed Catalog snapshot identity。
+
+定向回归 **61 passed**（reader + reconcile），最终 reader + fence integration rerun
+**22 passed**，API 回归 **34 passed**；py_compile、Ruff、`git diff --check` 通过。独立
+reviewer 首轮指出了报告级命名、Milvus 保持 unfenced、factory 异常分类和 reader token
+清理问题；已全部处理，最终复审 **PASS**，无 P0/P1/P2/P3 findings。
+设计计划：`docs/plans/2026-09-25-projection-consistency-fence-registry-design.md`。
+最终交接：`docs/2026-09-25-projection-consistency-target-observation-fence.md`。
+
+
+## BD.2. Axis #3 Catalog-bound report projection observation fence（2026-09-25）
+
+在 BD.1 的文档级 observation 之上，新增
+`core/projection_consistency_report_fences.py`。它用 typed
+`CatalogProjectionSnapshotIdentity`（tenant/dataset、既有 Catalog identity digest、
+document snapshot fingerprint/count）绑定一次**报告调用页**，由报告级 Adapter 的
+`begin_report/finish_report` 管理一个不可变 target session。session token 会传给该页
+的每个 chunk reader；目标在文档 A 与 B 之间变更时，finish 阶段把整页的
+authoritative/projection/count/drift/repair facts 全部清空并标记
+`report_target_changed`，`unavailable` 同理。它不会把空报告误当成可修复。
+
+这不是把现有 Catalog identity 伪装成 mutation generation，也不是跨 resume page 复用
+外部 token：每个调用页重新 begin/finish。Milvus report fence 仍明确 reserved/unfenced，
+Graph/raw registry 不能绕过 unsupported；API/OpenAPI/frontend/数据库/Milvus schema
+均未放宽，custom target repair 与 confirmable authority 仍关闭。
+
+独立 review 首轮指出两个边界：空页 non-stable 可能漏掉 repair 拒绝，以及 CLI 只看
+incomplete 文档数可能返回 0；已分别加入独立 `report_observation_nonstable` 与
+`ReconcileReport.projection_observation_incomplete`，最终复审 **PASS**。
+
+验证：report-fence 定向 **6 passed**，reader/reconcile **62 passed**，API **34 passed**，
+review-fix rerun **7 passed**；Ruff、`py_compile`、`git diff --check` 通过。
+设计计划：`docs/plans/2026-09-25-dataset-scoped-projection-observation-fence-design.md`；
+最终交接：`docs/2026-09-25-catalog-bound-report-projection-observation-fence.md`。
+
+
+## BE. Axis #17 Stage24 Task Operations capability producer（2026-09-24）
+
+Stage24 `inspect_enterprise_task_operations_capability()` 现通过 `task_operations`
+内置 `CatalogCapabilityPolicy` 和既有 `ProviderRegistry` 派发。共享 Template Method 显式声明
+0034 minimum revision、Task Operations required tables、原领域 checker、旧 revision 错误文案、
+missing-table disposition 与检查异常模式；没有第二套 registry kernel。
+
+`_KNOWLEDGE_SERVING_ORIGINAL_TASK_CAPABILITY` 保持不变。共享 producer 对 missing/unknown/multiple
+revision 和 known pre-0034 分支在关闭 probe connection 后调用 frozen original，保留旧 fallback
+顺序与 catch 行为；0034+ 零表时仍返回 sorted `required tables are missing: ...` issue，部分表与完整
+schema 继续由原 Task Operations checker 判定。active wrapper 的检查异常传播与 frozen original
+自身 catch 后返回 `unavailable` 的差异分别钉在测试中。内置 factory identity pinned；公共 API 与 raw
+private registry 的替换/删除都 fail-closed。
+
+Compatibility matrix 覆盖 known pre-0034（零表/部分表）、0034 与后续版本（零表/部分表）、unknown、
+missing、multiple revisions、无 revision table、完整 schema、异常传播，以及 probe 成功但 legacy
+fallback 的第二次连接失败。capability/readiness/Automation/Stage17 authorization 回归
+**186 passed，1,179 个既有弃用警告**；Ruff、focused format、`.venv` `py_compile`、diff check 通过。
+独立 sub-agent review **PASS**，无剩余 findings。
+
+无 migration / DB CHECK / API、OpenAPI、前端或授权消费者变化。#17 仍 OPEN；其它 frozen
+compatibility wrappers 与独立 capability producer 仍需逐项证明。设计：
+`docs/plans/2026-09-24-task-operations-capability-producer-design.md`；
+交接：`docs/2026-09-24-task-operations-capability-producer.md`。
+
+
+## BE. Axis #17 Stage24 Task Operations capability producer（2026-09-24）
+
+Stage24 `inspect_enterprise_task_operations_capability()` 现通过 `task_operations`
+内置 `CatalogCapabilityPolicy` 和既有 `ProviderRegistry` 派发。共享 Template Method 明确声明
+0034 minimum revision、Task Operations required tables、原领域 checker、旧 revision 错误文案、
+missing-table state 与检查异常模式；没有第二套 registry kernel。
+
+`_KNOWLEDGE_SERVING_ORIGINAL_TASK_CAPABILITY` 原函数保持不变并作为 legacy fallback。旧 active
+wrapper 在 known pre-0034、unknown/missing/multiple revision 等分支会完成初次 probe 后委托它；
+共享 producer 的 `fallback_inspector` 在 probe connection 关闭后执行，以保留两阶段连接/异常语义。
+0034 及之后零张 capability 表时仍返回原有 sorted `required tables are missing: ...` issue；
+部分表与完整 schema 继续由原 Task Operations checker 判定。active wrapper 的 probe/checker 异常传播与
+frozen original 自己 catch 后返回 `unavailable` 的差异分别钉在测试中。
+
+测试用 matrix 对照原 `_knowledge_serving_revision_compatible(...)` active 行为，并在 legacy 分支另对照
+frozen original；还覆盖 probe 成功但 fallback 第二次连接失败、built-in policy public/raw 替换或删除、
+以及共享 registry 的真实 dispatch。受影响 capability/readiness/Stage17 authorization regression
+**186 passed，1,179 个既有弃用警告**；Ruff、focused format、`py_compile`、`git diff --check` 通过。
+独立 sub-agent review **PASS**，确认没有剩余 P1/P2/P3 findings。
+
+无 migration / DB CHECK / API、OpenAPI、前端或授权消费者变化。#17 仍 OPEN：其他 frozen fallback、
+独立探针及历史 producer 仍需逐项比对。设计：
+`docs/plans/2026-09-24-task-operations-capability-producer-design.md`；
+交接：`docs/2026-09-24-task-operations-capability-producer.md`。
+
+
+## BF. Axis #17 Stage29 Knowledge Base Release capability producer（2026-09-24）
+
+Stage29 `inspect_enterprise_knowledge_base_release_capability()` 现委托给共享
+`ProviderRegistry` 中 reserved 的 `knowledge_base_releases` producer。其
+`CatalogCapabilityPolicy` 声明 0029 minimum revision、required tables、Stage29 原 schema/data
+checker 与 zero-table fail-closed issue；factory 仍使用统一的 revision-aware Template Method，没有
+新建 registry。
+
+`_KNOWLEDGE_SERVING_ORIGINAL_RELEASE_CAPABILITY` 保持不变并成为兼容 fallback。已知 pre-0029 且无
+Release 表仍为 `not_available`；pre-0029 partial、unknown、缺失/空/多 revision 分支在 probe 连接关闭后
+委托 frozen original。0029 及之后无 Release 表时保留 sorted
+`required tables are missing: ...`；partial/complete schema 继续由原 Stage29 checker 判定。probe/checker
+异常传播、fallback 自身 catch-and-return 语义均有测试。public 与 raw registry 的 built-in 替换/删除
+fail-closed。
+
+兼容矩阵逐案对比旧 `_knowledge_serving_revision_compatible(...)`，fallback 分支也直接对比 frozen
+original；覆盖 complete catalog、Stage29 数据/约束失败测试、probe/fallback 异常和 revision 状态。
+producer/Stage29/Stage30/readiness/Stage17 授权回归组合 **262 passed，1,296 个既有弃用警告**；
+Ruff、`.venv` `py_compile`、`git diff --check` 通过。独立子 agent code review 结果见交接文档。
+
+本片不改变 migration、API/OpenAPI、readiness 消费者、授权或前端。Axis #17 仍 OPEN；其它 frozen
+capability wrapper 与 standalone inspector 仍需逐片做行为等价证明。设计：
+`docs/plans/2026-09-24-release-capability-producer-design.md`；交接：
+`docs/2026-09-24-release-capability-producer.md`。
+
+## BG. Axis #17 Stage30 Release Quality certification capability producer（2026-09-24）
+
+Stage30 `inspect_enterprise_release_quality_certification_capability()` 现委托给共享
+`ProviderRegistry` 中 reserved 的 `release_quality_certification` producer。其
+`CatalogCapabilityPolicy` 声明 0030 minimum revision、required tables、Stage30 原 schema/policy/guard
+checker 与 zero-table fail-closed issue；factory 继续使用统一的 revision-aware Template Method，没有
+新建 registry。
+
+`_KNOWLEDGE_SERVING_ORIGINAL_QUALITY_CAPABILITY` 保持不变并成为兼容 fallback。已知 pre-0030 且无
+Stage30 表仍为 `not_available`；pre-0030 partial、unknown、缺失/空/多 revision 分支在 probe 连接关闭后
+委托 frozen original。0030 及之后无 Stage30 表时保留 sorted
+`required tables are missing: ...`；partial/complete schema 继续由原 Stage30 checker 判定。Stage29
+parent authority、Stage31 consumers、probe/checker 异常传播和 fallback catch-and-return 语义均未改变。
+
+兼容矩阵逐案对比旧 `_knowledge_serving_revision_compatible(...)`，fallback 分支也直接对比 frozen
+original；覆盖 complete catalog、Stage30 数据/约束/trigger readiness 测试、probe/fallback 异常和
+revision 状态。producer/Stage29/Stage30/Stage31/readiness/Stage17 授权回归组合 **288 passed，1,381
+个既有弃用警告**；Ruff、`.venv` `py_compile`、`git diff --check` 通过。独立子 agent review **PASS**，
+无 actionable findings（另跑 19 项 Stage30 定向与 4 项 readiness 测试）。
+
+本片不改变 migration、API/OpenAPI、readiness 消费者、授权或前端。Axis #17 仍 OPEN；其它 frozen
+capability wrapper 与 standalone inspector 仍需逐片做行为等价证明。设计：
+`docs/plans/2026-09-24-release-quality-certification-capability-producer-design.md`；交接：
+`docs/2026-09-24-release-quality-certification-capability-producer.md`。
+
+## BH. Axis #17 Stage31 Release Quality Operations capability producer（2026-09-24）
+
+Stage31 `inspect_enterprise_release_quality_operations_capability()` 现委托给共享
+`ProviderRegistry` 中 reserved 的 `release_quality_operations` producer。其
+`CatalogCapabilityPolicy` 声明 0031 minimum revision、required tables、Stage31 原 schema/guard/data
+checker 与 zero-table fail-closed issue；factory 继续使用统一的 revision-aware Template Method，没有
+新建 registry。
+
+`_KNOWLEDGE_SERVING_ORIGINAL_QUALITY_OPERATIONS_CAPABILITY` 保持不变并成为兼容 fallback。已知
+pre-0031 且无 Stage31 表仍为 `not_available`；pre-0031 partial、unknown、缺失/空/多 revision 分支在
+probe 连接关闭后委托 frozen original。0031 及之后无 Stage31 表时保留 sorted
+`required tables are missing: ...`；partial/complete schema 继续由原 Stage31 checker 判定。Stage30
+parent authority、后续 readiness consumers、probe/checker 异常传播和 fallback catch-and-return 语义均未改变。
+
+兼容矩阵逐案对比旧 `_knowledge_serving_revision_compatible(...)`，fallback 分支也直接对比 frozen
+original；覆盖 complete catalog、Stage31 operational data/trigger/parent readiness 测试、probe/fallback
+异常和 revision 状态。producer/Stage29/Stage30/Stage31/readiness/Stage17 授权回归组合 **307 passed，
+1,382 个既有弃用警告**；Ruff、`.venv` `py_compile`、`git diff --check` 通过。独立子 agent review
+**PASS**，无 actionable findings（另跑 19 项 Stage31 定向、3 项 catalog schema 与 1 项 parent/readiness
+测试）。
+
+本片不改变 migration、API/OpenAPI、readiness 消费者、授权或前端。Axis #17 仍 OPEN；其它 frozen
+capability wrapper 与 standalone inspector 仍需逐片做行为等价证明。设计：
+`docs/plans/2026-09-24-release-quality-operations-capability-producer-design.md`；交接：
+`docs/2026-09-24-release-quality-operations-capability-producer.md`。
+
+## BI. Axis #17 Stage32 Notification Center capability producer（2026-09-24）
+
+Stage32 `inspect_enterprise_notification_center_capability()` 现委托给共享
+`ProviderRegistry` 中 reserved 的 `notification_center` producer。其
+`CatalogCapabilityPolicy` 声明 0032 minimum revision、required tables、Stage32 原 schema/guard/data
+checker 与 zero-table fail-closed issue；factory 继续使用统一的 revision-aware Template Method，没有
+新建 registry。
+
+原 Stage32 inspector 保持为 `_KNOWLEDGE_SERVING_ORIGINAL_NOTIFICATION_CAPABILITY` 并成为兼容 fallback。
+已知 pre-0032 且无 Notification Center 表仍为 `not_available`；pre-0032 partial、unknown、缺失/空/多
+revision 分支在 probe 连接关闭后委托 frozen original。0032 及之后无 Notification Center 表时保留
+sorted `required tables are missing: ...`；partial/complete schema 继续由原 Stage32 checker 判定。
+Notification guard、event-chain、receipt/materializer data semantics、后续 readiness consumers、
+probe/checker 异常传播和 fallback catch-and-return 语义均未改变。
+
+兼容矩阵逐案对比旧 `_knowledge_serving_revision_compatible(...)`，fallback 分支也直接对比 frozen
+original；覆盖 complete catalog、Stage32 migration/readiness、Notification Center receipt/materializer
+测试、probe/fallback 异常和 revision 状态。producer/Stage29/Stage30/Stage31/Stage32/readiness/Stage17
+授权回归组合 **417 passed，2,164 个既有弃用警告**；Ruff、`.venv` `py_compile`、OpenAPI export
+（259 paths / 201 schemas）、`git diff --check` 通过。独立子 agent review **PASS**，无 actionable findings
+（另跑 19 项 Stage32 定向、61 项 Notification Center 相关与 52 项 Task/Automation readiness 测试）。
+
+本片不改变 migration、API/OpenAPI、readiness 消费者、授权或前端。Axis #17 仍 OPEN；其它 frozen
+capability wrapper 与 standalone inspector 仍需逐片做行为等价证明。设计：
+`docs/plans/2026-09-24-notification-center-capability-producer-design.md`；交接：
+`docs/2026-09-24-notification-center-capability-producer.md`。
+
+## BJ. Axis #17 Stage28 Knowledge Base Registry capability producer（2026-09-24）
+
+Stage28 `inspect_enterprise_knowledge_base_registry_capability()` 现委托给共享
+`ProviderRegistry` 中 reserved 的 `knowledge_base_registry` producer。其
+`CatalogCapabilityPolicy` 声明 0028 minimum revision、Stage28 registry table presence probe、
+revision-aware checker adapter 与 generic sorted zero-table fail-closed issue；factory 继续使用统一的
+revision-aware Template Method，没有新建 registry。
+
+原 Stage28 inspector 保持为 `_KNOWLEDGE_SERVING_ORIGINAL_REGISTRY_CAPABILITY` 并成为兼容 fallback。
+已知 pre-0028 且无 registry 表仍为 `not_available`；pre-0028 partial、unknown、缺失/空/多 revision
+分支在 probe 连接关闭后委托 frozen original。0028 及之后无 registry 表时保留 active wrapper 的
+`required tables are missing: ...`；partial schema 继续由原 `_knowledge_base_registry_capability_issues`
+判定，并准确转发 observed revision 以选择 approval-action contract。Stage18 ownership/idempotency/audit
+及后续 readiness consumers、probe/checker 异常传播和 fallback catch-and-return 语义均未改变。
+
+兼容矩阵逐案对比旧 `_knowledge_serving_revision_compatible(..., revision_aware=True)`，fallback 分支
+也直接对比 frozen original；覆盖 complete catalog、Stage18 data/readiness、Stage29–32 migration/readiness
+测试、probe/fallback 异常和 revision 状态。producer/Stage18/Stage29/Stage30/Stage31/Stage32/readiness/
+Stage17 授权回归组合 **375 passed，1,723 个既有弃用警告**；Ruff、`.venv` `py_compile`、OpenAPI export
+（259 paths / 201 schemas）、`git diff --check` 通过。独立子 agent review **PASS**，无 actionable findings
+（另跑 17 项 Stage28 定向、36 项 registry 相关与 3 项 Stage18 capability/readiness 测试）。
+
+本片不改变 migration、API/OpenAPI、readiness 消费者、授权或前端。Axis #17 仍 OPEN；其它 frozen
+capability wrapper 与 standalone inspector 仍需逐片做行为等价证明。设计：
+`docs/plans/2026-09-24-knowledge-base-registry-capability-producer-design.md`；交接：
+`docs/2026-09-24-knowledge-base-registry-capability-producer.md`。
+
+## BK. Axis #17 Stage17 Workspace Authorization capability producer（2026-09-25）
+
+Stage17 `inspect_workspace_authorization_capability()` 现委托给共享
+`ProviderRegistry` 中 reserved 的 `workspace_authorization` producer。其
+`CatalogCapabilityPolicy` 声明 0027 minimum revision、Stage17 policy table presence probe、
+revision-aware checker adapter 与 generic sorted zero-table fail-closed issue；factory 继续使用统一的
+revision-aware Template Method，没有新建 registry。
+
+原 Stage17 inspector 保持为 `_KNOWLEDGE_SERVING_ORIGINAL_WORKSPACE_AUTHORIZATION_CAPABILITY` 并成为
+兼容 fallback。已知 pre-0027 且无 policy 表仍为 `not_available`；pre-0027 partial、unknown、缺失/空/多
+revision 分支在 probe 连接关闭后委托 frozen original。0027 及之后无 policy 表时保留 active wrapper 的
+`required tables are missing: ...`；partial schema 继续由原 `_workspace_authorization_capability_issues`
+判定，并准确转发 observed revision 以选择 approval-action contract。unstamped empty/nonempty policy
+的 legacy 特殊语义、Stage17 fail-closed security regressions、Stage18 dependencies、后续 readiness
+consumers、probe/checker 异常传播和 fallback catch-and-return 语义均未改变。
+
+兼容矩阵逐案对比旧 `_knowledge_serving_revision_compatible(..., revision_aware=True)`，fallback 分支
+也直接对比 frozen original；覆盖 complete catalog、Stage17/18 authorization/readiness/security 测试、
+probe/fallback 异常和 revision 状态。producer/Stage17/Stage18/readiness/Stage29–32 回归组合 **387
+passed，1,686 个既有弃用警告**；Ruff、`.venv` `py_compile`、`git diff --check` 通过。独立子 agent
+review **PASS**，无 actionable findings（另跑 20 项 Stage17 producer、24 项安全回归、14 项 catalog
+capability 与 1 项 schema 定向测试）。
+
+本片不改变 migration、API/OpenAPI、readiness 消费者、授权策略或前端。Axis #17 仍 OPEN；其它 frozen
+capability wrapper 与 standalone inspector 仍需逐片做行为等价证明。设计：
+`docs/plans/2026-09-24-workspace-authorization-capability-producer-design.md`；交接：
+`docs/2026-09-25-workspace-authorization-capability-producer.md`。
+
+
+## BL. Axis #6 Task source kind strategy registry（2026-09-25）
+
+新增 `core/task_source_kinds.py`，用 `TaskSourceKindSpec` + `TaskRouteSpec` 两层声明收成 Task
+source-kind 的数据策略与 route schema：public/storage category、public/storage route、default route、
+allowed route scope、source-specific parameter extraction、allowed/required route params 均从 registry
+派生。built-in source kind 保留原七项顺序；raw/public replacement/removal、非法 category、重复
+required-by-kind、非规范 kind 与缺参均 fail-closed。
+
+`core/catalog_schema.py` 的 `ENTERPRISE_TASK_SOURCE_KINDS` 现在从 registry built-in order 派生；
+`enterprise_task_operations.py` 的 canonical/category/default-route/route-scope/route-schema 与
+`enterprise_task_operations_service.py` 的 category/storage/public route/route params 都查同一 registry。
+service reconcile 排序读取 live `SOURCE_ADAPTER_REGISTRY`，不再使用会落后的导入期 order snapshot；category
+查询按 registry 派生 source-kind 集合，不会漏掉使用既有 category 的动态 kind。
+
+新增第八种 source kind + adapter 的零宿主分支测试覆盖 canonicalization、service validation、category
+派发和 `_collect_sources`；存储 CHECK/OpenAPI 仍故意闭合，注册不会让新 kind 自动落库。Task registry 与
+Task core/service/API/migration/ORM/readiness、Knowledge Serving/enterprise readiness 回归组合 **199
+passed，408 个既有弃用警告**；Ruff、`.venv` `py_compile`、OpenAPI export（259 paths / 201 schemas）、
+`git diff --check` 通过。独立子 agent review **PASS**，无 actionable findings（先后修复 5 个 P1/P2：
+规范 kind、live adapter order、动态 category 查询、缺参、重复 route requirement、非法 category）。
+
+本片只收 Python strategy/adapter 边界，不改 task projection CHECK、迁移或 OpenAPI enum。设计：
+`docs/plans/2026-09-25-task-source-kind-strategy-registry-design.md`；交接：
+`docs/2026-09-25-task-source-kind-strategy-registry.md`。
+
+## BM. Frontend stale evidence deep-link scope guard（2026-09-25）
+
+`frontend/src/types/rag.ts` 的 `EvidenceChunk` 新增可选 `dataset_id`；
+`frontend/src/components/RetrievalTrace.tsx` 只有在证据项自身同时提供非空 `doc_id` 与 `dataset_id`
+时才生成 `chunkWorkbenchDeepLink`。缺任一范围字段时保留核验信息，但显示“缺少文档或知识库归属，无法直达”，
+绝不使用当前工作区、查询请求或 localStorage 的 dataset 代填。
+
+这片是 Adapter-style 的前端 fail-closed 边界：跨仓 Java 查询服务仍需成为 dataset_id 的权威生产者；本仓
+没有伪造跨库证据来源。QA/non-stale 行为保持不变。有作用域/无作用域、URL 回解析与回归均覆盖；前端证据定向
+**15 passed**，TypeScript/build（7,123 modules）通过，ESLint 0 errors（保留既有 warnings），独立子 agent
+review **PASS**。设计：`docs/plans/2026-09-25-evidence-stale-deeplink-scope-guard-design.md`；交接：
+`docs/2026-09-25-evidence-stale-deeplink-scope-guard.md`。
+
+## BN. Axis #17 Stage23 Content Recovery frozen fallback（2026-09-25）
+
+Content Recovery 的共享 `CatalogCapabilityPolicy` 现在保留
+`_knowledge_serving_original_content_recovery_capability` 作为冻结 fallback。
+unknown/missing/multiple/pre-0033 revision 分支由旧实现直接裁决；已知 0033+
+仍由 shared producer + `_enterprise_content_recovery_capability_issues` 负责。
+
+新增兼容矩阵覆盖旧库、partial、unknown、multiple 和 missing revision，公共
+producer 与 frozen inspector 逐案对照。Catalog capability producer 套件 **133
+passed**，Ruff、`py_compile`、`git diff --check` 通过，独立 review **PASS**。
+两项 application-mount 测试因当前环境缺少 `pymysql` 在导入 `server.app` 时失败，
+未将其计入绿灯。
+
+设计：`docs/plans/2026-09-25-content-recovery-capability-frozen-fallback-design.md`；
+交接：`docs/2026-09-25-content-recovery-capability-frozen-fallback.md`。
+
+## BO. Axis #17 Stage25 Automation frozen fallback（2026-09-25）
+
+Stage25 Automation 现保留实际 pre-registry public inspector 为
+`_knowledge_serving_original_automation_capability`，并将其挂到 reserved
+`automation_workflows` policy 的 `fallback_inspector`。这修正了旧函数存在但被
+后续 public wrapper 覆盖、导致 fallback 证据失真的问题。
+
+兼容矩阵覆盖 missing/unknown/multiple/pre-0035、partial，以及 exact 0035
+无表的 `not_available + Automation tables are missing` 语义；已知 0035+ 有表
+仍由 Automation domain checker 负责。Producer 套件 **135 passed**，Ruff、
+`py_compile`、`git diff --check` 通过，独立 review **PASS**。
+application-mount 测试因当前环境缺少 `pymysql` 未计入绿灯。
+
+设计：`docs/plans/2026-09-25-automation-capability-frozen-fallback-design.md`；
+交接：`docs/2026-09-25-automation-capability-frozen-fallback.md`。
+
+## BP. Axis #17 Stage26/Stage27 frozen fallbacks（2026-09-25）
+
+Stage26 Knowledge Serving 与 Stage27 Knowledge Operations 现在分别保留
+`_knowledge_serving_original_knowledge_serving_reliability_capability` 与
+`_knowledge_serving_original_knowledge_operations_feedback_capability`，
+并将其接入对应 reserved `CatalogCapabilityPolicy.fallback_inspector`。
+公共 inspector 仍只通过共享 `ProviderRegistry` 派发；共享 producer 继续负责
+supported dialect、minimum-or-later schema checker，历史/歧义 revision 则在
+probe 连接关闭后交给 frozen inspector。
+
+新增兼容矩阵覆盖 pre-minimum empty/partial、exact minimum、later revision、
+unknown、missing/empty revision、multiple revision、partial schema，以及首次
+probe 与 fallback 异常。两份 frozen 函数的 AST 归一化结果与 `HEAD` 中原始
+Stage26/Stage27 inspector body 一致；能力 producer 测试 **172 passed**，
+Stage26 定向 readiness/migration/API **57 passed**，Stage27 定向
+readiness/migration/API **16 passed**，目录/preflight 定向 **4 passed**。
+
+本片不改 migration、DB CHECK、readiness/API/OpenAPI、前端、授权或数据契约；
+当前 Axis #17 Stage17/23–32 范围已完成，独立 review 首轮提出的 P2 oracle coupling 与 P3
+组合矩阵缺口已分别用独立状态断言和 partial revision cases 修复，follow-up
+review **PASS**，无剩余 findings；未来新增 capability 仍按同一 frozen
+compatibility matrix 规则接入。设计：
+`docs/plans/2026-09-25-knowledge-serving-operations-frozen-fallback-design.md`；
+交接：
+`docs/2026-09-25-knowledge-serving-operations-frozen-fallback.md`。
+
+## BQ. Axis #3 projection consistency repair adapter（2026-09-25）
+
+一致性报告此前已经把 chunk reader、文档级 fence 与 Catalog 对齐的报告级
+observation fence 收成 registry，但 durable repair 仍在
+`scripts/reconcile_chunk_authority.py` 内写死 `milvus_chunks/reconcile`。
+现在新增 `core/projection_consistency_repairs.py`，用唯一 `ProviderRegistry`
+注册显式 repair adapter；reader 能读不再自动等价于允许写入 repair outbox。
+
+Milvus 内置 adapter 保持 immutable，旧 payload、manifest hash、dedup key、
+CAS、attempt、事务与队列 operation 完全兼容。自定义 target 必须同时注册
+reader 与 repair adapter；repair adapter 的 target/operation 受持久化字段
+长度约束，并为 custom target 使用独立 dedup namespace，避免与全局唯一的
+Milvus dedup key 冲突。未注册 repair adapter 的 target 继续 fail-closed。
+
+新增 registry 单测 **6 passed**，chunk reconcile 全套 **44 passed**；
+repair/reader/report-fence/一致性 API 定向 **66 passed**，
+projection target/handler/requeue 回归 **47 passed**。Ruff、`.venv`
+`py_compile`、`git diff --check` 通过。独立 sub-agent 首轮发现并推动修复
+Milvus parity、lazy factory、字段长度和跨 target dedup 四项问题；最终
+follow-up review **PASS**，无剩余 findings。
+
+本片不改 migration、DB CHECK、OpenAPI 或前端契约。Graph comparator、
+Catalog-deleted target enumeration 与 confirmable atomic repair 仍是后续
+独立边界。设计：
+`docs/plans/2026-09-25-projection-consistency-repair-adapter-design.md`；
+交接：
+`docs/2026-09-25-projection-consistency-repair-adapter.md`。
+
+## BR. Axis #12 automation condition/action Strategy + Registry（2026-09-25）
+
+Axis #12 的 trigger adapter 既有注册表之外，condition/action 的参数声明与行为也已收成
+`core/automation_rule_strategies.py`：`AutomationConditionStrategy` 负责参数规格与同步 evaluator，
+`AutomationActionStrategy` 负责参数规格与无副作用 target adapter；两者均复用唯一的
+`ProviderRegistry`。authority 的 condition normalization/evaluation、action parameter normalization
+和 target selection 不再按 code 写分支，service 只保留 durable action-request 的事务仪式。
+
+持久化/API 合同刻意没有开放：新增显式冻结的
+`AUTOMATION_CONDITION_CONTRACT_CODES` / `AUTOMATION_ACTION_CONTRACT_CODES`，内置 registry
+必须逐序匹配；core、API Literal、ORM CHECK 由常驻测试独立对账。runtime-only strategy 可以走
+受信任的纯函数/内部路径，但 canonical revision/action plan 仍拒绝未纳入合同的 code；未来可持久化
+code 必须另做 OpenAPI、DB CHECK、migration、前端类型与兼容矩阵切片。
+
+注册期拒绝重复/非法参数、规范化后重复 allowed values、缺失或错误签名、async function/async
+callable；resolver 对内置 raw replacement/unregister fail-closed。运行时对非 bool/deferred evaluator、
+非法 target reference 和未 canonicalize 的 unsafe event fail-closed。API 使用相同声明检查
+boolean/integer/text/identifier/code 的形状、范围、allowed values 与长度。
+
+新增 registry/合同/动态路径测试 **60 passed**；Stage25 registry/core/service/API/readiness 合并回归
+**120 passed，565 个既有弃用警告**；Ruff、`.venv` `py_compile`、`git diff --check` 通过。
+进程内禁用 condition resolver 的反向验证按预期失败并恢复。独立 sub-agent 首轮和两轮 follow-up
+发现的问题均已修复，最终 review **PASS，无剩余 findings**。
+
+本片不增加 automation code，不改 API/OpenAPI、ORM CHECK、migration、授权、外部 dispatch 或前端
+词汇。设计：`docs/plans/2026-09-25-automation-condition-action-strategy-registry-design.md`；
+交接：`docs/2026-09-25-automation-condition-action-strategy-registry.md`。
+
+## BS. Extensibility inventory reconciliation after Axis #12（2026-09-25）
+
+本次复读把清单顶部仍滞后的状态与已完成实现对齐：
+
+- #5 approval `action_type` 的 Python 控制面已由 §AK 的有序规则表收口；新增可持久化 action 仍必须另做 CHECK/migration/公开合同切片。
+- #9 `gate_reason → alert_type` 已由 §AB 的有序 matcher/规则表收口；现有 `alert_type` 存储词汇保持闭合。
+- #12 trigger/condition/action 已由 §BR 收口；同样不因为 runtime-only strategy 而宣称 DB/API 可持久化新 code。
+- #3 当前已完成 handler、worker revision/attempt、target production、durable-delete、dead-letter、reader、document/report observation fence 与 repair adapter；剩余的 Graph comparator、Catalog-deleted target enumeration、可验证 Catalog mutation generation 及 target-specific atomic repair 仍没有权威数据契约，不能用注册表伪造完成。
+
+这次只更新清单状态，没有修改数据库、API、前端或业务实现。下一段代码工作应在取得明确的 Catalog/target authority 契约后，再独立设计 #3 的剩余边界；在此之前继续扩写 Graph comparator 会违反本仓 fail-closed 与“投影不是 Catalog authority”约束。
+
+## BT. Axis #3 Graph projection consumer Adapter（2026-09-25）
+
+Graph backend 的 Factory/Registry 仍由 `core/graph_store_registry.py` 负责；
+本片新增 `core/graph_projection_adapters.py`，把 GraphBuilder、
+GraphRetriever 与文档入库的集合初始化收口到显式 Adapter port。Adapter
+按消费者操作声明 required method set，并在构造/复用时做签名校验，避免
+部分 backend 在真正写入后才暴露不兼容。
+
+`GraphBuilder.store` / `GraphRetriever.store` 保留兼容属性，但实际读写、
+级联删除、查重、子图扩展和 collection initialization 均经 Adapter。
+`include_vectors` 的旧 fake/backend 形状仍可适配；legacy builder 只有
+`store.ensure_collections()` 时也可通过 `require_graph=False` 的 setup-only
+Adapter。`NoopGraphStore` 继续健康、空结果、无副作用。Milvus raw rewrite
+与 delete 均携带 tenant scope；raw rewrite 在创建 client 前拒绝空/错误租户
+记录。
+
+本片不增加 `dataset_id`，不把 Graph 变成 Catalog consistency authority，
+也不实现 Graph comparator、Catalog-deleted target enumeration、可验证
+Catalog mutation generation 或 atomic repair。
+
+Graph consumer/registry 定向 **21 passed**；projection、retrieval、delete、
+folder-ingest 回归组合 **76 passed**（837 个既有弃用警告）；Ruff、
+`.venv` `compileall`、`git diff --check` 通过。独立 sub-agent 首轮和
+follow-up 发现的问题均已修复，最终 follow-up review **PASS**，无剩余
+P0/P1/P2/P3 actionable findings。
+
+设计：
+`docs/plans/2026-09-25-graph-projection-consumer-adapter-design.md`；
+交接：
+`docs/2026-09-25-graph-projection-consumer-adapter.md`。
+
+## BU. Graph engine Factory/Registry（2026-09-25）
+
+在 Graph consumer Adapter 之后，Graph backend 的装配也已从
+`GraphStoreFactory.create()` 内的 engine 分支收成 Strategy + Registry：
+`GraphEngineRegistration` 声明 canonical name/aliases，工厂统一复用
+`core.providers.ProviderRegistry`。内置 `none`/`milvus_vector_graph`
+及历史 alias 保持兼容；`GraphSettings.engine` 默认 `auto`，pipeline
+图开关开启时仍解析到 Milvus，注册的自定义 engine 可通过 settings 或
+override 进入真实 `create_graph_store` 路径。
+
+注册期拒绝重复/冲突 alias、非法名称、async/generator factory 和内置
+覆盖；构造期拒绝 coroutine/generator/async-generator 等 deferred result
+及不满足完整 Graph consumer Adapter port 的 store。嵌套
+`UnknownProviderError` 保持原类型。`GraphStoreRegistry` 使用原子
+`get_or_create`，custom engine replace/unregister 会使既有实例缓存失效；
+全局 engine lock 与实例 registry lock 的失效顺序已拆开，避免反向死锁。
+
+Registry/Adapter/retrieval/projection/delete/ingest 定向 **88 passed**；Graph registry
+当前测试 **20 passed**；Ruff、`.venv` `py_compile`、`git diff --check`
+通过。独立 sub-agent 首轮发现 P1/P2/P3，修复后 follow-up 运行时 **PASS**；
+补齐 handoff 与默认 Settings/pipeline 回归后无剩余 actionable finding。
+
+设计：
+`docs/plans/2026-09-25-graph-engine-factory-registry-design.md`；
+交接：
+`docs/2026-09-25-graph-engine-factory-registry.md`。
+
+## BV. Graph query component Factory + Adapter（2026-09-25）
+
+Graph visualization API 的 assembly 不再在 `server/app.py` 路由内直接拼 raw store/embedder。新增 `core/graph_query_components.py`，用稳定的 `GraphQueryComponentProtocol`、Factory 和 typed search/subgraph result port 承接 Graph engine Registry 与 projection consumer Adapter；原有 `milvus_vector_graph` override、tenant scope、响应形状和安全降级保持不变。
+
+`_get_graph_components()` 的 tuple 兼容投影改用 `core/generation_cache.py` 的 generation-aware cache。配置热更新的 `cache_clear()` 会推进 generation、唤醒旧 waiter，并以 stale-build cap 避免无界构造；旧构建不会把旧 store/embedder 重新写回当前缓存，失败 assembly 也不缓存为成功 sentinel。同步调用的 timeout 语义也显式化：默认 API embedder 与 Milvus settings 均在构造前 bounded 到 Graph budget；默认 graph store 在有 budget 时使用组件自有 registry，避免复用更大 timeout 的旧 process cache。`per_call` 需要 embedder 的 `embed_query_with_timeout` 与 Adapter 方法的 `timeout_s`，local/custom provider 缺少可验证能力时使用显式 `soft`；不会虚假声称可中断任意同步 backend。
+
+Graph query/timeout/cache/registry/Adapter **54 passed**；本 slice 选定的 graph/retrieval/projection/delete/admin/folder 回归 **129 passed**（837 条既有弃用警告）；Ruff、`.venv` `py_compile`、`git diff --check` 通过。完整 `server.app` HTTP mount 未计入绿灯，因当前环境缺少可选 `pymysql`。独立 sub-agent follow-up review **PASS**，无 actionable P0/P1/P2/P3 findings；已复核 Noop timeout、legacy tuple fallback、generation 唤醒/饱和保护和 API/Milvus/Adapter per-call 转发。
+
+设计：`docs/plans/2026-09-25-graph-query-component-factory-adapter-design.md`；交接：`docs/2026-09-25-graph-query-component-factory-adapter.md`。
+
+Axis #3 仍只完成到 Graph query assembly 边界；Graph comparator、Catalog-deleted target enumeration、可验证 Catalog mutation generation 与 target-specific atomic repair 仍缺少权威契约，不能宣称完成。
+
+## BW. Axis #3 Catalog-deleted target candidate audit（2026-09-26）
+
+新增 `core/projection_consistency_enumerators.py` 的独立
+`ProjectionConsistencyTargetEnumerator` Strategy/Registry，并为
+`milvus_chunks` 提供只返回 `chunk_id/doc_id/tenant_id/dataset_id` 的有界
+枚举 Adapter。`scripts/audit_catalog_deleted_projection_candidates.py` 在
+稳定 Catalog 文档 ID 快照上做反连接，仅输出“可能属于已不存在 Catalog
+文档”的候选引用；生命周期为 `deleted` 的 Catalog 行仍属于快照，不会被
+误判成 Catalog-deleted。空/null scope、达到枚举上限、重复/外部 scope、
+非法身份或 target 异常均 fail-closed 为结构化 `incomplete` 安全码。
+
+该命令是内部只读候选审计：结果永远 `complete=false`、
+`confirmable=false`、`repairable=false`，引用全部伪匿名化，不接入现有
+漂移汇总、公开 API、修复计划、队列/attempt 或外部 target 写入。Graph
+仍显式 unsupported；枚举器不能证明 Catalog/target generation 对齐。
+
+新增枚举/候选审计 **15 passed**；既有 reader/repair/requeue 回归 **36
+passed**；chunk reconcile **44 passed**；Consistency API **34 passed**；
+Ruff、`.venv` `py_compile`、`git diff --check` 通过。独立 review 发现并
+修复三项 P2（身份字符串化、异常裸露、动态 reason 泄露），follow-up
+review **PASS**。
+
+本片只新增 best-effort 候选审计，不关闭 Axis #3。Graph comparator、可验证
+Catalog mutation generation 与 target-specific atomic repair 仍需 authority/
+产品契约；候选 enumeration 也不能被称为权威 orphan 判定。设计：
+`docs/plans/2026-09-26-catalog-deleted-target-candidate-audit-design.md`；
+交接：`docs/2026-09-26-catalog-deleted-target-candidate-audit.md`。

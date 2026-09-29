@@ -262,6 +262,26 @@ class MetricsRegistry:
             out[key] = entry
         return out
 
+    def record_outcome(self, scope: str, *, degraded: bool = False, tags: Optional[dict[str, Any]] = None) -> None:
+        """记一次调用结果：总数 +（降级时）降级数。
+
+        命名必须贴合 snapshot 的约定：``<scope>.errors`` 结尾才会被自动算成
+        ``error_rate``，分母取 ``<scope>.total``。所以这里只写这两个名字，
+        "降级率"不需要任何额外计算就能出现在 /api/metrics 里。
+        （曾写成 ``<scope>.degraded.errors``，那时 base 变成 ``<scope>.degraded``，
+        找不到分母，error_rate 恒为 0 —— 命名不对，指标就是死的。）
+
+        为什么不只记降级数：没有分母就只有"降级了几次"，看不出是 1/10 还是
+        1/1000 —— 后者是抖动，前者是故障。
+        """
+        try:
+            self.incr(f"{scope}.total", tags=tags)
+            if degraded:
+                self.incr(f"{scope}.errors", tags=tags)
+        except Exception:  # noqa: BLE001 - 埋点不得影响主链路
+            pass
+
+
     def reset(self) -> None:
         """清空全部指标（全局默认标签保留），线程安全。"""
         with self._lock:

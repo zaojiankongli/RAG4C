@@ -190,7 +190,7 @@ def _build_ingest_optional(s: Any) -> dict[str, Any]:
             from indexing.contextual import Contextualizer
 
             optional["contextualizer"] = Contextualizer(
-                llm_client=create_client(s.llm.contextual),
+                llm_client=create_client(s.llm.contextual, slot="contextual"),
                 template_path=_PROJECT_ROOT / "prompts" / "contextual_v1.txt",
                 enabled=True,
                 concurrency=int(getattr(p, "contextual_concurrency", 4)),
@@ -214,7 +214,7 @@ def _build_ingest_optional(s: Any) -> dict[str, Any]:
             optional["graph_builder"] = GraphBuilder(
                 store=create_graph_store(s),
                 embedder=create_embedder(s.embedding),
-                extractor=TripletExtractor(llm=create_client(s.llm.triplet)),
+                extractor=TripletExtractor(llm=create_client(s.llm.triplet, slot="triplet")),
                 extract_concurrency=int(getattr(p, "graph_extract_concurrency", 8)),
             )
         except Exception as exc:  # noqa: BLE001
@@ -230,11 +230,25 @@ def _ensure_graph_collections(pipeline: Any) -> None:
     线程内，连接 Milvus 是预期行为。
     """
     builder = getattr(pipeline, "graph_builder", None)
-    store = getattr(builder, "store", None)
-    if store is None:
+    candidate = getattr(builder, "adapter", None)
+    if candidate is None:
+        # 保留旧式组合根（只有 ``store``，尚未持有 Adapter）的兼容路径，
+        # 但仍然必须在本函数内经过同一个 Adapter 工厂与签名栅栏。
+        candidate = getattr(builder, "store", None)
+    if candidate is None:
         return
     try:
-        store.ensure_collections()
+        from core.graph_projection_adapters import (
+            GRAPH_COLLECTION_INITIALIZATION_REQUIRED_METHODS,
+            create_graph_projection_adapter,
+        )
+
+        adapter = create_graph_projection_adapter(
+            candidate,
+            required_methods=GRAPH_COLLECTION_INITIALIZATION_REQUIRED_METHODS,
+            require_graph=False,
+        )
+        adapter.ensure_collections()
     except Exception as exc:  # noqa: BLE001 - 图集合不可用时退化为不建图
         _logger.warning("图集合初始化失败，本次入库跳过图索引: %s", exc)
         pipeline.graph_builder = None
