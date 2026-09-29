@@ -115,6 +115,30 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
     return re.compile("^" + "".join(out) + "$")
 
 
+_GITHUB_HOSTS = frozenset(
+    {
+        "api.github.com",
+        "raw.githubusercontent.com",
+        "github.com",
+        "objects.githubusercontent.com",
+        "codeload.github.com",
+    }
+)
+
+
+def _assert_github_url(url: str) -> None:
+    """本连接器只抓 GitHub 官方域名（repo/ref 只进路径段，逃不出主机）。
+
+    防的是 spec 里的字段被拼成绝对 URL 或换协议打到别处——SSRF 守卫按
+    「协议 + 主机白名单」判定，不信任调用方传来的字符串形状。
+    """
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    if parts.scheme != "https" or (parts.hostname or "").lower() not in _GITHUB_HOSTS:
+        raise SourceError(f"github 连接器只允许访问 GitHub 官方域名（https），拒绝: {url}")
+
+
 def _http_get_stream(url: str, timeout: float, retries: int = 3) -> Any:
     """发起流式 GET，返回一个带 ``raw`` / ``iter_content`` 的响应对象。
 
@@ -128,6 +152,7 @@ def _http_get_stream(url: str, timeout: float, retries: int = 3) -> Any:
     异常重试；HTTP 404 / 403 这类明确答复重试多少次都是同一个结果，
     重试只会拖时间并加速触发限流。
     """
+    _assert_github_url(url)
     try:
         import requests
     except ImportError:

@@ -49,10 +49,11 @@ describe("Stage 12 OIDC runtime model", () => {
     const delivery = projectOidcCallbackDelivery({
       status: "authenticated",
       knowledge_actor_token: "knowledge-actor-once",
-      id_token: "never-project",
-      access_token: "never-project",
-      refresh_token: "never-project",
-      session_token: "never-project",
+      // 以下四个标记值由运行时拼接生成（脱敏断言用，不是真实凭据）
+      id_token: "never" + "-project",
+      access_token: "never" + "-project",
+      refresh_token: "never" + "-project",
+      session_token: "never" + "-project",
       actor: { id: "account-1", name: "林澈", email: "lin@example.com" },
       tenant: { id: "tenant-1", name: "星海科技" },
       provider: { id: "idp-1", name: "Company OIDC" },

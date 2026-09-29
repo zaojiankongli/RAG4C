@@ -12,12 +12,21 @@ import sys
 import time
 from pathlib import Path
 
+import os
+
 sys.path.insert(0, ".")
 
 from openai import OpenAI  # noqa: E402
 
 BASE_URL = "https://ai.seeway.co/v1"
-API_KEY = "sk-bd74819323d2df9b1ba3ea1af7fb4c352fe33689d1d23f8f88fb32bea1949a06"
+# 凭据只从环境变量读取（视觉评审 key 曾以字面量写进源码并被提交——该 key 必须作废
+# 轮换，历史里仍可查到）。没配就快速失败，绝不内置任何可用的凭据字面量。
+API_KEY = os.environ.get("RAG4C_VISUAL_REVIEW_API_KEY", "").strip()
+if not API_KEY:
+    raise SystemExit(
+        "缺少环境变量 RAG4C_VISUAL_REVIEW_API_KEY（视觉评审模型的 API key）。"
+        "请先在环境中配置再运行本脚本。"
+    )
 MODEL = "glm-5.3-flash"
 
 PROMPT = (

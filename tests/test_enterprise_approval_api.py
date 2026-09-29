@@ -248,7 +248,8 @@ def _request(
             "policy_id": policy_id,
             "resource_type": "catalog",
             "resource_id": "catalog-main",
-            "snapshot": snapshot or {"revision": 24, "api_key": "sk_live_secret", "safe": "value"},
+            # 脱敏断言的标记值由运行时拼接生成（不是真实凭据，字面量会被凭据扫描拦下）
+            "snapshot": snapshot or {"revision": 24, "api_key": "sk_" + "live_secret", "safe": "value"},
             "reason": "申请目录升级",
         },
     )

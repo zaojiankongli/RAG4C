@@ -29,9 +29,30 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter
 from pathlib import Path
+
+# 压测只打自己拉起的本机服务：仅接受 http + 数字环回地址（不解析 DNS，即无
+# rebinding 面），且禁止重定向。这不是任意 URL 的请求器。
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        raise urllib.error.HTTPError(req.full_url, code, "redirect not allowed", headers, fp)
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _assert_loopback_url(url: str) -> None:
+    parts = urllib.parse.urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "http" or host not in _LOOPBACK_HOSTS:
+        raise ValueError("load_query only talks to the loopback service it measures")
+
 
 _QUESTIONS = [
     "What is a Spring Boot starter and why would I use one?",
@@ -56,9 +77,10 @@ def _post(url: str, payload: dict, timeout: float) -> tuple[int, float, str]:
     req = urllib.request.Request(
         url, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )
+    _assert_loopback_url(url)
     t0 = time.perf_counter()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _OPENER.open(req, timeout=timeout) as resp:
             resp.read()
             return resp.status, time.perf_counter() - t0, ""
     except urllib.error.HTTPError as e:

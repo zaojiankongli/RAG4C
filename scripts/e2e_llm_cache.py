@@ -38,22 +38,44 @@ import argparse
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
+
+# 本脚本只对着自己拉起的本机服务发请求：仅接受 http + 数字环回地址
+# （不解析 DNS，即无 rebinding 面），且禁止重定向。这不是任意 URL 的请求器。
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        raise urllib.error.HTTPError(req.full_url, code, "redirect not allowed", headers, fp)
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _assert_loopback_url(url: str) -> None:
+    parts = urllib.parse.urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "http" or host not in _LOOPBACK_HOSTS:
+        raise ValueError("e2e_llm_cache only talks to the loopback http service it targets")
 
 
 def _post(url: str, payload: dict, timeout: float) -> dict:
+    _assert_loopback_url(url)
     req = urllib.request.Request(
         url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _OPENER.open(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
 def _get(url: str, timeout: float) -> dict:
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
+    _assert_loopback_url(url)
+    with _OPENER.open(url, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 

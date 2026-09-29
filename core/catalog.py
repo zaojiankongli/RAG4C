@@ -1765,17 +1765,22 @@ def list_documents_page(
                 )
             )
 
-        statement = (
-            select(*_document_catalog_select_columns(session, available))
-            .select_from(table)
-            .where(*page_criteria)
-        )
         # 方向来自声明，不是分支顺序：新增加序排序若忘了改这里，旧写法会静默按降序翻页。
+        # 查询链整体内联进 execute 调用（不经过预构建的语句变量）。
         if sort_spec.direction == "asc":
-            statement = statement.order_by(sort_expression.asc(), table.c.id.asc())
+            order_clause = (sort_expression.asc(), table.c.id.asc())
         else:
-            statement = statement.order_by(sort_expression.desc(), table.c.id.desc())
-        raw_rows = session.execute(statement.offset(offset).limit(limit + 1)).mappings().all()
+            order_clause = (sort_expression.desc(), table.c.id.desc())
+        raw_rows = (
+            session.execute(
+                select(*_document_catalog_select_columns(session, available))
+                .select_from(table)
+                .where(*page_criteria)
+                .order_by(*order_clause)
+                .offset(offset)
+                .limit(limit + 1)
+            ).mappings().all()
+        )
 
     has_next = len(raw_rows) > limit
     rows = raw_rows[:limit]

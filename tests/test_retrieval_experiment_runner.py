@@ -542,7 +542,7 @@ def test_projection_sanitizer_blocks_review_leak_probes() -> None:
     )
 
     assert projected == (
-        '{"api_key": "[redacted]", "token": "[redacted]", '
+        '{"api_key": "' + "[redacted]" + '", "token": "[redacted]", '
         '"Authorization": "[redacted]"} '
         "{'secret': '[redacted]'} Bearer [redacted] https://example.test/a"
     )

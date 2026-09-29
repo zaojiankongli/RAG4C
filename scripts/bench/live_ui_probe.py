@@ -18,9 +18,30 @@ import collections
 import json
 import sys
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+# 探针只打自己拉起的本机前后端：仅接受 http + 数字环回地址（不解析 DNS，
+# 即无 rebinding 面），且禁止重定向。这不是任意 URL 的请求器。
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        raise urllib.error.HTTPError(req.full_url, code, "redirect not allowed", headers, fp)
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _assert_loopback_url(url: str) -> None:
+    parts = urllib.parse.urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "http" or host not in _LOOPBACK_HOSTS:
+        raise ValueError("live_ui_probe only talks to the loopback services it measures")
 
 QA_HASHES = ("#/query", "#/retrieval-lab", "#/qa", "#/ask")
 MONITOR_HASH = "#/monitor"
@@ -53,7 +74,8 @@ UI_VS_API_PAIRS = (
 
 
 def _api_snapshot(api_base: str) -> dict[str, Any]:
-    with urllib.request.urlopen(api_base + "/api/metrics", timeout=15) as response:
+    _assert_loopback_url(api_base)
+    with _OPENER.open(api_base + "/api/metrics", timeout=15) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -298,7 +320,8 @@ def main(argv: list[str] | None = None) -> int:
     # 前端不在跑时，页面会半渲染：延迟读数看着像"很慢"，其实是应用在报错。
     # 先探一次可达性，把结论钉成"起不来"，别让它冒充性能数据。
     try:
-        code = urllib.request.urlopen(args.app_url, timeout=10).status  # noqa: S310
+        _assert_loopback_url(args.app_url)
+        code = _OPENER.open(args.app_url, timeout=10).status
     except Exception as exc:  # noqa: BLE001
         print(f"[error] 前端 {args.app_url} 不可达（{type(exc).__name__}），"
               "先起 vite dev 再测", file=sys.stderr)

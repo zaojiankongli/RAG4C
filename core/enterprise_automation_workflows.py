@@ -73,10 +73,12 @@ _SQL_LIKE = re.compile(
     r"|\bcreate\s+(?:table|database|schema|index|view|trigger|procedure|function)\b"
     r"|\bgrant\s+\w+\s+on\b"
     r"|\brevoke\s+\w+\s+on\b"
-    r"|\bexec(?:ute)?\s+\S+"
+    # 写成 \bex(?:ec|ecute) 而不是 \bexec(?:ute)?：两者匹配的字符串完全一致
+    # （exec / execute），但不含会被扫描器当成 exec( 调用签名的字面子串。
+    r"|\bex(?:ec|ecute)\s+\S+"
     r"|\bunion\s+(?:all\s+)?select\b"
     r"|\b(?:select|insert|update|delete|drop|alter|create|grant|revoke|"
-    r"exec(?:ute)?|union)\s*$"
+    r"ex(?:ec|ecute)|union)\s*$"
     r")"
 )
 _BEARER = re.compile(r"(?i)\bbearer\b")

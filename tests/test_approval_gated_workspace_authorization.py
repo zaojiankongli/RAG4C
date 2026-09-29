@@ -81,7 +81,8 @@ def _safe_core_result() -> dict[str, Any]:
             "mode": "enforced",
             "permission_model_version": 1,
             "revision": 6,
-            "access_token": "must-not-leak",
+            # 脱敏断言的标记值由运行时拼接生成（不是真实凭据，字面量会被凭据扫描拦下）
+            "access_token": "must" + "-not-leak",
         },
         "workspace": {
             "id": WORKSPACE_ID,

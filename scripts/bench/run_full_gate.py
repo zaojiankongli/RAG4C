@@ -23,11 +23,32 @@ import os
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON = sys.executable
+
+# 门禁脚本只打自己拉起的本机服务：仅接受 http + 数字环回地址（不解析 DNS，即无
+# rebinding 面），且禁止重定向。
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        raise urllib.error.HTTPError(req.full_url, code, "redirect not allowed", headers, fp)
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _assert_loopback_url(url: str) -> None:
+    parts = urllib.parse.urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "http" or host not in _LOOPBACK_HOSTS:
+        raise ValueError("run_full_gate only talks to the loopback services it spawns itself")
 
 # 阈值（基于实测基线，含 ~20% 余量）
 # 阈值（基于 3 轮实测的**方差下界**，QPS 留 ~25% 负载余量；成功率硬性 100%）
@@ -51,10 +72,11 @@ THRESHOLDS = {
 
 
 def _wait_ready(url: str, timeout_s: float = 30.0) -> bool:
+    _assert_loopback_url(url)
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(url, timeout=2) as r:
+            with _OPENER.open(url, timeout=2) as r:
                 if r.status == 200:
                     return True
         except Exception:

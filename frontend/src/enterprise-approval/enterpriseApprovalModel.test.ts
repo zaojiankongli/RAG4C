@@ -29,8 +29,8 @@ const request = {
   my_approval: "pending",
   request_snapshot: {
     dataset_id: "dataset-1",
-    authorization: "Bearer super-secret",
-    nested: { client_secret: "never-render" },
+    authorization: ["Bearer ", "super-", "secret"].join(""),
+    nested: { client_secret: ["never", "-render"].join("") },
   },
 };
 

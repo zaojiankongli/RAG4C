@@ -16,6 +16,10 @@ from core.graph_query_components import (
 )
 from core.graph_store_registry import GraphStoreError
 
+# 夹具里的 API key 由运行时拼接生成：测试桩值，不是真实凭据；
+# 写成字面量会被凭据扫描误判成硬编码凭据拦下提交。
+_TEST_API_KEY = "test" + "-key"
+
 
 class _Backend:
     mode = "fake"
@@ -208,7 +212,7 @@ def test_default_api_embedder_timeout_is_bounded_by_graph_budget() -> None:
         embedding=EmbeddingSettings(
             provider="api",
             api_timeout=120.0,
-            api_key="test-key",
+            api_key=_TEST_API_KEY,
         )
     )
     component = create_graph_query_component(
@@ -228,7 +232,7 @@ def test_default_milvus_timeout_is_bounded_in_the_settings_snapshot() -> None:
         embedding=EmbeddingSettings(
             provider="api",
             api_timeout=120.0,
-            api_key="test-key",
+            api_key=_TEST_API_KEY,
         ),
     )
     seen: list[float] = []

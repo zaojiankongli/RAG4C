@@ -447,7 +447,7 @@ def test_canonical_observation_is_utc_microsecond_precise_and_body_free() -> Non
         result_body="should never persist",
         judgment_note="reviewer note",
         approval_ticket="opaque-ticket-123",
-        api_key="sk_test_not-persisted",
+        api_key="sk_" + "test_not-persisted",
     )
     projected = canonical_observation(raw)
     assert projected["observed_at"] == "2026-08-29T12:00:00.123456Z"

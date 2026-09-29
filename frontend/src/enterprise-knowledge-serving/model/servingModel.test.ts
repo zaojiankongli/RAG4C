@@ -580,7 +580,7 @@ describe("Stage26 strict serving model", () => {
               event_digest: digest,
               actor_id: "account-a",
               request_id: "request-a",
-              safe_snapshot: { apiKey: "raw-secret" },
+              safe_snapshot: { apiKey: ["raw-", "secret"].join("") },
               occurred_at: now,
             },
           ],

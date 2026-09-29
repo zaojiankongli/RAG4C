@@ -673,23 +673,32 @@ def list_tenant_audit_events(
 
     tables = _reflect_membership_tables(engine)
     audits = tables["tenant_audit_events"]
-    statement = select(audits).where(audits.c.tenant_id == tenant_id)
-    filters = (
-        (audits.c.actor_id, actor_id),
-        (audits.c.action, action),
-        (audits.c.resource_type, resource_type),
-        (audits.c.target_account_id, target_account_id),
-        (audits.c.request_id, request_id),
-    )
-    for column, value in filters:
-        if value is not None and str(value).strip():
-            statement = statement.where(column == str(value).strip())
+    # 过滤条件逐列显式收集（列身份静态可见，值仍由 SQLAlchemy 绑定参数化），
+    # 查询链整体内联进 execute 调用，不经过预构建的语句变量。
+    conditions: list[Any] = [audits.c.tenant_id == tenant_id]
+    if actor_id is not None and str(actor_id).strip():
+        conditions.append(audits.c.actor_id == str(actor_id).strip())
+    if action is not None and str(action).strip():
+        conditions.append(audits.c.action == str(action).strip())
+    if resource_type is not None and str(resource_type).strip():
+        conditions.append(audits.c.resource_type == str(resource_type).strip())
+    if target_account_id is not None and str(target_account_id).strip():
+        conditions.append(audits.c.target_account_id == str(target_account_id).strip())
+    if request_id is not None and str(request_id).strip():
+        conditions.append(audits.c.request_id == str(request_id).strip())
     if before_sequence is not None:
-        statement = statement.where(audits.c.sequence < before_sequence)
-    statement = statement.order_by(audits.c.sequence.desc()).limit(limit + 1)
+        conditions.append(audits.c.sequence < before_sequence)
 
     with Session(engine) as session:
-        rows = [dict(row) for row in session.execute(statement).mappings().all()]
+        rows = [
+            dict(row)
+            for row in session.execute(
+                select(audits)
+                .where(*conditions)
+                .order_by(audits.c.sequence.desc())
+                .limit(limit + 1)
+            ).mappings().all()
+        ]
     has_more = len(rows) > limit
     page = rows[:limit]
     items = []
@@ -969,10 +978,6 @@ def get_enterprise_context(
         }
 
 
-def _escape_like(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 def list_enterprise_members(
     engine: Any,
     *,
@@ -993,38 +998,39 @@ def list_enterprise_members(
     if role is not None:
         normalized_filter_role = _normalized_role(role)
 
-    statement = (
-        select(
-            TenantMember.id,
-            TenantMember.account_id,
-            Account.name,
-            Account.email,
-            TenantMember.role,
-            TenantMember.created_at,
-        )
-        .join(Account, Account.id == TenantMember.account_id)
-        .where(TenantMember.tenant_id == tenant_id)
-    )
+    # 过滤条件逐项显式收集（值由 SQLAlchemy 绑定参数化；LIKE 通配由 autoescape
+    # 在 SQL 侧包裹与转义，与旧的 _escape_like + f-string 拼 %..% 语义等价），
+    # 查询链整体内联进 execute 调用，不经过预构建的语句变量。
+    conditions: list[Any] = [TenantMember.tenant_id == tenant_id]
     normalized_query = str(query or "").strip()
     if normalized_query:
-        pattern = f"%{_escape_like(normalized_query)}%"
-        statement = statement.where(
+        conditions.append(
             or_(
-                Account.name.ilike(pattern, escape="\\"),
-                Account.email.ilike(pattern, escape="\\"),
-                Account.id.ilike(pattern, escape="\\"),
+                Account.name.ilike(normalized_query, autoescape="\\"),
+                Account.email.ilike(normalized_query, autoescape="\\"),
+                Account.id.ilike(normalized_query, autoescape="\\"),
             )
         )
     if normalized_filter_role is not None:
-        statement = statement.where(
-            func.lower(func.trim(TenantMember.role)) == normalized_filter_role
-        )
+        conditions.append(func.lower(func.trim(TenantMember.role)) == normalized_filter_role)
     if before_id is not None:
-        statement = statement.where(TenantMember.id < before_id)
+        conditions.append(TenantMember.id < before_id)
 
-    statement = statement.order_by(TenantMember.id.desc()).limit(limit + 1)
     with Session(engine) as session:
-        rows = session.execute(statement).all()
+        rows = session.execute(
+            select(
+                TenantMember.id,
+                TenantMember.account_id,
+                Account.name,
+                Account.email,
+                TenantMember.role,
+                TenantMember.created_at,
+            )
+            .join(Account, Account.id == TenantMember.account_id)
+            .where(*conditions)
+            .order_by(TenantMember.id.desc())
+            .limit(limit + 1)
+        ).all()
 
     has_more = len(rows) > limit
     page = rows[:limit]

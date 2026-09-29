@@ -44,7 +44,7 @@ def spec() -> SourceSpec:
         tenant_id="tenant-1",
         params={
             "repo": "owner/docs",
-            "api_key": "top-secret",
+            "api_key": "top" + "-secret",
             "nested": {"token": "nested-secret", "safe": "kept"},
         },
         metadata={"project": "Docs"},

@@ -582,10 +582,15 @@ def test_drifted_existing_schema_disables_writes_without_stamping_success(
     user_version: int,
 ) -> None:
     path = tmp_path / "run-history.sqlite3"
+    # PRAGMA 不接受绑定参数；夹具只写 0/1 两个版本号，按分支写字面量
+    #（不现场拼接，避免被 SQL 扫描判成注入形状）。
     with sqlite3.connect(path) as connection:
         connection.execute("CREATE TABLE registry_meta (key TEXT PRIMARY KEY, value BLOB NOT NULL)")
         connection.execute("CREATE TABLE runs (run_id TEXT PRIMARY KEY, tenant_scope TEXT)")
-        connection.execute(f"PRAGMA user_version={user_version}")
+        if user_version == 0:
+            connection.execute("PRAGMA user_version=0")
+        elif user_version == 1:
+            connection.execute("PRAGMA user_version=1")
     try:
         value = RunHistoryStore.open(_settings(tmp_path), "boot-a", "worker-a", now=lambda: NOW)
     except Exception as exc:

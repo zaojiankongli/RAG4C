@@ -15,9 +15,31 @@ import argparse
 import collections
 import json
 import pathlib
+import urllib.error
+import urllib.parse
 import urllib.request
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+# 探针只打自己拉起的本机服务：仅接受 http + 数字环回地址（不解析 DNS，即无
+# rebinding 面），且禁止重定向。
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        raise urllib.error.HTTPError(req.full_url, code, "redirect not allowed", headers, fp)
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _assert_loopback_url(url: str) -> None:
+    parts = urllib.parse.urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "http" or host not in _LOOPBACK_HOSTS:
+        raise ValueError("probe_citation_statuses only talks to the loopback api it measures")
+
 
 
 def main() -> int:
@@ -41,8 +63,9 @@ def main() -> int:
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
         )
+        _assert_loopback_url(args.api_base)
         try:
-            with urllib.request.urlopen(request, timeout=420) as response:
+            with _OPENER.open(request, timeout=420) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except Exception as exc:  # noqa: BLE001
             report["rows"].append({"query": item["query"], "error": f"{type(exc).__name__}: {exc}"})

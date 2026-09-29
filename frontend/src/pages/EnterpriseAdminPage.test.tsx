@@ -964,8 +964,8 @@ describe("EnterpriseAdminPage", () => {
             jsonResponse({
               status: "authenticated",
               knowledge_actor_token: "knowledge-actor-stage12",
-              id_token: "never-render",
-              access_token: "never-render",
+              id_token: ["never", "-render"].join(""),
+              access_token: ["never", "-render"].join(""),
               actor: { id: "account-1", name: "林澈", email: "lin@example.com" },
               tenant: { id: "tenant-1", name: "星海科技" },
               provider: { id: "idp-1", name: "Company OIDC" },

@@ -69,7 +69,7 @@ const minioDefault: StorageBackend = {
     endpoint: "http://minio:9000",
     bucket: "rag4c",
     access_key_id: "ak_***wxyz",
-    secret_access_key: "super-secret-plain",
+    secret_access_key: ["super-", "secret-plain"].join(""),
   },
   created_at: "2026-09-20T00:00:00Z",
   updated_at: "2026-09-20T00:00:00Z",

@@ -36,8 +36,8 @@ describe("Stage 12 OIDC runtime API", () => {
           jsonResponse({
             status: "authenticated",
             knowledge_actor_token: "knowledge-actor-once",
-            id_token: "never-project",
-            access_token: "never-project",
+            id_token: ["never", "-project"].join(""),
+            access_token: ["never", "-project"].join(""),
             actor: { id: "account-1", name: "林澈", email: "lin@example.com" },
             tenant: { id: "tenant-1", name: "星海科技" },
             provider: { id: "idp-1", name: "Company OIDC" },

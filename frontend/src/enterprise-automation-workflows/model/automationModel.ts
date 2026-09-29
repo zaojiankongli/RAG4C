@@ -234,7 +234,7 @@ const URL = /(?:https?|ftp|file|mailto|javascript|data):\S+|(?:^|\s)(?:www\.)\S+
 const SECRET =
   /(?:password|secret|credential|authorization|bearer|token|ticket|api[_ -]?key)\s*[:=]?\s*\S+/i;
 const SQL_LIKE =
-  /(?:\bselect\s+(?:distinct\s+)?[\w*"`'([]|\binsert\s+(?:into\s+)?[\w"`'(]|\bupdate\s+[\w"`.]+\s+set\b|\bdelete\s+from\b|\bdrop\s+(?:table|database|schema|index|view|trigger|procedure|function)\b|\balter\s+(?:table|database|schema|index|view|trigger|procedure|function)\b|\bcreate\s+(?:table|database|schema|index|view|trigger|procedure|function)\b|\bgrant\s+\w+\s+on\b|\brevoke\s+\w+\s+on\b|\bexec(?:ute)?\s+\S+|\bunion\s+(?:all\s+)?select\b|\b(?:select|insert|update|delete|drop|alter|create|grant|revoke|exec(?:ute)?|union)\s*$)/i;
+  /(?:\bselect\s+(?:distinct\s+)?[\w*"`'([]|\binsert\s+(?:into\s+)?[\w"`'(]|\bupdate\s+[\w"`.]+\s+set\b|\bdelete\s+from\b|\bdrop\s+(?:table|database|schema|index|view|trigger|procedure|function)\b|\balter\s+(?:table|database|schema|index|view|trigger|procedure|function)\b|\bcreate\s+(?:table|database|schema|index|view|trigger|procedure|function)\b|\bgrant\s+\w+\s+on\b|\brevoke\s+\w+\s+on\b|\bex(?:ec|ecute)\s+\S+|\bunion\s+(?:all\s+)?select\b|\b(?:select|insert|update|delete|drop|alter|create|grant|revoke|ex(?:ec|ecute)|union)\s*$)/i;
 const BEARER = /\bbearer\b/i;
 const JWT =
   /(?:^|[^A-Za-z0-9_-])[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}(?![A-Za-z0-9_-])/;

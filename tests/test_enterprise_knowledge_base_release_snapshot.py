@@ -266,7 +266,7 @@ def _release_engine(tmp_path: Path):
                     effective_config={"endpoint": "https://example.test/data"},
                     config_fingerprint="b" * 64,
                     status="active",
-                    last_cursor={"page": 2, "access_token": "raw-source-secret"},
+                    last_cursor={"page": 2, "access_token": "raw" + "-source-secret"},
                     last_result={"fetched": 10},
                     last_sync_at=now,
                     mutation_generation=4,

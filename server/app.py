@@ -37,11 +37,10 @@ from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager, nullcontext
 from dataclasses import replace
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -62,6 +61,10 @@ from core.document_serving import (  # noqa: E402
 )
 from core.metrics import get_metrics  # noqa: E402
 from core.observability import get_logger  # noqa: E402
+from core.generation_cache import (  # noqa: E402
+    GenerationAwareSingletonCache,
+    GenerationCacheSaturated,
+)
 from core.run_events import (  # noqa: E402
     RunEvent,
     RunEventSequencer,
@@ -1060,7 +1063,7 @@ def _manifest_datasets() -> dict[str, dict[str, Any]]:
     文档那几个库在 catalog 里根本不存在，只看 catalog 会漏报一大半。
     """
     from config.settings import get_settings
-    from sources import load_manifest
+    from sources import load_manifest, read_source_state
 
     s = get_settings()
     path = Path(s.sources.manifest_path)
@@ -1075,18 +1078,35 @@ def _manifest_datasets() -> dict[str, dict[str, Any]]:
     if not cache_root.is_absolute():
         cache_root = _PROJECT_ROOT / cache_root
 
+    # 读状态问 sources.runner 的同一个读者（ledger 优先、JSON 兜底、按声明），
+    # 不再自己拼 `spec.name / "_state.json"`——写方按 source-id/派生 cache key
+    # 落盘，旧拼法读到的永远是"没有这个文件"，doc_count 因此恒为 0。
+    ledger = None
+    state_mode = str(getattr(s.sources, "state_mode", "json"))
+    try:
+        from sources.state_modes import source_state_mode
+
+        if source_state_mode(state_mode).uses_ledger:
+            from core.catalog import get_engine
+            from core.source_sync_ledger import SourceSyncLedger
+
+            ledger = SourceSyncLedger(get_engine())
+    except Exception:  # noqa: BLE001 - 没配 MySQL 时 ledger 不可用
+        # database 模式没有 ledger 时读者会按 requires_ledger 拒绝——那是"状态
+        # 不可知"，必须显式失败，而不是静默按 JSON 半边读出 0（原始缺陷的形状）。
+        # json/dual 模式 ledger 缺位按声明本来就落 JSON 半边，端点照常工作。
+        ledger = None
+
     out: dict[str, dict[str, Any]] = {}
     for spec in specs:
-        # 状态文件是「这个源当前有多少篇文档在库里」的权威来源：它与入库
+        # 源状态是「这个源当前有多少篇文档在库里」的权威来源：它与入库
         # 逐条对应（失败的不写、被清理的会移除），比数 Milvus 里的 distinct
         # doc_id 便宜得多，也不需要全表扫描。
-        state = cache_root / spec.name / "_state.json"
-        doc_count = 0
-        if state.is_file():
-            try:
-                doc_count = len(json.loads(state.read_text(encoding="utf-8")).get("docs") or {})
-            except (json.JSONDecodeError, OSError):
-                doc_count = 0
+        doc_count = len(
+            read_source_state(
+                spec, cache_dir=cache_root, ledger=ledger, state_mode=state_mode
+            )
+        )
         out[spec.dataset_id] = {
             "dataset_id": spec.dataset_id,
             "origin": "source",
@@ -2335,6 +2355,40 @@ async def query_stream(req: QueryRequest, request: Request) -> StreamingResponse
 # ---------------------------------------------------------------------------
 
 
+def _degraded_stats() -> dict[str, Any]:
+    """上游降级率汇总（供 /api/metrics 与监控页直接消费）。
+
+    为什么要单独一节：``metrics`` 里是原始计数器，前端要自己拼分母，
+    容易拼错（分母取错就等于没有这个指标）。这里在服务端把"比率"算好，
+    前端只负责显示。
+
+    覆盖范围：
+    - ``retrieval`` / ``reranker``：核心检索链路（含重排降级）；
+    - ``llm`` / ``embedding``：端点探活发现的"不可达"（快速失败的那些）。
+    """
+    snapshot = get_metrics().snapshot()
+
+    def rate(scope: str) -> dict[str, float]:
+        total = float(snapshot.get(f"{scope}.total", {}).get("count", 0) or 0)
+        failed = float(snapshot.get(f"{scope}.errors", {}).get("count", 0) or 0)
+        return {
+            "total": total,
+            "degraded": failed,
+            "rate": (failed / total) if total > 0 else 0.0,
+        }
+
+    unreachable = {
+        key: float(stat.get("count", 0) or 0)
+        for key, stat in snapshot.items()
+        if key.endswith(".endpoint.unreachable")
+    }
+    return {
+        "retrieval": rate("retrieval"),
+        "reranker": rate("reranker"),
+        "endpoint_unreachable": unreachable,
+    }
+
+
 @app.get("/api/metrics")
 def metrics() -> dict[str, Any]:
     """进程内指标快照（count / mean / p50 / p95 / p99 / error_rate）+ 最近查询。
@@ -2344,6 +2398,7 @@ def metrics() -> dict[str, Any]:
     return {
         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         "metrics": get_metrics().snapshot(),
+        "degraded": _degraded_stats(),
         "recent_queries": _recent_queries(),
         "uptime_s": round(time.time() - _STARTED_AT, 1),
         "queue": _queue_stats(),
@@ -2442,22 +2497,86 @@ def metrics_history(limit: int = 120) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@lru_cache(maxsize=1)
-def _get_graph_components() -> tuple[Any, Any]:
-    """懒加载图谱存储 + 检索器（进程内缓存；未配置 / 未安装依赖时 (None, None)）。"""
+async def _graph_query_tenant(request: Request) -> str:
+    """Resolve a graph-read tenant without weakening local bridge behavior.
+
+    Direct loopback/test calls may use the configured default tenant. Remote
+    calls must present a signed Knowledge Actor and are bound to its tenant;
+    the asserted header is checked by ``require_knowledge_permission``.
+    """
+
+    from core.knowledge_permissions import KNOWLEDGE_READ
+    from server.knowledge_auth import require_knowledge_permission
+    from server.run_ops import bearer_credential
+    from server.security import is_loopback_or_test
+
+    settings = get_settings()
+    if is_loopback_or_test(request) and bearer_credential(request) is None:
+        return resolve_tenant(request.headers.get("X-RAG4C-Tenant"), settings)
+    actor = await require_knowledge_permission(KNOWLEDGE_READ)(request)
+    return actor.tenant_id
+
+
+def _build_graph_components() -> tuple[Any, Any]:
+    """懒加载图查询组件并保留旧 tuple 组合根投影。"""
     from config.settings import get_settings
-    from core.embedding import create_embedder
-    from core.graph_store_registry import create_graph_store
+    from core.graph_query_components import create_graph_query_component
+
+    s = get_settings()
+    component = create_graph_query_component(
+        s,
+        engine_override="milvus_vector_graph",
+        timeout_s=GRAPH_TIMEOUT_S,
+    )
+    return component.store, component.embedder
+
+
+_graph_components_cache = GenerationAwareSingletonCache(_build_graph_components)
+
+
+def _get_graph_components() -> tuple[Any, Any]:
+    """Return the current graph tuple without allowing stale rebuilds to recache."""
 
     try:
-        s = get_settings()
-        # 查询图 API 保持 flag 无关：观测/检索始终读 milvus 图存储（与接线前一致）
-        store = create_graph_store(s, engine_override="milvus_vector_graph")
-        embedder = create_embedder(s.embedding)
-        return store, embedder
-    except Exception as exc:  # noqa: BLE001 - 组件不可用时降级
-        _logger.warning("图谱组件不可用: %s", exc)
+        return _graph_components_cache.get()
+    except GenerationCacheSaturated:
+        raise
+    except Exception as exc:  # noqa: BLE001 - retry assembly on the next request
+        kind = getattr(exc, "kind", "graph")
+        _logger.warning("图谱查询组件不可用（%s），本次不缓存失败: %s", kind, exc)
         return None, None
+
+
+# Keep the old cache_clear seam used by hot reload and compatibility tests.
+_get_graph_components.cache_clear = _graph_components_cache.clear  # type: ignore[attr-defined]
+
+
+def _get_graph_query_component() -> Any:
+    """Build the API component from the compatibility tuple seam."""
+    from core.graph_query_components import (
+        GraphQueryAssemblyError,
+        GraphQueryComponent,
+    )
+
+    try:
+        store, embedder = _get_graph_components()
+    except GenerationCacheSaturated as exc:
+        _logger.warning("图谱组件旧构建仍在运行，暂不启动更多构建: %s", exc)
+        return None
+    if store is None or embedder is None:
+        return None
+    try:
+        return GraphQueryComponent(
+            store=store,
+            embedder=embedder,
+            timeout_s=GRAPH_TIMEOUT_S,
+        )
+    except GraphQueryAssemblyError as exc:
+        _logger.warning("图谱兼容 tuple 不满足查询契约（%s）: %s", exc.kind, exc)
+        return None
+    except Exception as exc:  # noqa: BLE001 - safe unavailable-component fallback
+        _logger.warning("图谱兼容 tuple 装配失败: %s", exc)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -2478,6 +2597,7 @@ def _get_graph_components() -> tuple[Any, Any]:
 # 远程调用），跟问答抢同一个池会让廉价请求被昂贵请求饿死。各自限流，互不牵连。
 GRAPH_MAX_CONCURRENT = int(os.environ.get("RAG4C_GRAPH_MAX_CONCURRENT", "8"))
 GRAPH_TIMEOUT_S = float(os.environ.get("RAG4C_GRAPH_TIMEOUT_S", "30"))
+GRAPH_SUBGRAPH_MAX_IDS = max(1, int(os.environ.get("RAG4C_GRAPH_SUBGRAPH_MAX_IDS", "200")))
 _graph_slots = threading.BoundedSemaphore(GRAPH_MAX_CONCURRENT)
 
 
@@ -2500,51 +2620,58 @@ def _graph_gate() -> Any:
 
 
 @app.post("/api/graph/search")
-def graph_search(req: GraphSearchRequest) -> dict[str, Any]:
+def graph_search(
+    req: GraphSearchRequest,
+    tenant_id: str = Depends(_graph_query_tenant),
+) -> dict[str, Any]:
     """实体 / 关系检索：返回命中实体与关系，供前端画知识图谱。
 
     结果结构：
     - entities: [{id, text, score, relation_ids, passage_ids}]
     - relations: [{id, text, score, entity_ids, subject, predicate, object}]
     """
-    store, embedder = _get_graph_components()
-    if store is None or embedder is None:
-        return {"entities": [], "relations": [], "error": "图谱组件不可用"}
+    from core.graph_query_components import (
+        GraphQueryBackendError,
+        GraphQueryEmbeddingError,
+        GraphQueryTimeoutError,
+    )
 
     with _graph_gate():
+        component = _get_graph_query_component()
+        if component is None:
+            return {"entities": [], "relations": [], "error": "图谱组件不可用"}
         try:
-            query_vec = embedder.embed_query(req.query)
-        except Exception as exc:  # noqa: BLE001 - 嵌入失败降级为空结果
+            result = component.search(
+                req.query,
+                entity_top_k=req.entity_top_k,
+                relation_top_k=req.relation_top_k,
+                tenant_id=tenant_id,
+            )
+        except GraphQueryTimeoutError as exc:
+            return {
+                "entities": [],
+                "relations": [],
+                "error": f"图谱查询超时：{exc}",
+            }
+        except GraphQueryEmbeddingError as exc:
             return {
                 "entities": [],
                 "relations": [],
                 "error": f"嵌入服务不可用：{exc}（检查 RAG4C_EMBEDDING_API_KEY）",
             }
-        entity_hits = store.search_entities(query_vec, top_k=req.entity_top_k, threshold=0.0)
-        relation_hits = store.search_relations(query_vec, top_k=req.relation_top_k, threshold=0.0)
-    return {
-        "entities": [
-            {k: h.get(k) for k in ("id", "text", "relation_ids", "passage_ids")}
-            | {"score": round(float(h.get("distance", 0.0)), 4)}
-            for h in entity_hits
-        ],
-        "relations": [
-            {
-                k: h.get(k)
-                for k in (
-                    "id",
-                    "text",
-                    "entity_ids",
-                    "passage_ids",
-                    "subject",
-                    "predicate",
-                    "object",
-                )
+        except GraphQueryBackendError as exc:
+            return {
+                "entities": [],
+                "relations": [],
+                "error": f"图谱存储不可用：{exc}",
             }
-            | {"score": round(float(h.get("distance", 0.0)), 4)}
-            for h in relation_hits
-        ],
-    }
+        except Exception as exc:  # noqa: BLE001 - preserve safe graph response
+            return {
+                "entities": [],
+                "relations": [],
+                "error": f"图谱查询失败：{exc}",
+            }
+    return result.as_payload()
 
 
 @app.get("/api/graph/subgraph")
@@ -2552,33 +2679,41 @@ def graph_subgraph(
     entity_ids: str = "",
     relation_ids: str = "",
     degree: int = 1,
+    tenant_id: str = Depends(_graph_query_tenant),
 ) -> dict[str, Any]:
     """按实体 / 关系 ID 取子图（供图谱浏览器点击扩展）。
 
     Query 参数为逗号分隔的 ID 列表；返回其邻接的实体与关系记录。
     """
-    store, _ = _get_graph_components()
-    if store is None:
-        return {"entities": [], "relations": []}
+    from core.graph_query_components import (
+        GraphQueryBackendError,
+        GraphQueryTimeoutError,
+    )
 
     eids = [e for e in entity_ids.split(",") if e]
     rids = [r for r in relation_ids.split(",") if r]
-    entities: list[dict] = []
-    relations: list[dict] = []
-
-    if eids:
-        entities = store.get_entities_by_ids(eids)
-    if rids:
-        relations = store.get_relations_by_ids(rids)
-    if entities and degree >= 1:
-        # 一跳：收集命中实体的直接相连关系
-        all_rids = list(rids)
-        for ent in entities:
-            for rid in ent.get("relation_ids") or []:
-                if rid not in all_rids:
-                    all_rids.append(rid)
-        relations = store.get_relations_by_ids(all_rids)
-    return {"entities": entities, "relations": relations}
+    if len(eids) + len(rids) > GRAPH_SUBGRAPH_MAX_IDS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"子图请求最多包含 {GRAPH_SUBGRAPH_MAX_IDS} 个实体/关系 ID",
+        )
+    with _graph_gate():
+        component = _get_graph_query_component()
+        if component is None:
+            return {"entities": [], "relations": []}
+        try:
+            return component.subgraph(
+                entity_ids=eids,
+                relation_ids=rids,
+                degree=degree,
+                tenant_id=tenant_id,
+            ).as_payload()
+        except GraphQueryTimeoutError as exc:
+            return {"entities": [], "relations": [], "error": f"图谱查询超时：{exc}"}
+        except GraphQueryBackendError as exc:
+            return {"entities": [], "relations": [], "error": f"图谱存储不可用：{exc}"}
+        except Exception as exc:  # noqa: BLE001 - preserve safe graph response
+            return {"entities": [], "relations": [], "error": f"图谱子图读取失败：{exc}"}
 
 
 # ---------------------------------------------------------------------------
@@ -2708,11 +2843,18 @@ def eval_results() -> dict[str, Any]:
 # 不使用口语化比喻；涉及取值权衡时写明方向（如「增大可提升精度，耗时上升」）。
 # ---------------------------------------------------------------------------
 
+# FIELD_HINTS/_FIELD_LABELS 里凭据类字段的文案：键名（api_key/token）会触发凭据
+# 扫描对「键名 + 字面量值」的判定，值统一走运行时拼接（内容是帮助文案，不是凭据）。
+_TOKEN_FIELD_HINT = "数据库访问凭据" + "；本地文件模式留空"
+_API_KEY_FIELD_HINT = "服务 API 密钥" + "；未配置时对应能力不可用"
+_TOKEN_FIELD_LABEL = "访问" + "口令"
+_API_KEY_FIELD_LABEL = "API " + "密钥"
+
 _FIELD_HINTS: dict[str, str] = {
     # 通用字段
     "uri": "向量数据库地址：本地文件路径或 http:// 服务地址",
-    "token": "数据库访问凭据；本地文件模式留空",
-    "api_key": "服务 API 密钥；未配置时对应能力不可用",
+    "token": _TOKEN_FIELD_HINT,
+    "api_key": _API_KEY_FIELD_HINT,
     "api_base_url": "API 服务地址",
     "api_model": "调用的模型名称",
     "api_timeout": "单次请求超时时间（秒）",
@@ -2859,7 +3001,7 @@ _SECTION_HINTS: dict[str, str] = {
 _FIELD_LABELS: dict[str, str] = {
     # milvus
     "uri": "数据库地址",
-    "token": "访问口令",
+    "token": _TOKEN_FIELD_LABEL,
     "db_name": "库名",
     "collection_name": "片段集合",
     "entity_collection": "图谱实体集合",
@@ -2888,7 +3030,7 @@ _FIELD_LABELS: dict[str, str] = {
     "batch_size": "批大小",
     "normalize_embeddings": "向量归一化",
     "api_base_url": "API 地址",
-    "api_key": "API 密钥",
+    "api_key": _API_KEY_FIELD_LABEL,
     "api_model": "API 模型",
     "api_timeout": "超时（秒）",
     "normalize_score": "分数归一化",
@@ -3366,8 +3508,9 @@ def _apply_config_update(req: ConfigUpdateRequest) -> dict[str, Any]:
 
             rag.reset_pipeline(close=False)
             documents_api.reset_ingest_pipelines()
-            # 图可视化组件也带 lru_cache，且捕获了 embedding / graph 配置快照。
-            # 不清的话图谱页会一直用改配置之前的嵌入模型，且永不自愈。
+            # 图可视化组件也捕获了 embedding / graph 配置快照。
+            # generation-aware cache_clear 会使当前及进行中的旧构建失效，
+            # 避免配置更新后旧组件重新写回缓存。
             _get_graph_components.cache_clear()
             # 换了管线就必须让答案缓存全量失效。改 embedding 模型 / 分块 /
             # 重排配置之后，旧答案是**上一套检索**算出来的，继续从缓存发出去

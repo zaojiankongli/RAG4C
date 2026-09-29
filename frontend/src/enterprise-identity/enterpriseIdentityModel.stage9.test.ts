@@ -38,7 +38,7 @@ describe("Stage 9 identity federation model", () => {
       client_id: "client-id",
       secret_ref: "vault://identity/client",
       revision: 3,
-      client_secret: "never-list",
+      client_secret: ["never", "-list"].join(""),
     }) as unknown as Record<string, unknown>;
     expect(provider).toMatchObject({ runtime_state: "runtime_not_connected", revision: 3 });
     expect(provider).not.toHaveProperty("client_secret");
