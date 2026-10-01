@@ -359,7 +359,12 @@ RAG4C_ENV_FILE=config/.env.live-bench .venv/Scripts/python.exe -m uvicorn server
    它要用同文件里的 `sa.Column(...)` 解析类型才能判，本轮没做。
    注意这条栅栏按"这条 SQL 涉及的表"取列类型交集，所以 `storage_backends.is_deleted IN (0,1)`
    这种**整数列**不会被误报（我先证伪了才没把它当缺陷改掉）。
-2. §3 的裁定：dataset 创建时是否应自动建 workspace ownership 权威行。
+2. ~~§3 的裁定：dataset 创建时是否应自动建 workspace ownership 权威行。~~
+   **（2026-09-29 已裁定并落地，`58023da`）**：是——权威完整性由构造保证优于
+   运维记得跑 seed。`catalog._ensure_dataset_row` 同事务补种默认工作区与
+   ownership 行（幂等、只补缺不夺已有归属、企业表缺失的旧部署降级为 warning）；
+   文档登记路径同样触发，旧库新库都有 self-healing。回归见
+   `tests/test_dataset_ownership_provisioning.py`（6 passed）。
 7. **消融 harness 的 baseline 起不来**（本机 MySQL 未开时）：传了
    `--env-file config/.env.live-bench` 的子进程仍去连 MySQL，栈见 §4。
    MySQL 开起来之后要么它自然好，要么这是一个"第二个引擎绕开 `RAG4C_CATALOG_DB_URL`"的真缺陷
