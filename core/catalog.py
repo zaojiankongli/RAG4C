@@ -287,6 +287,142 @@ def _ensure_tenant_row(
     return tenant
 
 
+def _ensure_default_workspace_row(session: Any, tenant_id: str) -> str:
+    """幂等确保租户有可用默认工作区，返回其 id（Round 11 裁定，见台账 §9-2）。
+
+    seed_workspace_channel_ownership.py 的运行期等价物：0028/0029 只做一次性
+    回填，运行期新建租户/知识库不带这一步时，问答会在 serving fence 处安全
+    弃权（dataset_workspace_ownerships.missing_for_dataset）。判定顺序：
+    已存在的 `ws-{tenant}`（active）→ 任意 active 默认工作区 → 当场补建
+    `ws-{tenant}`（code=default，镜像 seed 的行形状，created_by='system'）。
+    """
+    from models.orm import TenantWorkspace
+
+    preferred_id = f"ws-{tenant_id}"
+    existing = session.get(TenantWorkspace, preferred_id)
+    if existing is not None and existing.status == "active" and existing.is_default:
+        return existing.id
+    default = (
+        session.query(TenantWorkspace)
+        .filter(
+            TenantWorkspace.tenant_id == tenant_id,
+            TenantWorkspace.is_default.is_(True),
+            TenantWorkspace.status == "active",
+        )
+        .first()
+    )
+    if default is not None:
+        return default.id
+
+    from sqlalchemy.exc import IntegrityError
+
+    try:
+        with session.begin_nested():
+            session.add(
+                TenantWorkspace(
+                    id=preferred_id,
+                    tenant_id=tenant_id,
+                    code="default",
+                    normalized_name="default",
+                    name="默认工作区",
+                    status="active",
+                    environment="production",
+                    is_default=True,
+                    active_default_slot="default",
+                    revision=1,
+                    created_by="system",
+                    updated_by="system",
+                )
+            )
+            session.flush()
+    except IntegrityError:
+        pass  # 并发创建者已建：唯一约束兜底，语义仍是 if-absent
+    created = session.get(TenantWorkspace, preferred_id)
+    if created is not None and created.status == "active":
+        return created.id
+    fallback = (
+        session.query(TenantWorkspace)
+        .filter(
+            TenantWorkspace.tenant_id == tenant_id,
+            TenantWorkspace.is_default.is_(True),
+            TenantWorkspace.status == "active",
+        )
+        .first()
+    )
+    if fallback is not None:
+        return fallback.id
+    raise RuntimeError(f"租户 {tenant_id!r} 缺少可用默认工作区且自动补建失败")
+
+
+def _ensure_dataset_ownership_row(
+    session: Any, tenant_id: str, dataset_id: str, workspace_id: str
+) -> None:
+    """幂等补 dataset → workspace 的权威归属行（只补缺，不夺已有归属）。
+
+    已归属到别的 workspace（人工 transfer 过）的行原样保留；id 取内容哈希
+    使重复补种天然指向同一行，scope 唯一约束兜住并发。
+    """
+    import hashlib
+
+    from models.orm import DatasetWorkspaceOwnership
+    from sqlalchemy.exc import IntegrityError
+
+    existing = (
+        session.query(DatasetWorkspaceOwnership)
+        .filter(
+            DatasetWorkspaceOwnership.tenant_id == tenant_id,
+            DatasetWorkspaceOwnership.dataset_id == dataset_id,
+        )
+        .first()
+    )
+    if existing is not None:
+        return
+    digest = hashlib.sha256(f"{tenant_id}/{dataset_id}".encode("utf-8")).hexdigest()[:24]
+    try:
+        with session.begin_nested():
+            session.add(
+                DatasetWorkspaceOwnership(
+                    id=f"ow-{digest}",
+                    tenant_id=tenant_id,
+                    dataset_id=dataset_id,
+                    workspace_id=workspace_id,
+                    revision=1,
+                    created_by="system",
+                    updated_by="system",
+                )
+            )
+            session.flush()
+    except IntegrityError:
+        pass
+
+
+def _provision_dataset_workspace_authority(
+    session: Any, tenant_id: str, dataset_id: str
+) -> None:
+    """知识库诞生/被使用时自动补齐 workspace 归属权威（Round 11 Phase 4 落地）。
+
+    企业表未建（0028/0029 尚未执行的旧部署）时记 warning 后跳过——那类部署
+    的 schema 完整性由 catalog_schema 自检负责，本函数不越权替它报错。
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    bind = session.get_bind()
+    try:
+        present = set(sa_inspect(bind).get_table_names())
+    except Exception:  # noqa: BLE001 - 反射失败按缺表处理
+        present = set()
+    required = {"tenant_workspaces", "dataset_workspace_ownerships"}
+    if not required.issubset(present):
+        _logger.warning(
+            "企业工作区权威表缺失（%s），跳过 dataset %r 的 ownership 自动补种",
+            sorted(required - present),
+            dataset_id,
+        )
+        return
+    workspace_id = _ensure_default_workspace_row(session, tenant_id)
+    _ensure_dataset_ownership_row(session, tenant_id, dataset_id, workspace_id)
+
+
 def _ensure_dataset_row(
     session: Any,
     tenant_id: str,
@@ -314,6 +450,7 @@ def _ensure_dataset_row(
         raise ValueError(
             f"知识库 {dataset_id!r} 属于租户 {dataset.tenant_id!r}，不能以租户 {tenant_id!r} 写入"
         )
+    _provision_dataset_workspace_authority(session, tenant_id, dataset_id)
     return dataset
 
 
