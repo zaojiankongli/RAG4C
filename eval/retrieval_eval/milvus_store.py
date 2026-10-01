@@ -824,6 +824,7 @@ def _demo(cfg: MilvusStoreConfig, *, keep: bool) -> int:
     """端到端演示：建集合 -> 批量写入 -> 检索（含过滤）-> 清理。"""
     import random
 
+    # 固定种子：演示数据必须可复现，这里要的恰恰是「可预测」。
     rng = random.Random(20260928)
     now_ms = int(time.time() * 1000)
     rows = [

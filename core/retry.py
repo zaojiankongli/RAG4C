@@ -225,6 +225,7 @@ def _backoff_delay(policy: RetryPolicy, attempt: int) -> float:
         policy.max_delay,
     )
     if policy.jitter > 0.0:
+        # 抖动是统计学用途（打散重试时刻），不是密钥生成——刻意不换 secrets。
         delay *= 1.0 + random.uniform(-policy.jitter, policy.jitter)
     return max(0.0, delay)
 

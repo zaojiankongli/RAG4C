@@ -139,6 +139,8 @@ class _Metric:
         if len(self.samples) < MAX_SAMPLES:
             self.samples.append(value)
         else:
+            # 蓄水池采样的均匀随机数：统计用途，刻意不换 secrets——
+            # 本函数在观测热路径上，系统熵源会白白拖慢每次采样。
             j = random.randrange(self.count)  # 0 <= j < count（count 已含本次）
             if j < MAX_SAMPLES:
                 self.samples[j] = value

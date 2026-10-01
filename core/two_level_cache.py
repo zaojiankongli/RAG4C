@@ -79,6 +79,7 @@ def jittered_ttl(ttl: float, jitter: float = DEFAULT_TTL_JITTER) -> float:
     """
     if jitter <= 0.0 or ttl <= 0.0:
         return ttl
+    # TTL 抖动是统计学用途（打散过期时刻防雪崩），不是密钥生成——刻意不换 secrets。
     return ttl * (1.0 - random.random() * min(jitter, 0.9))
 
 

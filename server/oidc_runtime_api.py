@@ -244,6 +244,10 @@ def build_oidc_runtime_router(
                     session_id=session_id,
                 )
 
+            # nonce 来自请求 cookie（用户可控），但 callback_oidc_login 内部用
+            # hmac.compare_digest 对存储摘要常量时间校验，不匹配即 403
+            # （enterprise_oidc_runtime.py 的 oidc_nonce_mismatch 分支）——
+            # 跨文件污点在此 fail-closed，扫描器的「疑似」项已核实为误报。
             result = callback_oidc_login(
                 mutation_engine_provider(),
                 raw_state=body.state,
