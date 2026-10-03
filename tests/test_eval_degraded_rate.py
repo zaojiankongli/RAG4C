@@ -158,6 +158,54 @@ def test_degraded_rate_is_gated_by_default() -> None:
     assert "degraded_rate" in result["failures"]
 
 
+def test_judge_failure_reason_is_recorded_separately_from_the_flag() -> None:
+    """`judge_failed` 只说"失败了"，`judge_failures` 说"为什么失败"。
+
+    F1.2 基线里 9 条 judge_failed 查不出原因，只能看到 score=None——而有据性
+    裁判只有三种失败路径（judge_parse_failed / no_claims / no_verdicts，见
+    eval/judges.py），它们的处置完全不同：前者查模型输出，后两者查切分。
+    缺了这个字段，基线里出现 judge_failed 就只能靠猜。
+    """
+    dataset = [{"id": "x", "question": "问题"}]
+
+    def pipeline(question: str) -> QueryResult:
+        return _qr("答案", citations=1)
+
+    class _FailGrounded:
+        def judge(self, q, a, chunks):
+            from models.schemas import JudgeResult
+
+            return JudgeResult(score=None, rationale="no_claims")
+
+    class _OkRelevance:
+        def judge(self, q, a, chunks):
+            from models.schemas import JudgeResult
+
+            return JudgeResult(score=0.75, rationale="正常")
+
+    from eval.run_eval import Evaluator
+
+    report = Evaluator(pipeline, _FailGrounded(), _OkRelevance()).evaluate(dataset)
+    case = report.cases[0]
+    assert case.degraded is True
+    assert "judge_failed" in case.degraded_kinds
+    assert case.judge_failures == ["groundedness:no_claims"], (
+        f"失败原因应被记下，实际 {case.judge_failures}"
+    )
+    # 相关性正常就不该出现在失败列表里
+    assert not any(f.startswith("relevance:") for f in case.judge_failures)
+
+
+def test_healthy_case_records_no_judge_failures() -> None:
+    dataset = [{"id": "x", "question": "问题"}]
+
+    def pipeline(question: str) -> QueryResult:
+        return _qr("答案", citations=1)
+
+    report = Evaluator(pipeline, *_judges()).evaluate(dataset)
+    assert report.cases[0].judge_failures == []
+
+
 # ---------------------------------------------------------------------------
 # 4 / 5：并发与节流不改变结论
 # ---------------------------------------------------------------------------

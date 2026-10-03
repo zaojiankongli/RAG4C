@@ -51,6 +51,10 @@ class CaseResult(BaseModel):
     unsupported_claims: list[str] = Field(default_factory=list)
     judge_rationale: str = ""
     missing_facts: list[str] = Field(default_factory=list)
+    #: 裁判失败的**原因**（如 ``groundedness:judge_parse_failed``）。
+    #: 与 :attr:`degraded_kinds` 里的 ``judge_failed`` 配套：那个只说"失败了"，
+    #: 这个说"为什么失败"。没有它，基线里出现 judge_failed 就只能靠猜。
+    judge_failures: list[str] = Field(default_factory=list)
     citations_ok: bool = True
     #: 引用总数 / 非 ok 数。存下来是为了让聚合指标能从报告**重算**，
     #: 而不是只能信一次运行时的中间变量——也是对比两轮报告时的依据。
@@ -420,6 +424,7 @@ class Evaluator:
         unsupported_claims: list[str] = []
         judge_rationale = ""
         missing_facts: list[str] = []
+        judge_failure_reasons: list[str] = []
         if answered:
             evidence = extract_evidence(qr)
             g_res = self.groundedness_judge.judge(question, answer, evidence)
@@ -431,6 +436,14 @@ class Evaluator:
             unsupported_claims = list(g_res.unsupported_claims or [])
             missing_facts = list(r_res.missing_facts or [])
             judge_rationale = r_res.rationale or g_res.rationale or ""
+            # 失败**原因**要单独落盘。F1.2 的基线里 9 条 judge_failed 查不出
+            # 原因，只能看到 score=None——而有据性裁判只有三种失败路径
+            # （judge_parse_failed / no_claims / no_verdicts，见 eval/judges.py），
+            # 它们的处置完全不同：前者要查模型输出，后两者要查切分。
+            if g_score is None:
+                judge_failure_reasons.append(f"groundedness:{g_res.rationale or 'unknown'}")
+            if r_score is None:
+                judge_failure_reasons.append(f"relevance:{r_res.rationale or 'unknown'}")
 
         citations = qr.citations or []
         failed_citations = sum(1 for c in citations if c.status != "ok")
@@ -457,6 +470,7 @@ class Evaluator:
             unsupported_claims=unsupported_claims,
             judge_rationale=judge_rationale,
             missing_facts=missing_facts,
+            judge_failures=judge_failure_reasons,
             citations_ok=failed_citations == 0,
             citations_total=len(citations),
             citations_failed=failed_citations,
