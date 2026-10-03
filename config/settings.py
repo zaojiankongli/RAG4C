@@ -536,6 +536,59 @@ _RETRIEVAL_SLOTS: tuple[str, ...] = (
     "rewrite", "router_llm", "hyde", "subqueries", "stepback", "metadata_filter",
 )
 
+#: 各槽位**意图中**的温度。抽成字典是因为它是两处共用的唯一事实源：
+#: 下面类字段的默认值，以及 :func:`_default_slot_temperature` 的修复值。
+#: 写两遍（字面量 + 修复逻辑各一份清单）迟早对不上——这与 provider_ref
+#: 踩的是同一个坑。
+#:
+#: 取值理由：生成要多样性（0.7）；判定类一律 0（裁判不是创作者，温度非零
+#: 会让同一份证据两次判出不同分，幻觉率这种数字就没法复现）；路由兜底
+#: 0.1 而不是 0，是因为它只在嵌入相似度判不出来时才被调用、要留一点松动。
+_SLOT_TEMPERATURE_DEFAULTS: dict[str, float] = {
+    "rewrite": 0.2,
+    "router_llm": 0.1,
+    "generation": 0.7,
+    "judge": 0.0,
+    "triplet": 0.0,
+    "hyde": 0.0,
+    "subqueries": 0.0,
+    "stepback": 0.0,
+    "contextual": 0.0,
+    "classifier": 0.0,
+    "metadata_filter": 0.0,
+}
+
+
+def _default_slot_temperature(name: str, slot: LlmSlotSettings) -> LlmSlotSettings:
+    """把「配置里提到了这个槽位、但没写温度」时丢掉的意图温度补回来。
+
+    与 :func:`_default_cache_ttl` 是**同一个故障的第二个受害者**：类字段
+    默认值是**整个槽位对象**的默认值，只要配置里出现了 ``llm.<槽位>``
+    （哪怕只写了一个 ``model`` 或 ``provider_ref``），pydantic 就拿那份配置
+    重建 ``LlmSlotSettings``，``temperature`` 落回类级默认的 ``0.2``。
+
+    实测本项目 ``.env``：八个槽位写了 PROVIDER_REF/MODEL 指向 DashScope，
+    于是这八个槽位的温度**全是 0.2**——包括本该 0.7 的 generation 和
+    本该 0 的 judge。入库三槽位没被提到，反而保住了 0.0。也就是说：**越是
+    你真正配过的槽位，越拿不到代码里为它声明的温度。**
+
+    后果不止"答案稍微保守一点"：judge 从 0 变 0.2 意味着 L3 蕴含判定与
+    评测裁判不再是确定性函数，幻觉率/有据性这类数字第二次跑就对不上第一
+    次，F1.2 的基线失去可比性。
+
+    判定口径沿用 ``model_fields_set``（与 ``_inherit_conn`` /
+    ``_default_cache_ttl`` 同一套）：显式写过温度的一律尊重，判空或判 0.2
+    会让"我就是要给这个槽位 0.2"变得无法表达。
+    """
+    want = _SLOT_TEMPERATURE_DEFAULTS.get(name)
+    if want is None or "temperature" in slot.model_fields_set:
+        return slot
+    if slot.temperature == want:
+        return slot
+    # model_copy(update=) 同样会把字段并进 model_fields_set，二次解析时按
+    # "已显式写过"跳过——与上面两个修复函数一致的幂等处理。
+    return slot.model_copy(update={"temperature": want})
+
 
 def _default_cache_ttl(name: str, slot: LlmSlotSettings) -> LlmSlotSettings:
     """给检索期轻量槽位补上默认的结果缓存时长。
@@ -664,22 +717,24 @@ class LlmSlotsSettings(BaseModel):
     # cache_ttl_s 不写在这些默认值里，由 _default_cache_ttl 在模型校验器里补：
     # 字段默认值只在"配置完全没提这个槽位"时生效，而一旦 .env 里出现
     # llm.rewrite（哪怕只写 model），整个对象会被重建、默认值随之丢失。
-    rewrite: LlmSlotSettings = LlmSlotSettings(temperature=0.2)
-    router_llm: LlmSlotSettings = LlmSlotSettings(temperature=0.1)
-    generation: LlmSlotSettings = LlmSlotSettings(temperature=0.7)
-    judge: LlmSlotSettings = LlmSlotSettings(temperature=0.0)
+    # 温度取 :data:`_SLOT_TEMPERATURE_DEFAULTS`：字段默认值与模型校验器里的
+    # 修复值必须是同一个来源，否则"改了一处"等于埋一次静默漂移。
+    rewrite: LlmSlotSettings = LlmSlotSettings(temperature=_SLOT_TEMPERATURE_DEFAULTS["rewrite"])
+    router_llm: LlmSlotSettings = LlmSlotSettings(temperature=_SLOT_TEMPERATURE_DEFAULTS["router_llm"])
+    generation: LlmSlotSettings = LlmSlotSettings(temperature=_SLOT_TEMPERATURE_DEFAULTS["generation"])
+    judge: LlmSlotSettings = LlmSlotSettings(temperature=_SLOT_TEMPERATURE_DEFAULTS["judge"])
     # 知识图谱三元组抽取（入库阶段，需要确定性输出 -> 温度 0）
-    triplet: LlmSlotSettings = LlmSlotSettings(temperature=0.0)
+    triplet: LlmSlotSettings = LlmSlotSettings(temperature=_SLOT_TEMPERATURE_DEFAULTS["triplet"])
     # 查询增强（HyDE 假设文档 / 子查询拆解 / Stepback 后退提问，均需确定性输出）
-    hyde: LlmSlotSettings = LlmSlotSettings(temperature=0.0)
-    subqueries: LlmSlotSettings = LlmSlotSettings(temperature=0.0)
-    stepback: LlmSlotSettings = LlmSlotSettings(temperature=0.0)
+    hyde: LlmSlotSettings = LlmSlotSettings(temperature=_SLOT_TEMPERATURE_DEFAULTS["hyde"])
+    subqueries: LlmSlotSettings = LlmSlotSettings(temperature=_SLOT_TEMPERATURE_DEFAULTS["subqueries"])
+    stepback: LlmSlotSettings = LlmSlotSettings(temperature=_SLOT_TEMPERATURE_DEFAULTS["stepback"])
     # Contextual Retrieval（入库阶段为 chunk 生成文档级上下文，温度 0）
-    contextual: LlmSlotSettings = LlmSlotSettings(temperature=0.0)
+    contextual: LlmSlotSettings = LlmSlotSettings(temperature=_SLOT_TEMPERATURE_DEFAULTS["contextual"])
     # 元数据自动分类打标签（入库阶段，按 dataset 分类体系输出标签 JSON）
-    classifier: LlmSlotSettings = LlmSlotSettings(temperature=0.0)
+    classifier: LlmSlotSettings = LlmSlotSettings(temperature=_SLOT_TEMPERATURE_DEFAULTS["classifier"])
     # 自动元数据过滤（检索阶段，按 schema 生成 Milvus 过滤表达式）
-    metadata_filter: LlmSlotSettings = LlmSlotSettings(temperature=0.0)
+    metadata_filter: LlmSlotSettings = LlmSlotSettings(temperature=_SLOT_TEMPERATURE_DEFAULTS["metadata_filter"])
 
     # 入库槽位配置档（见上方 _apply_ingest_profile）。"ollama"（缺省）= 三个
     # 入库槽位保持指向本机 Ollama，一个字节都不动；"cloud" = 切到云端档做
@@ -707,6 +762,7 @@ class LlmSlotsSettings(BaseModel):
                 continue  # providers 是 dict，跳过
             resolved = _apply_ingest_profile(name, value, self.ingest_profile)
             resolved = _inherit_conn(resolved, self.providers)
+            resolved = _default_slot_temperature(name, resolved)
             resolved = _default_cache_ttl(name, resolved)
             if resolved is not value:
                 # 绕过 __setattr__ 避免触发赋值校验递归；这里写回的对象
