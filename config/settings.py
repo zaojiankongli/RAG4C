@@ -562,6 +562,56 @@ def _default_cache_ttl(name: str, slot: LlmSlotSettings) -> LlmSlotSettings:
     return slot.model_copy(update={"cache_ttl_s": _PREPROC_CACHE_TTL_S})
 
 
+# ---- 入库槽位配置档（F3.3）----
+#
+# triplet / contextual / classifier 三个槽位**刻意**指向本机 Ollama：它们按
+# chunk 逐个调用，调用量随文档片段数线性放大，走云端的钱与时间都不可控。
+# 但"本机 Ollama 跑不动大模型"是真实存在的约束，需要能切成云端档做对比实验。
+#
+# 所以这里提供**机制**而不是改默认值：``ingest_profile`` 缺省为 ``"ollama"``，
+# 此时三个槽位一个字节都不动（与引入本机制之前的行为完全一致）。
+#
+# 显式性优先于档位：档位只填**用户没显式写过**的字段。已经在 .env 里给
+# triplet 单独配了 base_url 的部署，切档不会把它覆盖掉——否则"切档"就成了
+# "强制改写我的配置"，那不是配置档该有的语义。判定沿用 _inherit_conn 同一套
+# ``model_fields_set`` 口径，不引入第二套"算不算显式"的判断。
+_INGEST_PROFILE_OLLAMA = "ollama"
+_INGEST_PROFILE_CLOUD = "cloud"
+
+#: 云端档要落的 provider_ref / model。留空 model 表示"沿用 provider 侧的模型名"，
+#: 但目前四个内置提供商都只存连接信息、不存默认模型，所以云端档必须同时给模型名
+#: ——否则切过去会拿 Ollama 的 qwen2.5 去打云端端点。
+_INGEST_PROFILE_CLOUD_DEFAULTS: dict[str, str] = {
+    "provider_ref": "dashscope",
+    "model": "qwen3.7-max-2026-05-17",
+}
+
+#: 会被配置档影响的槽位。取值在下方 LLM_SLOT_GROUPS 定义之后回填，
+#: 避免与那份清单各写一份、迟早对不上。
+_INGEST_PROFILE_SLOTS: tuple[str, ...] = ()
+
+
+def _apply_ingest_profile(
+    name: str,
+    slot: LlmSlotSettings,
+    profile: str,
+) -> LlmSlotSettings:
+    """把入库槽位切到指定配置档；``ollama`` 档或非入库槽位原样返回。
+
+    幂等：``model_copy(update=)`` 会把字段并进 ``model_fields_set``，二次解析
+    时按"已显式写过"跳过——与 ``_inherit_conn`` / ``_default_cache_ttl`` 同一套
+    幂等处理，热更新反复跑不会把配置越改越乱。
+    """
+    if profile != _INGEST_PROFILE_CLOUD or name not in _INGEST_PROFILE_SLOTS:
+        return slot
+    updates = {
+        field: value
+        for field, value in _INGEST_PROFILE_CLOUD_DEFAULTS.items()
+        if field not in slot.model_fields_set
+    }
+    return slot.model_copy(update=updates) if updates else slot
+
+
 class LlmSlotsSettings(BaseModel):
     """业务 LLM 槽位（共 11 个，按调用阶段分组）。
 
@@ -631,6 +681,12 @@ class LlmSlotsSettings(BaseModel):
     # 自动元数据过滤（检索阶段，按 schema 生成 Milvus 过滤表达式）
     metadata_filter: LlmSlotSettings = LlmSlotSettings(temperature=0.0)
 
+    # 入库槽位配置档（见上方 _apply_ingest_profile）。"ollama"（缺省）= 三个
+    # 入库槽位保持指向本机 Ollama，一个字节都不动；"cloud" = 切到云端档做
+    # 对比实验。**只做机制，不改默认**——9/28 明确要求不得擅自给这三个槽位
+    # 补云端 provider_ref，所以缺省值是 ollama 而不是 cloud。
+    ingest_profile: str = _INGEST_PROFILE_OLLAMA
+
     @model_validator(mode="after")
     def _apply_provider_refs(self) -> "LlmSlotsSettings":
         """构造完成即把各槽位的 provider_ref 解析掉，让继承成为不变量。
@@ -644,10 +700,13 @@ class LlmSlotsSettings(BaseModel):
         按 ``isinstance`` 遍历而不是照着 ``LLM_SLOT_NAMES`` 写死：将来加第
         12 个槽位时，漏改这里会让新槽位静默失去继承——而这正是本次踩的坑。
         """
+        # 配置档先于继承生效：档位填的是 provider_ref / model，继承再拿
+        # provider_ref 去换 base_url / api_key。顺序反了档位就会被继承覆盖。
         for name, value in list(self.__dict__.items()):
             if not isinstance(value, LlmSlotSettings):
                 continue  # providers 是 dict，跳过
-            resolved = _inherit_conn(value, self.providers)
+            resolved = _apply_ingest_profile(name, value, self.ingest_profile)
+            resolved = _inherit_conn(resolved, self.providers)
             resolved = _default_cache_ttl(name, resolved)
             if resolved is not value:
                 # 绕过 __setattr__ 避免触发赋值校验递归；这里写回的对象
@@ -663,6 +722,10 @@ LLM_SLOT_GROUPS: dict[str, tuple[str, ...]] = {
     "answer": ("generation", "judge"),
     "ingest": ("triplet", "contextual", "classifier"),
 }
+
+# 配置档的作用域回填到分组定义之后：宁可晚一点赋值，也不要在 import 期
+# 依赖一个尚未定义的名字（_apply_ingest_profile 里读它，但那时已在调用期）。
+_INGEST_PROFILE_SLOTS = LLM_SLOT_GROUPS["ingest"]
 
 LLM_SLOT_GROUP_LABELS: dict[str, tuple[str, str]] = {
     "retrieval": (
