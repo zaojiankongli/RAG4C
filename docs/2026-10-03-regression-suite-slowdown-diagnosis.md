@@ -38,7 +38,11 @@ tests/test_source_schedule_dispatch.py  11 passed in 164.93s
 - **50 个测试文件**引用 `upgrade_catalog`，静态调用点 **141 处**
 - 调用点密度最高：`test_catalog_schema.py` 31 处、
   `test_enterprise_catalog_upgrade.py` 10 处、`test_catalog_capability_producers.py` 6 处
-- 单文件墙钟对照：`test_catalog_integrity.py` 4 个用例 = 22.88s（约 5.7s/用例）
+- 单文件墙钟对照（三份都绿，只是慢）：
+  `test_catalog_integrity.py` 4 用例 22.88s（约 5.7s/用例）、
+  `test_retrieval_experiments.py` 30 用例 102.84s（约 3.4s/用例）、
+  `test_projection_handlers.py` 22 用例 83.58s（约 3.8s/用例）
+- 对照不碰迁移的文件：`test_circuit_breaker.py` 3s、`test_rate_limit.py` 3s
 
 **换算**：3934 个用例里，只要相当一部分走迁移路径，串行总时长就是数小时量级。
 这与 9/27 记的「15 分钟到 13%」一致，也解释了为什么 9/28 的快速失败
@@ -76,7 +80,8 @@ tests/test_settings.py + test_config_hot_reload.py
 ```
 
 另外 `test_circuit_breaker.py` 3s、`test_rate_limit.py` 3s、
-`test_catalog_integrity.py` 4 passed/22.88s 均为绿。
+`test_catalog_integrity.py` 4 passed/22.88s、`test_retrieval_experiments.py`
+30 passed/102.84s、`test_projection_handlers.py` 22 passed/83.58s 均为绿。
 **这些证明改动没破坏东西，但不等于全量基线。**
 
 ## 6. 需要拍板：绿基线怎么拿
