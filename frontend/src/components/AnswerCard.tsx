@@ -25,6 +25,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import RetrievalTrace from "./RetrievalTrace";
+import UsagePanel from "./UsagePanel";
 import type { Citation, CitationStatus, EvidenceChunk, QueryResult } from "../types/rag";
 import { routeLabel } from "../strategy/routes";
 import { FONT_SIZE } from "../theme/tokens";
@@ -407,6 +408,9 @@ function AnswerCard({
           })}
         </div>
       )}
+
+      {/* 用量与成本：单次问答花了多少调用/token/钱（台账没开时不渲染） */}
+      <UsagePanel usage={result.usage} />
 
       {/* 检索过程透明化：阶段耗时 / 生效策略 / 引用核验 */}
       {result.traces.length > 0 && (
