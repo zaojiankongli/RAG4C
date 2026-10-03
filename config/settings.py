@@ -277,7 +277,19 @@ class MilvusSettings(BaseModel):
     nprobe: int = 16
     # HNSW 检索期候选宽度（ef）；实际下发时对 candidate_limit 取上界，
     # 保证满足 Milvus 的 ef >= limit 约束。增大 -> 召回精度上升、延迟上升。
-    ef: int = 64
+    #
+    # 取值来自 ``python -m eval.run_retrieval_eval --corpus milvus --gold production``
+    # 在真实生产语料（rag4c_chunks 9723 行）上的 ef 扫描（52 条标注，候选 30）：
+    #
+    #     ef=64  -> NDCG@10 0.681
+    #     ef=128 -> NDCG@10 0.693
+    #     ef=256 -> NDCG@10 0.720（重排 p50 不涨）
+    #     ef=512 -> 无进一步收益
+    #
+    # 结论：256 是这条曲线的拐点，再往上只买延迟不买召回。此前默认值 64 只写在
+    # ``.env`` / ``config/.env.postgres`` 里，**不带 .env 的干净部署会回到 64**
+    # （同一类漂移见 dense_cosine_threshold 的告警）。默认值与 .env.example 已对齐到 256。
+    ef: int = 256
     # 稀疏 BM25 索引参数（内置 Function 输出字段的索引）
     bm25_k1: float = 1.2
     bm25_b: float = 0.75
