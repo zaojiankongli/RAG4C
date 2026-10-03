@@ -524,18 +524,31 @@ class LLMClient:
             LLMError: 底层调用失败。
             ParseFallbackError: 两次尝试均无法解析出合法 JSON 对象。
         """
+        # System 消息必须放在**最前面**，不能追加在末尾。
+        #
+        # OpenAI 自己容忍 system 出现在任意位置，但硅基流动会直接 400
+        # （code 20015: "messages" in request are illegal: System message must
+        # be at the beginning）。追加在末尾时，judge / router_llm /
+        # metadata_filter 这几个 JSON 槽位在硅基流动上全部静默失败——L3 蕴含
+        # 判定因此不参与弃权判定，而 traces 里只留一行"降级：蕴含不可用"。
+        # 也就是说：一个"顺序不对"会让引用校验整条静默消失，这正是本项目
+        # 「宁可弃权，不可编造」最不能承受的失效模式。
+        #
+        # 已有 system 时把提示并进那条（不新增），避免多条 system 又踩别的
+        #  provider 的限制。
         base_msgs = list(messages)
         if schema_hint:
-            base_msgs = base_msgs + [
-                {
-                    "role": "system",
-                    "content": (
-                        "You must respond with ONLY a single valid JSON object "
-                        f"matching this schema: {schema_hint}. "
-                        "Do not wrap it in markdown fences and do not add commentary."
-                    ),
-                }
-            ]
+            hint = (
+                "You must respond with ONLY a single valid JSON object "
+                f"matching this schema: {schema_hint}. "
+                "Do not wrap it in markdown fences and do not add commentary."
+            )
+            if base_msgs and base_msgs[0].get("role") == "system":
+                merged = dict(base_msgs[0])
+                merged["content"] = f"{merged.get('content','')}\n\n{hint}"
+                base_msgs[0] = merged
+            else:
+                base_msgs.insert(0, {"role": "system", "content": hint})
 
         # JSON 路径内部会重试 2 轮，端点不可达时更要提前挡掉（否则是双倍白等）
         _assert_endpoint_reachable(self.config.base_url, self.config.model, self.slot)
