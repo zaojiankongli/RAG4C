@@ -23,6 +23,10 @@ dist/
 *.db/
 data/metrics-history.jsonl
 eval/results.json
+# scripts/run_answer_baseline.py --limit 生成的临时数据集模块。正常路径靠
+# finally 删除，但进程被 SIGTERM 杀掉时 finally 不会跑完，残留文件会被 git
+# 当成新增代码收进去——所以显式忽略。
+eval/_baseline_subset.py
 volumes/
 
 # Editors and local tooling
