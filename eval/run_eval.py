@@ -15,6 +15,8 @@ import argparse
 import importlib
 import json
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -43,6 +45,16 @@ class CaseResult(BaseModel):
     groundedness: float | None = None
     relevance: float | None = None
     citations_ok: bool = True
+    #: 引用总数 / 非 ok 数。存下来是为了让聚合指标能从报告**重算**，
+    #: 而不是只能信一次运行时的中间变量——也是对比两轮报告时的依据。
+    citations_total: int = 0
+    citations_failed: int = 0
+    #: 本用例是否踩到上游故障（检索/生成/裁判/引用校验没跑成）。
+    #: 与 :data:`EvalReport.degraded_cases` 同源——见那里的说明。
+    degraded: bool = False
+    degraded_kinds: list[str] = Field(default_factory=list)
+    #: 本用例的 LLM 用量台账原文（``QueryResult.usage``；没开台账时为空字典）。
+    usage: dict[str, Any] = Field(default_factory=dict)
     notes: str = ""
 
 
@@ -53,6 +65,14 @@ class EvalReport(BaseModel):
 
     metrics: dict[str, float] = Field(default_factory=dict)
     cases: list[CaseResult] = Field(default_factory=list)
+    #: 上游故障用例数。与质量指标分开报：一次限流或一次裁判超时会把
+    #: 有据性/幻觉率拉低，那是"这一轮数字不可信"，不是"模型变笨了"。
+    #: 检索层 runner 里同一个语义叫 ``degraded_cases``，这里沿用命名。
+    degraded_cases: int = 0
+    #: 故障分类计数 ``{"judge_failed": 3, ...}``，用来判断是偶发还是系统性。
+    degraded_kinds: dict[str, int] = Field(default_factory=dict)
+    #: 全轮 LLM 用量汇总（逐 case 台账相加）；开不出台账时为空字典。
+    usage: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +143,109 @@ def extract_evidence(qr: QueryResult) -> list[Chunk]:
                 if chunk is not None:
                     chunks.append(chunk.model_copy(update={"chunk_id": chunk_id or chunk.chunk_id}))
     return chunks
+
+
+# ---------------------------------------------------------------------------
+# 降级识别：把"上游挂了"从"质量差"里摘出来
+# ---------------------------------------------------------------------------
+#
+# 检索层 runner 里 ``degraded`` 的分母是"答了的用例"，因为检索层只在答了的
+# 用例上才可能有降级；答案层不一样——上游一挂，用例往往直接变成弃权，而弃
+# 权恰恰是"最该被看见"的降级。所以这里的分母是**全部用例**（见
+# :meth:`Evaluator.evaluate`）。
+
+#: ``(分类名, 在 traces / verification.notes 里出现的特征串)``。
+#: 只收**故障**，不收配置选择：``entailment_mode=skip`` 是人为关掉的开关，
+#: 对每条用例一视同仁，算进降级率只会稀释真正的问题。
+_DEGRADATION_MARKERS: tuple[tuple[str, str], ...] = (
+    ("retrieval_failed", "检索失败（弃权）"),
+    ("generation_failed", "生成失败"),
+    ("entailment_unavailable", "蕴含不可用"),
+    ("stale_check_failed", "取回最新 chunk 失败"),
+    ("citation_reassign_failed", "引用指派嵌入失败"),
+    ("second_round_failed", "二轮检索失败"),
+    ("circuit_open", "熔断开启"),
+    ("graph_fallback", "图编排不可用"),
+    ("qa_retrieval_skipped", "QA 检索跳过"),
+)
+
+
+def detect_degradation(
+    qr: QueryResult,
+    *,
+    groundedness: float | None = None,
+    relevance: float | None = None,
+    answered: bool = True,
+) -> list[str]:
+    """识别一条用例上的上游故障，返回分类名列表（无故障则空列表）。
+
+    两类来源：
+
+    1. 管线自己的 traces（含 ``verification.notes``）——检索/生成/引用校验
+       没跑成都在这里留痕；
+    2. 裁判打分失败（``score is None``）——那是评测侧的上游故障，同样不该
+       被读成"这条答案质量差"。
+
+    Args:
+        qr: 管线返回的查询结果。
+        groundedness: 有据性裁判分数；``None`` 且本条已作答 = 裁判没判成。
+        relevance: 相关性裁判分数；同上。
+        answered: 本条是否真正作答（未作答时不该追究裁判分）。
+    """
+    kinds: list[str] = []
+    haystack = "\n".join(qr.traces)
+    for kind, marker in _DEGRADATION_MARKERS:
+        if marker in haystack:
+            kinds.append(kind)
+    if answered and (groundedness is None or relevance is None):
+        kinds.append("judge_failed")
+    # 去重保序：同一条 trace 命中两个特征串时只算一次
+    return list(dict.fromkeys(kinds))
+
+
+def summarize_usage(cases: list[CaseResult]) -> dict[str, Any]:
+    """把逐用例台账加总成一轮的总账。
+
+    只加标量字段；``by_slot`` 这类明细按槽位名再并一次。没有开台账时返回
+    空字典——**不**返回一堆 0，那会让"没记账"看起来像"花了 0"。
+    """
+    if not any(case.usage for case in cases):
+        return {}
+    scalar_keys = (
+        "calls",
+        "cached_calls",
+        "failures",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "saved_prompt_tokens",
+        "saved_completion_tokens",
+        "saved_total_tokens",
+        "cost",
+        "unpriced_total_tokens",
+    )
+    totals: dict[str, Any] = {key: 0.0 for key in scalar_keys}
+    by_slot: dict[str, dict[str, Any]] = {}
+    priced = True
+    for case in cases:
+        usage = case.usage or {}
+        for key in scalar_keys:
+            totals[key] += float(usage.get(key) or 0.0)
+        priced = priced and bool(usage.get("cost_priced", False))
+        for entry in usage.get("by_slot") or []:
+            slot = str(entry.get("slot") or "-")
+            bucket = by_slot.setdefault(
+                slot, {key: 0.0 for key in scalar_keys if key != "unpriced_total_tokens"}
+            )
+            for key in bucket:
+                bucket[key] += float(entry.get(key) or 0.0)
+    totals["cost"] = round(totals["cost"], 6)
+    totals["cost_priced"] = priced
+    totals["by_slot"] = [
+        {"slot": slot, **{k: (round(v, 3) if isinstance(v, float) else v) for k, v in bucket.items()}}
+        for slot, bucket in sorted(by_slot.items(), key=lambda kv: -kv[1]["total_tokens"])
+    ]
+    return {k: (round(v, 3) if isinstance(v, float) and k != "cost" else v) for k, v in totals.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -209,11 +332,17 @@ def _dry_run_pipeline(dataset: list[dict]) -> Callable[[str], QueryResult]:
     return pipeline
 
 
-def run_dry_run(dataset: list[dict]) -> EvalReport:
-    """离线干跑：使用 FakeJudgeLLM 与占位管线计算指标，不联网、不加载模型。"""
+def run_dry_run(dataset: list[dict], *, sleep_ms: float = 0.0, workers: int = 1) -> EvalReport:
+    """离线干跑：使用 FakeJudgeLLM 与占位管线计算指标，不联网、不加载模型。
+
+    ``sleep_ms`` / ``workers`` 与真实模式同义：干跑路径也照样透传，
+    免得"参数在真实模式有效、在干跑无效"这种差异让人误判开关本身坏了。
+    """
     groundedness = GroundednessJudge(llm_client=FakeJudgeLLM())
     relevance = RelevanceJudge(llm_client=FakeJudgeLLM())
-    return Evaluator(_dry_run_pipeline(dataset), groundedness, relevance).evaluate(dataset)
+    return Evaluator(_dry_run_pipeline(dataset), groundedness, relevance).evaluate(
+        dataset, sleep_ms=sleep_ms, workers=workers
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +399,62 @@ class Evaluator:
         self.groundedness_judge = groundedness_judge
         self.relevance_judge = relevance_judge
 
-    def evaluate(self, dataset: list[dict]) -> EvalReport:
+    def _run_case(self, case: dict, index: int) -> CaseResult:
+        """跑一条用例：管线 -> 裁判 -> 引用统计 -> 降级识别。"""
+        question = case["question"]
+        qr = self.pipeline_fn(question)
+        answer = (qr.answer or "").strip()
+        abstained = bool(qr.abstained or not answer)
+        answered = not abstained
+        unanswerable = bool(case.get("unanswerable", False))
+
+        g_score: float | None = None
+        r_score: float | None = None
+        if answered:
+            evidence = extract_evidence(qr)
+            g_res = self.groundedness_judge.judge(question, answer, evidence)
+            r_res = self.relevance_judge.judge(question, answer, evidence)
+            g_score = g_res.score
+            r_score = r_res.score
+
+        citations = qr.citations or []
+        failed_citations = sum(1 for c in citations if c.status != "ok")
+
+        notes = str(case.get("notes") or "")
+        if answered:
+            judge_failures = []
+            if g_score is None:
+                judge_failures.append("有据性判定失败")
+            if r_score is None:
+                judge_failures.append("相关性判定失败")
+            if judge_failures:
+                notes = f"{notes}；{'；'.join(judge_failures)}" if notes else "；".join(judge_failures)
+
+        kinds = detect_degradation(qr, groundedness=g_score, relevance=r_score, answered=answered)
+        return CaseResult(
+            id=str(case.get("id") or f"case_{index}"),
+            question=question,
+            unanswerable=unanswerable,
+            abstained=abstained,
+            answered=answered,
+            groundedness=g_score,
+            relevance=r_score,
+            citations_ok=failed_citations == 0,
+            citations_total=len(citations),
+            citations_failed=failed_citations,
+            degraded=bool(kinds),
+            degraded_kinds=kinds,
+            usage=dict(qr.usage or {}),
+            notes=notes,
+        )
+
+    def evaluate(
+        self,
+        dataset: list[dict],
+        *,
+        sleep_ms: float = 0.0,
+        workers: int = 1,
+    ) -> EvalReport:
         """对数据集逐条评测并汇总指标。
 
         指标定义：
@@ -281,92 +465,86 @@ class Evaluator:
         - ``avg_groundedness``: 有分用例的有据性均值（无分时 0.0）
         - ``avg_relevance``: 有分用例的相关性均值（无分时 0.0）
         - ``citation_failure_rate``: 状态非 ok 的引用 / 引用总数（无引用时 0.0）
+        - ``degraded_rate``: 踩到上游故障的用例 / 总用例
+          （分母取**全部用例**，不是"答了的"：上游一挂，用例往往直接变成
+          弃权，而弃权恰恰是最该被看见的降级）
 
         拒答的用例跳过裁判（分数保持 None）；裁判解析失败同样显式为 None。
+
+        Args:
+            dataset: 用例列表。
+            sleep_ms: 两条用例之间的间隔毫秒数。上游（硅基流动）有 429 限流，
+                全速打会把配额烧在重试上——节流是为了拿到完整的一轮，不是为了慢。
+            workers: 并发线程数，``1``（默认）= 串行。端到端延迟几乎全在等
+                上游 HTTP，并发能把 145 条的墙钟时间压下来；默认保持串行是
+                因为并发会让共享组件（如管线上的路由状态）出现交叉，
+                默认路径不该冒这个险。
         """
-        case_results: list[CaseResult] = []
-        total_citations = 0
-        failed_citations = 0
-        abstained_total = 0
-        answerable_total = 0
-        unanswerable_total = 0
-        abstained_answerable = 0
-        answered_unanswerable = 0
-        groundedness_scores: list[float] = []
-        relevance_scores: list[float] = []
+        n_workers = max(1, int(workers or 1))
+        slots: list[CaseResult | None] = [None] * len(dataset)
+        gap = max(0.0, float(sleep_ms or 0.0)) / 1000.0
 
-        for case in dataset:
-            question = case["question"]
-            qr = self.pipeline_fn(question)
-            answer = (qr.answer or "").strip()
-            abstained = bool(qr.abstained or not answer)
-            answered = not abstained
-            unanswerable = bool(case.get("unanswerable", False))
+        if n_workers == 1:
+            for index, case in enumerate(dataset):
+                if index and gap:
+                    time.sleep(gap)
+                slots[index] = self._run_case(case, index)
+        else:
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                futures: dict[Any, int] = {}
+                for index, case in enumerate(dataset):
+                    if index and gap:
+                        time.sleep(gap)
+                    futures[pool.submit(self._run_case, case, index)] = index
+                for future in as_completed(futures):
+                    slots[futures[future]] = future.result()
 
-            g_score: float | None = None
-            r_score: float | None = None
-            if answered:
-                evidence = extract_evidence(qr)
-                g_res = self.groundedness_judge.judge(question, answer, evidence)
-                r_res = self.relevance_judge.judge(question, answer, evidence)
-                g_score = g_res.score
-                r_score = r_res.score
-                if g_score is not None:
-                    groundedness_scores.append(g_score)
-                if r_score is not None:
-                    relevance_scores.append(r_score)
+        case_results: list[CaseResult] = [c for c in slots if c is not None]
+        return aggregate(case_results)
 
-            citations = qr.citations or []
-            case_failed_citations = sum(1 for c in citations if c.status != "ok")
-            total_citations += len(citations)
-            failed_citations += case_failed_citations
-            citations_ok = case_failed_citations == 0
 
-            if unanswerable:
-                unanswerable_total += 1
-                if answered:
-                    answered_unanswerable += 1
-            else:
-                answerable_total += 1
-                if abstained:
-                    abstained_answerable += 1
-            if abstained:
-                abstained_total += 1
+def aggregate(case_results: list[CaseResult]) -> EvalReport:
+    """把逐用例结果汇总成报告（指标全部从结果重算，不依赖运行时中间量）。"""
+    total_citations = sum(c.citations_total for c in case_results)
+    failed_citations = sum(c.citations_failed for c in case_results)
+    abstained_total = sum(1 for c in case_results if c.abstained)
+    answerable = [c for c in case_results if not c.unanswerable]
+    unanswerable_cases = [c for c in case_results if c.unanswerable]
+    groundedness_scores = [c.groundedness for c in case_results if c.groundedness is not None]
+    relevance_scores = [c.relevance for c in case_results if c.relevance is not None]
+    degraded = [c for c in case_results if c.degraded]
+    kinds: dict[str, int] = {}
+    for case in degraded:
+        for kind in case.degraded_kinds:
+            kinds[kind] = kinds.get(kind, 0) + 1
 
-            notes = str(case.get("notes") or "")
-            if answered:
-                judge_failures = []
-                if g_score is None:
-                    judge_failures.append("有据性判定失败")
-                if r_score is None:
-                    judge_failures.append("相关性判定失败")
-                if judge_failures:
-                    notes = f"{notes}；{'；'.join(judge_failures)}" if notes else "；".join(judge_failures)
-
-            case_results.append(
-                CaseResult(
-                    id=str(case.get("id") or f"case_{len(case_results)}"),
-                    question=question,
-                    unanswerable=unanswerable,
-                    abstained=abstained,
-                    answered=answered,
-                    groundedness=g_score,
-                    relevance=r_score,
-                    citations_ok=citations_ok,
-                    notes=notes,
-                )
-            )
-
-        n = len(case_results)
-        metrics: dict[str, float] = {
-            "refusal_rate": (abstained_total / n) if n else 0.0,
-            "over_refusal_rate": (abstained_answerable / answerable_total) if answerable_total else 0.0,
-            "hallucination_rate": (answered_unanswerable / unanswerable_total) if unanswerable_total else 0.0,
-            "avg_groundedness": (sum(groundedness_scores) / len(groundedness_scores)) if groundedness_scores else 0.0,
-            "avg_relevance": (sum(relevance_scores) / len(relevance_scores)) if relevance_scores else 0.0,
-            "citation_failure_rate": (failed_citations / total_citations) if total_citations else 0.0,
-        }
-        return EvalReport(metrics=metrics, cases=case_results)
+    n = len(case_results)
+    metrics: dict[str, float] = {
+        "refusal_rate": (abstained_total / n) if n else 0.0,
+        "over_refusal_rate": (
+            sum(1 for c in answerable if c.abstained) / len(answerable) if answerable else 0.0
+        ),
+        "hallucination_rate": (
+            sum(1 for c in unanswerable_cases if c.answered) / len(unanswerable_cases)
+            if unanswerable_cases
+            else 0.0
+        ),
+        "avg_groundedness": (
+            sum(groundedness_scores) / len(groundedness_scores) if groundedness_scores else 0.0
+        ),
+        "avg_relevance": (sum(relevance_scores) / len(relevance_scores) if relevance_scores else 0.0),
+        "citation_failure_rate": (
+            failed_citations / total_citations if total_citations else 0.0
+        ),
+        "degraded_rate": (len(degraded) / n) if n else 0.0,
+    }
+    return EvalReport(
+        metrics=metrics,
+        cases=case_results,
+        degraded_cases=len(degraded),
+        degraded_kinds=dict(sorted(kinds.items(), key=lambda kv: -kv[1])),
+        usage=summarize_usage(case_results),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +568,16 @@ def print_report(report: EvalReport) -> None:
     print(f"平均有据性          : {_fmt_rate(m.get('avg_groundedness', 0.0))}  (avg_groundedness)")
     print(f"平均相关性          : {_fmt_rate(m.get('avg_relevance', 0.0))}  (avg_relevance)")
     print(f"引用失败率          : {_fmt_rate(m.get('citation_failure_rate', 0.0))}  (citation_failure_rate)")
+    print(f"降级率              : {_fmt_rate(m.get('degraded_rate', 0.0))}  (degraded_rate，上游故障非质量)")
+    if report.degraded_kinds:
+        print(f"  故障分类          : {report.degraded_kinds}")
+    usage = report.usage or {}
+    if usage:
+        print(
+            f"用量台账            : {usage.get('calls', 0)} 次调用 / "
+            f"{usage.get('total_tokens', 0)} tokens / 成本 {usage.get('cost', 0)}"
+            + ("" if usage.get("cost_priced") else "（未配价格表，金额不可信）")
+        )
     print("-" * 68)
     print("逐用例明细：")
     print(f"{'ID':<8}{'可答':<5}{'拒答':<5}{'作答':<5}{'有据性':<8}{'相关性':<8}{'引用OK':<7}问题")
@@ -420,6 +608,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--dry-run", action="store_true", help="强制离线干跑（占位管线 + 桩裁判）")
     parser.add_argument(
+        "--sleep-ms",
+        type=float,
+        default=0.0,
+        help="两条用例之间的间隔毫秒数（上游 429 限流时用它节流）",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="并发线程数，1（默认）= 串行。延迟几乎全在等上游 HTTP，"
+        "并发可显著压低墙钟时间；共享组件存在交叉风险，故默认不开",
+    )
+    parser.add_argument(
         "--gate",
         action="store_true",
         help="评测后执行 release gate（固定阈值质量墙），未达标退出码 1",
@@ -441,13 +642,19 @@ def main(argv: list[str] | None = None) -> int:
     dry_run = args.dry_run or args.pipeline == "none"
     if dry_run:
         print("[eval] 离线干跑模式：使用占位管线与桩裁判，不发起任何真实调用。")
-        report = run_dry_run(dataset)
+        report = run_dry_run(dataset, sleep_ms=args.sleep_ms, workers=args.workers)
     else:
         print(f"[eval] 真实评测模式：惰性导入管线 {args.pipeline}")
+        print(
+            f"[eval] 并发 {args.workers} 路，节流 {args.sleep_ms:g}ms；"
+            f"上游限流或降级会体现在 degraded_rate 上，不会混进质量指标"
+        )
         try:
             pipeline_fn = load_pipeline(args.pipeline)
             groundedness, relevance = create_judges()
-            report = Evaluator(pipeline_fn, groundedness, relevance).evaluate(dataset)
+            report = Evaluator(pipeline_fn, groundedness, relevance).evaluate(
+                dataset, sleep_ms=args.sleep_ms, workers=args.workers
+            )
         except Exception as exc:
             print(f"[eval] 真实评测启动失败: {exc}")
             return 1
@@ -524,6 +731,11 @@ DEFAULT_RELEASE_THRESHOLDS: dict[str, tuple[str, float]] = {
     "over_refusal_rate": ("le", 0.30),
     "avg_groundedness": ("ge", 0.60),
     "avg_relevance": ("ge", 0.60),
+    # 降级率与上面五项**不同类**：它量的不是答案好不好，而是这一轮的数字**能不能信**。
+    # 上游挂了一半时，有据性会掉、幻觉率会涨——那时候门禁应该拦下"别拿这轮数字
+    # 签字"，而不是把锅算到模型头上。阈值取 5%：145 条里超过 7 条踩到上游故障，
+    # 剩余样本量已不足以支撑分位数级的结论。
+    "degraded_rate": ("le", 0.05),
 }
 
 
@@ -541,6 +753,9 @@ def as_v2(report: EvalReport, *, dataset_spec: str = "", pipeline_spec: str = ""
     return EvalReportV2(
         metrics=report.metrics,
         cases=report.cases,
+        degraded_cases=report.degraded_cases,
+        degraded_kinds=report.degraded_kinds,
+        usage=report.usage,
         generated_at=datetime.now().isoformat(timespec="seconds"),
         dataset_spec=dataset_spec,
         pipeline_spec=pipeline_spec,
@@ -623,7 +838,13 @@ def compare_reports(current: EvalReportV2, baseline: EvalReportV2) -> dict[str, 
         ``{"current": {...}, "baseline": {...}, "delta": {...}, "direction": {...}}``
         其中 direction 记录"该指标变优/变劣"（lower_is_better / higher_is_better）。
     """
-    lower_is_better = {"refusal_rate", "over_refusal_rate", "hallucination_rate", "citation_failure_rate"}
+    lower_is_better = {
+        "refusal_rate",
+        "over_refusal_rate",
+        "hallucination_rate",
+        "citation_failure_rate",
+        "degraded_rate",
+    }
     higher_is_better = {"avg_groundedness", "avg_relevance"}
     delta: dict[str, float] = {}
     direction: dict[str, str] = {}
