@@ -63,6 +63,7 @@ def _digest(
     seed: Any,
     json_mode: bool,
     messages: list[dict],
+    enable_thinking: Any = None,
 ) -> str:
     """把一次请求压成 Redis 键名分量。
 
@@ -82,6 +83,10 @@ def _digest(
             "x": max_tokens,
             "s": seed,
             "j": json_mode,
+            # 思考链开关必须进键：同一份 prompt 在开关翻转后是两个不同的
+            # 请求（关掉思考的答案短得多、引用编号也不同），共用一个键等于
+            # 让一次配置变更静默地继续吃旧值。
+            "th": enable_thinking,
             "msgs": messages,
         },
         sort_keys=True,

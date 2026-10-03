@@ -307,6 +307,10 @@ class LLMClient:
             kwargs["seed"] = self.config.seed
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+        # 思考链开关（见 LlmSlotSettings.enable_thinking）。只在显式配置过时
+        # 才发这个字段：没配就端点自己决定，行为与引入本字段之前逐字一致。
+        if self.config.enable_thinking is not None:
+            kwargs["extra_body"] = {"enable_thinking": self.config.enable_thinking}
 
         cached, digest = self._cache_lookup(messages, json_mode, cache_ok)
         if cached is not None:
@@ -378,6 +382,7 @@ class LLMClient:
                 seed=self.config.seed,
                 json_mode=json_mode,
                 messages=messages,
+                enable_thinking=self.config.enable_thinking,
             )
             cache = get_llm_cache()
             env = cache.get_digest(digest)

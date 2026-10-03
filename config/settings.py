@@ -462,6 +462,25 @@ class LlmSlotSettings(BaseModel):
     timeout: float = 120.0
     max_tokens: int = 4096
     seed: int | None = None
+    #: 关掉推理模型的"思考链"。``None`` = 不干预（端点自己决定）；
+    #: ``False`` = 显式要求不思考；``True`` = 显式要求思考。
+    #:
+    #: 为什么需要它：Qwen3.5 / DeepSeek-R1 这类模型默认先输出一大段思考再
+    #: 回答，而**思考 token 不受 ``max_tokens`` 约束**。实测硅基流动
+    #: Qwen3.5-9B 答一道带 11 条引用的题：默认 69.4s / completion 3397
+    #: tokens / 正文 193 字；关掉思考链后 8.1s / 418 tokens / 正文 721 字
+    #: （``eval/.cache/probe_thinking.py`` 可复跑）。也就是 88% 的 token 和
+    #: 90% 的墙钟时间花在不会出现在答案里的思考上。
+    #:
+    #: 对本项目更致命的是它会**打爆槽位超时**：120s 的 timeout 遇上 69s+
+    #: 的思考生成，加上重试策略，单题能拖到 9 分钟——145 条答案层基线按
+    #: 那个跑要 22 小时。裁判槽位（judge）同理，它要的是结构化 JSON，
+    #: 思考对它毫无帮助。
+    #:
+    #: 缺省 ``None`` 是刻意的：关掉思考会改变模型行为，那是**部署方的选择**，
+    #: 不该由这段代码替所有人做主。真正要压延迟的部署在 .env 里写
+    #: ``RAG4C_LLM_GENERATION_ENABLE_THINKING=false`` 即可。
+    enable_thinking: bool | None = None
     #: 本槽位的结果缓存存活秒数；``0`` 表示不缓存（默认）。
     #:
     #: 开在**槽位**上而不是调用点上，是因为这类"该不该缓"的判断有 14 个
