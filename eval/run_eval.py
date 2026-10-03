@@ -44,6 +44,13 @@ class CaseResult(BaseModel):
     answered: bool
     groundedness: float | None = None
     relevance: float | None = None
+    #: 裁判判为无支撑的声明原文，以及相关性裁判的评语与缺失事实。
+    #: 存它们是因为 F1.4 的人工抽检必须能看见"裁判具体判了哪条不靠谱"——
+    #: 只看一个 0.75 的分数，人工无从判断裁判这一分打在哪条声明上，
+    #: 提示词也就无从改。空列表 = 裁判没给出这些明细（解析失败时）。
+    unsupported_claims: list[str] = Field(default_factory=list)
+    judge_rationale: str = ""
+    missing_facts: list[str] = Field(default_factory=list)
     citations_ok: bool = True
     #: 引用总数 / 非 ok 数。存下来是为了让聚合指标能从报告**重算**，
     #: 而不是只能信一次运行时的中间变量——也是对比两轮报告时的依据。
@@ -410,12 +417,20 @@ class Evaluator:
 
         g_score: float | None = None
         r_score: float | None = None
+        unsupported_claims: list[str] = []
+        judge_rationale = ""
+        missing_facts: list[str] = []
         if answered:
             evidence = extract_evidence(qr)
             g_res = self.groundedness_judge.judge(question, answer, evidence)
             r_res = self.relevance_judge.judge(question, answer, evidence)
             g_score = g_res.score
             r_score = r_res.score
+            # 裁判明细留给 F1.4 的人工抽检：只存一个分数的话，人工看不出
+            # 裁判把哪条声明判成了无支撑，提示词也就无从改起。
+            unsupported_claims = list(g_res.unsupported_claims or [])
+            missing_facts = list(r_res.missing_facts or [])
+            judge_rationale = r_res.rationale or g_res.rationale or ""
 
         citations = qr.citations or []
         failed_citations = sum(1 for c in citations if c.status != "ok")
@@ -439,6 +454,9 @@ class Evaluator:
             answered=answered,
             groundedness=g_score,
             relevance=r_score,
+            unsupported_claims=unsupported_claims,
+            judge_rationale=judge_rationale,
+            missing_facts=missing_facts,
             citations_ok=failed_citations == 0,
             citations_total=len(citations),
             citations_failed=failed_citations,
