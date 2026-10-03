@@ -401,3 +401,8 @@ RAG4C_ENV_FILE=config/.env.live-bench .venv/Scripts/python.exe -m uvicorn server
    - **全域包 `limit` 的排序偏置**：`(created_at, id)` 升序 + 500 上限，租户内活跃 FAQ
      超过 500 条时，**新建知识库的问答会被系统性挤掉**，且没有 truncated 指标。
      要么提额并加截断计数，要么改成按知识库分桶限额。本轮只在代码注释里写明语义，没改。
+     **（2026-09-29 截断可见性已落地，`65b7493`）**：`list_qa_retrieval_bundle` 多取
+     一行探溢出，触顶记 `query.qa_retrieval.bundle_truncated` 计数器 + warning；
+     分桶限额/提额仍待裁定。顺带根修 `catalog_migrations/env.py` 的
+     `fileConfig(disable_existing_loggers=True)`——任何一次 upgrade 都会把进程内
+     既有 `rag4c.*` logger 全部静默（探针实证后才现形的真缺陷）。
