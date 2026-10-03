@@ -136,3 +136,67 @@ refusal_rate 0.0897   over_refusal_rate 0.0407   hallucination_rate 0.6364
 avg_groundedness 0.8298   avg_relevance 0.8225   citation_failure_rate 0.2471
 degraded_rate 0.1034
 ```
+
+## 五、降级率成因的排查进展（未定位，如实记录）
+
+F1.2 基线里 `degraded_rate = 0.1034`（15 条），其中 `entailment_unavailable`
+9 条。降级率不达标的直接后果是：**这 9 条的引用校验根本没跑过，弃权门拿不到
+第二道闸**，于是它们全部按"检索通过就作答"处理——这本身就推高幻觉率。
+
+排查了两个假设，**都否掉了**：
+
+### 假设 1：3 并发触发上游限流 —— **证伪**
+
+基线是 `--workers 3` 跑的，而 F2.4/F1.2 都记录了硅基流动有 429 限流。
+直接对照实验（`eval/.cache/probe_l3_concurrency.py`，同一请求形状）：
+
+| 并发 | 成功率 | p50 | 墙钟（6 条） |
+|---|---|---|---|
+| 1 | 6/6 (100%) | 14.4s | 81.2s |
+| 3 | 6/6 (100%) | **9.1s** | 19.4s |
+
+并发不但没提高失败率，p50 还**更快**（服务端并发处理，摊薄了排队）。
+限流不是成因。
+
+### 假设 2：失败样本的输入规模特殊 —— **证伪**
+
+降级 9 条的引用数：`[6, 4, 12, 6, 9, 11, 6, 21, 7]`（中位 7）；
+正常作答 123 条：中位 11、p90 26、**最大 45**。
+
+降级样本的规模**完全落在正常范围内**，没有任何一条超过正常样本的最大值。
+"引用太多把 prompt 顶爆"（`verify/verifier.py:552` 注释里记过这个失败形态）
+不成立。
+
+### 当前的配置事实
+
+```
+verify.entailment_mode   = llm
+verify.strict            = True        # L3 评全部引用，不抽样
+verify.sample_ratio      = 1.0
+pipeline.entailment_threshold = 0.6
+```
+
+### 还没排除的可能
+
+1. **长答案的真实声明切分结果**。探针用的是固定的 5 条短声明，而真实失败样本
+   可能有 20+ 条长声明、切分边界诡异。`verify/claims.split_claims` 的输出
+   直接进 prompt——声明里如果含大量换行/引号，可能破坏 prompt 结构。
+2. **JSON 解析**。`chat_json` 走 `json_mode=True`（`response_format`），
+   硅基流动在 `59d6826` 修过 system 消息位置之后能正常工作，但长输出下仍可能
+   截断导致解析失败——而 `ParseFallbackError` 在 L3 里被 catch 成
+   `entailment_unavailable`。
+3. **证据里的特殊字符**。证据块是原文直插，长文档里若含 `{}`（与模板占位符
+   冲突）或超长未截断内容，也可能改变 prompt。
+
+### 下一步（需要真跑一次带诊断的基线）
+
+**给 L3 失败路径补上诊断信息**再跑一轮基线。当前
+`verifier.py:511` 的 note 只记了 `f"L3 判定失败（降级：蕴含不可用...）: {exc}"`，
+而这个 `exc` 在报告里**看不到**（F1.2 的 `degraded_kinds` 只区分到
+`entailment_unavailable` 这一级）。
+
+最小改动：在 L3 的 except 分支里把异常类型 + `repr(exc)` 前若干字符 + 当时的
+声明数/证据数写进 `notes`，并让 `QueryResult.traces` 带上它（traces 已经在
+`rag.py:375` 汇入结果）。这样下一轮基线能直接读出失败原因，不必再猜。
+
+**这个诊断本身不需要用户确认**（只加可观测性、不改行为），是下一步该做的事。
