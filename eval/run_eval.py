@@ -690,12 +690,14 @@ def main(argv: list[str] | None = None) -> int:
     exit_code = 0
     if args.baseline or args.gate:
         current = as_v2(report, dataset_spec=args.dataset, pipeline_spec=args.pipeline)
+        baseline_report: EvalReportV2 | None = None
         if args.baseline:
             base_path = Path(args.baseline)
             if not base_path.is_file():
                 print(f"[eval] baseline 不存在: {args.baseline}")
                 return 1
-            diff = compare_reports(current, load_report(base_path))
+            baseline_report = load_report(base_path)
+            diff = compare_reports(current, baseline_report)
             print("\n[eval] 与 baseline 对比（delta = 本次 - baseline）:")
             for key, delta in diff["delta"].items():
                 direction = diff["direction"].get(key, "unknown")
@@ -708,16 +710,35 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"[eval] gate 阈值文件不存在: {args.gate_thresholds}")
                     return 1
                 thresholds = json.loads(th_path.read_text(encoding="utf-8-sig"))
-            gate_result = release_gate(current, thresholds)
-            print("\n[eval] release gate:")
+            # --gate 与 --baseline 同时给时才做劣化检查：门禁的意义是"别比上次
+            # 差"，没有对照就只剩"够不够好"那道绝对线。
+            gate_result = release_gate(current, thresholds, baseline=baseline_report)
+            print("\n[eval] release gate（绝对阈值）:")
             for check in gate_result["checks"]:
                 mark = "PASS" if check["passed"] else "FAIL"
                 op = "<=" if check["action"] == "le" else ">="
                 print(
                     f"  {mark} {check['metric']}: {check['value']} {op} {check['threshold']}"
                 )
+            if baseline_report is not None:
+                print("[eval] release gate（相对基线的劣化带，单边）:")
+                if gate_result["regressions"]:
+                    for item in gate_result["regressions"]:
+                        print(
+                            f"  FAIL {item['metric']}: {item['baseline']} -> {item['current']} "
+                            f"（变差 {item['worse_by']:+.4f} > 容忍 {item['tolerance']}）"
+                        )
+                else:
+                    print("  PASS 无指标超出劣化带")
             if not gate_result["passed"]:
-                print(f"[eval] RELEASE GATE FAILED: {gate_result['failures']}")
+                print(
+                    f"[eval] RELEASE GATE FAILED: {gate_result['failures']}"
+                    + (
+                        f" + 劣化 {gate_result['regressions']}"
+                        if gate_result["regressions"]
+                        else ""
+                    )
+                )
                 exit_code = 1
             else:
                 print("[eval] RELEASE GATE PASSED")
@@ -886,15 +907,68 @@ def compare_reports(current: EvalReportV2, baseline: EvalReportV2) -> dict[str, 
     }
 
 
+#: 相对基线的**劣化容忍带**（F1.5）。计划要求"--gate 带上 F1.2 的基线，
+#: 作为之后每次改动的对照"——而"对照"不可能只靠绝对阈值实现：
+#: ``avg_groundedness=0.60`` 这条线允许 0.60 -> 0.62 也通过，那是劣化；
+#: 反过来 0.75 -> 0.62 也未必该立刻拦（那可能是模型换了、基线过时了）。
+#:
+#: 绝对阈值回答"够不够好"，相对基线回答"**有没有变差**"。两者都要。
+#:
+#: 容忍带取 0.02（质量类）/ 0.05（比率类，天然抖动大）——比它们更大的变化
+#: 在 145 条样本上不该是噪声。比率类给得宽是因为 22 条不可答样本算出来的
+#: 幻觉率每条就是 1/22 = 0.045 的跳变。
+DEFAULT_REGRESSION_TOLERANCE: dict[str, float] = {
+    "avg_groundedness": 0.02,
+    "avg_relevance": 0.02,
+    "hallucination_rate": 0.05,
+    "over_refusal_rate": 0.05,
+    "citation_failure_rate": 0.05,
+    "refusal_rate": 0.05,
+    "degraded_rate": 0.05,
+}
+
+_LOWER_IS_BETTER = {
+    "refusal_rate",
+    "over_refusal_rate",
+    "hallucination_rate",
+    "citation_failure_rate",
+    "degraded_rate",
+}
+
+#: 劣化带比较的余量。取 1e-9：远小于任何有意义的指标变化（0.02 容忍带上的
+#: 相对误差 5e-8），却足以吸收二进制浮点在减法末位的表示误差。
+_TOLERANCE_EPSILON = 1e-9
+
+
 def release_gate(
     report: EvalReportV2,
     thresholds: dict[str, tuple[str, float]] | None = None,
+    *,
+    baseline: EvalReportV2 | None = None,
+    tolerance: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """以固定阈值做质量墙判定。
+    """以固定阈值 + 相对基线的劣化带做质量墙判定。
+
+    两道检查，都要过：
+
+    1. **绝对阈值**（:data:`DEFAULT_RELEASE_THRESHOLDS`）：这个数够不够好。
+    2. **相对基线的劣化带**（:data:`DEFAULT_REGRESSION_TOLERANCE`，需传
+       ``baseline``）：相对上一次有没有变差。
+
+    只有第 1 道时，一次"仍然达标但明显变差"的改动会静默通过——比如有据性
+    从 0.78 掉到 0.62，两条绝对线（0.60）都放过。这正是 F1.5 要防的。
+
+    劣化带是**单边**的：变好永远不拦。只有变差才失败。
+
+    Args:
+        report: 本次报告。
+        thresholds: 绝对阈值；None 用内置默认。
+        baseline: 对照基线；None 则跳过相对检查（不报错——第一次跑没有基线）。
+        tolerance: 劣化容忍带；None 用内置默认。
 
     Returns:
-        ``{"passed": bool, "checks": [...], "failures": [...]}``
-        每条 check 为 ``{"metric", "threshold", "action", "value", "passed"}``。
+        ``{"passed", "checks", "failures", "regressions"}``。
+        ``checks`` 是绝对阈值结果，``regressions`` 是相对基线的劣化项。
     """
     gates = thresholds if thresholds is not None else DEFAULT_RELEASE_THRESHOLDS
     checks: list[dict[str, Any]] = []
@@ -913,4 +987,37 @@ def release_gate(
         )
         if not passed:
             failures.append(metric)
-    return {"passed": not failures, "checks": checks, "failures": failures}
+
+    regressions: list[dict[str, Any]] = []
+    if baseline is not None:
+        bands = tolerance if tolerance is not None else DEFAULT_REGRESSION_TOLERANCE
+        for metric, allowed in bands.items():
+            if metric not in report.metrics:
+                continue
+            # 基线里没有这个指标（例如旧格式报告）就跳过：拿 0 当基线会把
+            # "上次没这个数"误报成"上次是 0，这次涨了"。
+            if metric not in baseline.metrics:
+                continue
+            current = report.metrics[metric]
+            before = baseline.metrics[metric]
+            worse = current - before if metric in _LOWER_IS_BETTER else before - current
+            # 边界必须留一丝余量，否则「变差量正好等于容忍带」会被浮点判成超标：
+            # 0.78 - 0.76 在二进制浮点下是 0.020000000000000018 > 0.02。
+            # 一次"刚好用完容忍带"的改动不该被拦——那不是劣化，是踩线。
+            if worse > allowed + _TOLERANCE_EPSILON:
+                regressions.append(
+                    {
+                        "metric": metric,
+                        "current": round(current, 6),
+                        "baseline": round(before, 6),
+                        "worse_by": round(worse, 6),
+                        "tolerance": allowed,
+                    }
+                )
+
+    return {
+        "passed": not failures and not regressions,
+        "checks": checks,
+        "failures": failures,
+        "regressions": regressions,
+    }
