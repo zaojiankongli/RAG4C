@@ -478,7 +478,14 @@ def _run_strategies(
 def run_eval(root: Path, cfg: EvalConfig, *, reranker: Any = None) -> dict[str, Any]:
     """跑一轮评测，返回报告字典（可直接落 JSON）。"""
     index = build_index(root, cfg)
-    if cfg.corpus_source == "milvus":
+    # 标注集与语料来源是**两个独立维度**，此前被绑死在一起：
+    # ``--corpus milvus`` 会隐式强制切到 PRODUCTION_GOLD，于是 ``--gold docs``
+    # 传了等于没传（参数进了配置、也写进了报告元信息，唯独没被消费）。
+    # 绑死的代价很具体：拿评测集合 rag4c_eval_chunks 跑 F2.1 这类实验时，
+    # 只能用生产标注去对评测集合的 chunk id，于是必然报"黄金标注已失效"——
+    # 一条能解释成"环境配错了"的报错，实际是选择器没接上。
+    want_production = cfg.gold == "production"
+    if cfg.corpus_source == "milvus" and want_production:
         from .gold_production import PRODUCTION_GOLD, validate_against_ids
         from .gold_production import DATASET_VERSION as PRODUCTION_DATASET_VERSION
 
@@ -497,10 +504,32 @@ def run_eval(root: Path, cfg: EvalConfig, *, reranker: Any = None) -> dict[str, 
             raise RuntimeError(f"生产标注声明的语料语言与原文不符：{language_problems}")
         gold_version = PRODUCTION_DATASET_VERSION
     else:
+        if cfg.corpus_source == "milvus" and not want_production:
+            # 评测集合（rag4c_eval_chunks）装的是仓库文档切片，docs 标注正是
+            # 对着它们写的。不显式说明这一点，读者会以为默认行为变了。
+            print(
+                "[runner] 语料来自 Milvus 评测集合，标注使用 docs 集"
+                "（--gold docs）；生产标注只对生产集合有效。"
+            )
         cases = GOLD_SET
-        broken = validate_against_corpus(index.chunk_ids())
-        if broken:
-            raise RuntimeError(f"黄金标注已失效（语料切片变了）：{broken}")
+        # 校验口径按语料来源分两路：本地语料能一次列出全部切片 id，Milvus 侧
+        # 只有 query_ids（按主键批量查），且生产库很大不能全量扫——所以那边
+        # 只核对待用的那些主键。这一处此前直接调 index.chunk_ids()，那是本地
+        # store 的 API，Milvus store 根本没有该方法，于是 docs 标注 + Milvus
+        # 语料这个组合必然 AttributeError。
+        if cfg.corpus_source == "milvus":
+            known = {gid for case in cases for gid in case.gold_chunk_ids}
+            present = set(index.store.query_ids(sorted(known)))
+            missing = [
+                f"{case.case_id}:{gid}"
+                for case in cases
+                for gid in case.gold_chunk_ids
+                if gid not in present
+            ]
+        else:
+            missing = validate_against_corpus(index.chunk_ids())
+        if missing:
+            raise RuntimeError(f"黄金标注已失效（语料切片变了）：{missing}")
         gold_version = DATASET_VERSION
 
     try:
