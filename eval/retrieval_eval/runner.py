@@ -419,6 +419,7 @@ def _run_strategies(
                         "corpus_language": case.corpus_language,
                         "top_score": (output.results[0].score if output.results else 0.0),
                         "retrieved": retrieved_ids[:5],
+                        "retrieved10": retrieved_ids[:10],
                     }
                 )
                 continue
@@ -438,8 +439,18 @@ def _run_strategies(
                     "corpus_language": case.corpus_language,
                     "metrics": metrics,
                     "top5": retrieved_ids[:5],
+                    # top10 一并落盘：F2.3 要把「英文 NDCG 0.735 vs 中文 0.923」
+                    # 归因到具体名次（gold 排第几），只有 top5 的话，"排第 7"
+                    # 和"排第 30"会落进同一个桶，归因就无从谈起。top5 保留不动，
+                    # 旧的下游读法不受影响。
+                    "top10": retrieved_ids[:10],
                     "missed_gold": [
                         gold for gold in case.gold_chunk_ids if gold not in retrieved_ids
+                    ],
+                    "gold_ranks": [
+                        rank
+                        for rank, cid in enumerate(retrieved_ids, start=1)
+                        if cid in case.gold_chunk_ids
                     ],
                     "latency_ms": round(total_ms, 2),
                 }
