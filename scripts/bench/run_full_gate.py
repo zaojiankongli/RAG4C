@@ -126,35 +126,81 @@ def main() -> int:
     parser.add_argument("--total", type=int, default=96)
     parser.add_argument("--out", default=str(ROOT / "output" / "bench" / "gate"))
     parser.add_argument(
+        "--real-upstream",
+        action="store_true",
+        help="真实上游模式（master-plan F3.5）：不挂 mock，槽位直连云端，"
+        "并用 .env 而不是 config/.env.bench。默认只报读数不判定——"
+        "DEFAULT_THRESHOLDS 是按 mock 上游定的，真实上游的秒级延迟是结构性的。",
+    )
+    parser.add_argument(
+        "--thresholds",
+        default="",
+        help="阈值 JSON 路径，形如 {\"distinct\": {\"min_qps\": 5, "
+        '"max_p95_ms": 3000, "min_success": 0.9}, ...}。'
+        "不给则用内置（按 mock 上游定的）。",
+    )
+    parser.add_argument(
         "--strict-env",
         action="store_true",
-        help="环境预检严格模式：CPU 负载 > 50% 时直接失败（CI 场景）",
+        # 注意这里的 "%%"：argparse 会用 %-格式化渲染 help 串，字面量里的
+        # 单个 "%" 会被当格式符并在其后找转换符——"50% 时" 里的 "时" 不合法，
+        # 于是 --help 直接抛 ValueError、整个脚本连参数说明都打不出来。
+        help="环境预检严格模式：CPU 负载 > 50%% 时直接失败（CI 场景）",
     )
     args = parser.parse_args()
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
+    thresholds = THRESHOLDS
+    if args.thresholds:
+        th_path = Path(args.thresholds)
+        if not th_path.is_file():
+            print(f"[gate] 阈值文件不存在: {args.thresholds}")
+            return 1
+        thresholds = json.loads(th_path.read_text(encoding="utf-8-sig"))
     env = {**os.environ, "RAG4C_ENV_FILE": "config/.env.bench"}
+    # 真实上游模式（master-plan F3.5）：不挂 mock，槽位直连云端。
+    #
+    # 为什么需要它：mock 上游的延迟是本机回环（毫秒级），而真实云端调用是
+    # 秒级——两种读数不可比。一份只用 mock 跑出来的门禁，衡量的是"本机回环
+    # 有多快"，不是"这套服务能不能扛住真实上游"。F3.5 要的就是把这件事摆
+    # 到台面上：门禁在真实上游下大概率不达标，而这恰恰是它该报出的结论。
+    #
+    # 阈值也要重新想：DEFAULT_THRESHOLDS 是按 mock 上游定的（distinct P95
+    # <= 800ms）。真实上游下检索侧就有 500ms+ 的 rerank 往返，端到端 P95 到
+    # 秒级是结构性的、不是回归。所以真实模式默认**只报读数不判定**，
+    # 判定阈值要用 --thresholds 显式给——免得把结构性的秒级延迟当成"性能
+    # 退化"去追查。
+    if args.real_upstream:
+        env = {**os.environ, "RAG4C_ENV_FILE": ".env"}
 
     # 0. 环境预检（测量前提：机器空闲，否则结果偏低不代表代码性能）
     if _check_env(strict=args.strict_env) != 0:
         print("[gate] 环境预检未通过（--strict-env），终止")
         return 1
 
-    # 1. 起 mock 上游 + 被测服务
-    mock = subprocess.Popen(
-        [PYTHON, "-X", "utf8", "scripts/bench/mock_upstream.py", "--port", str(args.mock_port)],
-        cwd=ROOT, env=env,
-    )
+    # 1. 起 mock 上游 + 被测服务（真实上游模式下不起 mock）
+    mock: subprocess.Popen | None = None
+    if args.real_upstream:
+        print(
+            "[gate] 真实上游模式：不启动 mock，被测服务直连云端槽位。"
+            "云端调用有秒级延迟，P95 阈值需按 --thresholds 重新给。"
+        )
+    else:
+        mock = subprocess.Popen(
+            [PYTHON, "-X", "utf8", "scripts/bench/mock_upstream.py", "--port", str(args.mock_port)],
+            cwd=ROOT, env=env,
+        )
     app = subprocess.Popen(
         [PYTHON, "-X", "utf8", "-m", "uvicorn", "server.app:app",
          "--host", "127.0.0.1", "--port", str(args.app_port)],
         cwd=ROOT, env=env,
     )
     try:
-        if not _wait_ready(f"http://127.0.0.1:{args.mock_port}/__stats", 20) or not _wait_ready(
-            f"http://127.0.0.1:{args.app_port}/livez", 40
-        ):
+        ready = _wait_ready(f"http://127.0.0.1:{args.app_port}/livez", 60)
+        if not args.real_upstream:
+            ready = ready and _wait_ready(f"http://127.0.0.1:{args.mock_port}/__stats", 20)
+        if not ready:
             print("[gate] 服务启动失败")
             return 1
 
@@ -179,11 +225,19 @@ def main() -> int:
         # 3. 阈值判定
         failed = False
         print("\n[gate] 结果 vs 阈值")
-        for pattern, th in THRESHOLDS.items():
+        for pattern, th in thresholds.items():
             r = results.get(pattern, {})
             qps = r.get("qps_ok", 0.0)
             p95 = r.get("latency_ms", {}).get("p95", 0.0)
             success = r.get("success_rate", 0.0)
+            if args.real_upstream and args.thresholds == "":
+                # 只报不判：DEFAULT_THRESHOLDS 是按 mock 上游定的，真实上游下
+                # 端到端秒级是结构性的，拿它判定会把"云端就这么慢"报成"性能退化"。
+                print(
+                    f"  --   {pattern}: QPS {qps:.1f}  P95 {p95:.0f}ms  "
+                    f"成功率 {success:.1%}  （真实上游，未给阈值故不判定）"
+                )
+                continue
             ok_qps = qps >= th["min_qps"]
             ok_p95 = p95 <= th["max_p95_ms"]
             ok_success = success >= th["min_success"]
@@ -195,10 +249,15 @@ def main() -> int:
                 f"P95 {p95}ms (<= {th['max_p95_ms']}) "
                 f"成功率 {success:.1%} (>= {th['min_success']:.0%})"
             )
+        if args.real_upstream and args.thresholds == "":
+            print("\n[gate] 真实上游读数如上（未判定）。要判定请用 --thresholds 给 JSON。")
+            return 0
         print(f"\n[gate] {'ALL PASS' if not failed else 'DEGRADED'}")
         return 0 if not failed else 1
     finally:
         for p in (app, mock):
+            if p is None:
+                continue
             try:
                 p.terminate()
             except Exception:
