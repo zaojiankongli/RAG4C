@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core.knowledge_governance import AuditContext
+from core.observability import get_logger
 from models.orm import (
     Dataset,
     Document,
@@ -1309,9 +1310,28 @@ class KnowledgeContentRepository:
                     select(QAKnowledge)
                     .where(*qa_filters)
                     .order_by(QAKnowledge.created_at, QAKnowledge.id)
-                    .limit(bounded)
+                    .limit(bounded + 1)
                 )
             )
+            # 截断必须可见（Round 10 §7-6）：全域口径按创建时间升序 + 上限，
+            # 超限时新建知识库会被系统性挤掉且无信号。多取一行探溢出（零成本），
+            # 命中即记计数器 + 日志；排序偏置的治理（提额/分桶）另行裁定。
+            truncated = len(qa_rows) > bounded
+            if truncated:
+                qa_rows = qa_rows[:bounded]
+                try:
+                    from core.metrics import get_metrics
+
+                    get_metrics().incr("query.qa_retrieval.bundle_truncated")
+                except Exception:  # noqa: BLE001 - 可观测性不得影响主链路
+                    pass
+                get_logger(__name__).warning(
+                    "QA 检索包发生截断：tenant=%s dataset=%s limit=%d"
+                    "（全域按创建时间升序，更新的知识库会被挤出）",
+                    tenant_id,
+                    dataset_id or "（本租户全域）",
+                    bounded,
+                )
             qa_ids = [qa.id for qa in qa_rows]
             alternatives: dict[str, list[str]] = {qid: [] for qid in qa_ids}
             negatives: dict[str, list[str]] = {qid: [] for qid in qa_ids}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -333,3 +334,64 @@ def test_named_scope_still_limits_to_one_dataset(tmp_path: Path):
 
     bundle = repository.list_qa_retrieval_bundle("tenant-1", "dataset-1")
     assert {item["qa_id"] for item in bundle} == {ids["投影注册表是什么？"]}
+
+
+def test_bundle_truncation_is_visible_in_metrics_and_log(tmp_path: Path, caplog, monkeypatch):
+    """全域包触顶必须可见（Round 10 §7-6）：多取一行探溢出，命中记
+    `query.qa_retrieval.bundle_truncated` 计数器 + warning——否则新建知识库
+    被创建时间升序系统性挤掉时没有任何信号。
+    """
+    engine, repository = _repository(tmp_path)
+    qa_ids = []
+    for i in range(4):
+        created = repository.create_qa(
+            "tenant-1",
+            "dataset-1",
+            question=f"问题 {i}",
+            answer=f"答案 {i}",
+            audit=_audit(i + 1),
+        )
+        _approve(repository, created.id, created.revision)
+        qa_ids.append(created.id)
+
+    counts = _Counts().install(monkeypatch)
+    # 不用 caplog：_repository 的 upgrade 在用例体内跑过 alembic，fileConfig 会
+    # 按其 ini 重建 root handlers（pytest 的捕获 handler 被冲掉），caplog 收不到。
+    # 直接把自附 handler 挂在发射者 logger 上（升级之后附加，不受冲刷影响）。
+    emitter_logger = logging.getLogger("rag4c.core.knowledge_content")
+    captured: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record)
+
+    handler = _Capture(level=logging.WARNING)
+    emitter_logger.addHandler(handler)
+    try:
+        bundle = repository.list_qa_retrieval_bundle("tenant-1", "", limit=3)
+    finally:
+        emitter_logger.removeHandler(handler)
+
+    # 恰好返回上限条，且按创建时间升序保留最旧的三条
+    assert len(bundle) == 3
+    assert [item["qa_id"] for item in bundle] == qa_ids[:3]
+    assert counts.counts.get("query.qa_retrieval.bundle_truncated") == 1
+    assert any("QA 检索包发生截断" in r.getMessage() for r in captured)
+
+
+def test_bundle_within_limit_never_reports_truncation(tmp_path: Path, monkeypatch):
+    """没触顶就不许发信号（假警报会淹没真截断）。"""
+    engine, repository = _repository(tmp_path)
+    created = repository.create_qa(
+        "tenant-1",
+        "dataset-1",
+        question="唯一的问题",
+        answer="唯一的答案",
+        audit=_audit(1),
+    )
+    _approve(repository, created.id, created.revision)
+
+    counts = _Counts().install(monkeypatch)
+    bundle = repository.list_qa_retrieval_bundle("tenant-1", "", limit=500)
+    assert len(bundle) == 1
+    assert counts.counts == {}
