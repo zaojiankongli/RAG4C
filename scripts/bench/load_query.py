@@ -66,12 +66,21 @@ _QUESTIONS = [
 ]
 
 
-def _post(url: str, payload: dict, timeout: float) -> tuple[int, float, str]:
-    """发一次请求，返回 (状态码, 耗时秒, 错误标签)。
+def _post(url: str, payload: dict, timeout: float) -> tuple[int, float, str, bool | None]:
+    """发一次请求，返回 ``(状态码, 耗时秒, 错误标签, abstained)``。
 
     非 2xx 不抛异常而是当数据返回：压测里 429/503 是**被测行为**而不是脚本
     故障，它们恰恰是要统计的东西。区分 429（限流拒绝，服务还活着）和 503
     （排队超时，服务已经堵了）对判断瓶颈在哪很关键。
+
+    ``abstained`` 是为了回答一个不问就会误读的问题：**这批请求里有多少走了
+    弃权？** 弃权路径不调生成与 L3 裁判，延迟只有完整链路的零头（实测真实
+    上游：完整链路 10~30s、弃权 0.26~0.33s，差 30 倍）。不报这个比例，
+    QPS 117 / P50 262ms 会被当成「系统能扛 117 QPS 的完整问答」——而实际上
+    它扛的是「检索 + 快速拒答」。
+
+    解析不出该字段时返回 ``None``（而不是 False）：契约变了要看得见，
+    静默当成"没弃权"会把这个缺口盖掉。
     """
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -81,16 +90,34 @@ def _post(url: str, payload: dict, timeout: float) -> tuple[int, float, str]:
     t0 = time.perf_counter()
     try:
         with _OPENER.open(req, timeout=timeout) as resp:
-            resp.read()
-            return resp.status, time.perf_counter() - t0, ""
+            raw = resp.read()
+            return resp.status, time.perf_counter() - t0, "", _extract_abstained(raw)
     except urllib.error.HTTPError as e:
         try:
             e.read()
         except Exception:  # noqa: BLE001
             pass
-        return e.code, time.perf_counter() - t0, f"http_{e.code}"
+        return e.code, time.perf_counter() - t0, f"http_{e.code}", None
     except Exception as e:  # noqa: BLE001
-        return 0, time.perf_counter() - t0, type(e).__name__
+        return 0, time.perf_counter() - t0, type(e).__name__, None
+
+
+def _extract_abstained(raw: bytes) -> bool | None:
+    """从响应体里取 ``result.abstained``；取不到返回 ``None``。
+
+    契约是 ``{result, using_mock, duration_ms}``（见 ``server/app.py`` 的
+    ``_serialize``），abstained 在 ``result`` 里。这里刻意吞掉一切解析异常
+    并返回 None——压测脚本不该因为响应体形状变了而崩掉，但那个形状变化必须
+    体现在 ``abstained_known_rate`` 上。
+    """
+    try:
+        data = json.loads(raw)
+        inner = data.get("result")
+        if not isinstance(inner, dict) or "abstained" not in inner:
+            return None
+        return bool(inner["abstained"])
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _pct(sorted_vals: list[float], p: float) -> float:
@@ -130,6 +157,7 @@ def run(args: argparse.Namespace) -> dict:
     if args.warmup > 0:
         print(f"  预热 {args.warmup} 个请求（不计入统计）…", flush=True)
         for w in range(args.warmup):
+            # warmup 忽略返回值：它的作用是填缓存/热身，不进统计。
             _post(url, {"query": f"{_QUESTIONS[w % len(_QUESTIONS)]} [warmup-{nonce}-{w}]",
                         "dataset_id": args.dataset or None}, args.timeout)
 
@@ -175,10 +203,18 @@ def run(args: argparse.Namespace) -> dict:
         t.join()
     wall = time.perf_counter() - t0
 
-    ok = [d for code, d, _ in results if code == 200]
-    codes = Counter(code for code, _, _ in results)
-    errs = Counter(tag for _, _, tag in results if tag)
+    ok = [d for code, d, _, _ in results if code == 200]
+    codes = Counter(code for code, _, _, _ in results)
+    errs = Counter(tag for _, _, tag, _ in results if tag)
     ok_sorted = sorted(ok)
+
+    # 弃权率：只统计**成功**请求（失败请求没有 answer 可言）。
+    #
+    # 分母用「成功里 abstained 字段已知的那部分」，另报 known_rate —— 若
+    # known_rate < 1 说明响应形状变了、这个比例本身就不可信，两个数要一起看。
+    ok_rows = [(code, abst) for code, _, _, abst in results if code == 200]
+    known = [abst for _, abst in ok_rows if abst is not None]
+    abstained = sum(1 for v in known if v)
 
     # QPS 只算成功请求。把秒回的 429 算进吞吐会得出「越过载越快」的荒谬结论
     # ——那正是过载时最容易自欺的一个数字。
@@ -201,6 +237,10 @@ def run(args: argparse.Namespace) -> dict:
         },
         "status_codes": dict(sorted(codes.items())),
         "errors": dict(errs),
+        # 弃权率：这个数字决定上面那些 QPS/延迟该怎么读。全 0 = 测的是完整
+        # 问答链路；接近 1 = 测的是「检索 + 快速拒答」，与完整链路差一个数量级。
+        "abstained_rate": round(abstained / len(known), 4) if known else None,
+        "abstained_known_rate": round(len(known) / len(ok_rows), 4) if ok_rows else None,
     }
 
     print("\n" + "=" * 60)
@@ -209,6 +249,17 @@ def run(args: argparse.Namespace) -> dict:
     lat = summary["latency_ms"]
     print(f"  P50 {lat['p50']}ms   P95 {lat['p95']}ms   P99 {lat['p99']}ms   max {lat['max']}ms")
     print(f"  状态码 {summary['status_codes']}")
+    ar = summary["abstained_rate"]
+    kr = summary["abstained_known_rate"]
+    if ar is None:
+        print("  弃权率   未知（响应体里没有 result.abstained）")
+    else:
+        print(f"  弃权率   {ar:.1%}（字段可见 {kr:.0%}）")
+        if ar >= 0.5:
+            print("           ⚠ 过半请求走了弃权：上面的 QPS/延迟主要反映「检索 + 快速拒答」，"
+                  "不是完整问答链路。")
+        if kr is not None and kr < 1.0:
+            print(f"           ⚠ 只有 {kr:.0%} 的响应带 result.abstained，弃权率本身不可信。")
     if errs:
         print(f"  错误   {dict(errs)}")
     print("=" * 60)

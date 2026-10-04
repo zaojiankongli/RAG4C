@@ -233,9 +233,18 @@ def main() -> int:
             if args.real_upstream and args.thresholds == "":
                 # 只报不判：DEFAULT_THRESHOLDS 是按 mock 上游定的，真实上游下
                 # 端到端秒级是结构性的，拿它判定会把"云端就这么慢"报成"性能退化"。
+                # 弃权率必须跟着 QPS 一起报：不报它，上面的数字会被读成
+                # 「系统能扛 N QPS 的完整问答」，而实际上弃权路径不调生成与
+                # L3 裁判、延迟只有完整链路的零头（实测真实上游 262ms vs 10~30s）。
+                ar = r.get("abstained_rate")
+                kr = r.get("abstained_known_rate")
+                ar_txt = "未知" if ar is None else f"{ar:.0%}"
+                if ar is not None and kr is not None and kr < 1.0:
+                    ar_txt += f"(字段可见 {kr:.0%})"
                 print(
                     f"  --   {pattern}: QPS {qps:.1f}  P95 {p95:.0f}ms  "
-                    f"成功率 {success:.1%}  （真实上游，未给阈值故不判定）"
+                    f"成功率 {success:.1%}  弃权率 {ar_txt}  "
+                    f"（真实上游，未给阈值故不判定）"
                 )
                 continue
             ok_qps = qps >= th["min_qps"]
