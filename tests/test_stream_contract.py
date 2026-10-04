@@ -89,7 +89,9 @@ class FakeVerifier:
             supported=True, entailment_scores={"c": 1.0}, entailment_evaluated=True
         )
 
-    def verify(self, answer, chunks):
+    def verify(self, answer, chunks, strict=None, question=""):
+        # strict/question 是 CitationVerifier 的既有契约参数，桩必须一并接受
+        del strict, question
         return self.result
 
 
@@ -266,7 +268,8 @@ def test_generation_failure_abstains_instead_of_breaking_the_stream(stream) -> N
 
 def test_verifier_failure_does_not_break_the_stream(stream) -> None:
     class BoomVerifier:
-        def verify(self, answer, chunks):
+        def verify(self, answer, chunks, strict=None, question=""):
+            del strict, question
             raise RuntimeError("桩：验证层炸了")
 
     events = stream(FakeGenerator(["答案"]), verifier=BoomVerifier())

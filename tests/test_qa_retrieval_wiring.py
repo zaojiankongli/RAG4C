@@ -132,7 +132,14 @@ class _StreamGenerator:
 
 class _Verifier:
     @staticmethod
-    def verify(_answer: str, chunks: list[RetrievedChunk]) -> VerificationResult:
+    def verify(
+        _answer: str,
+        chunks: list[RetrievedChunk],
+        strict: bool | None = None,
+        question: str = "",
+    ) -> VerificationResult:
+        # strict/question 是 CitationVerifier 的既有契约参数，桩必须一并接受
+        del strict, question
         return VerificationResult(
             supported=True,
             entailment_scores={"claim": 1.0},
