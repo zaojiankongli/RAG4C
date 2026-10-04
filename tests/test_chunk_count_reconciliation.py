@@ -23,7 +23,6 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from core.catalog_schema import upgrade_catalog
 from core.chunk_catalog import ChunkCatalog
 from core.index_operations import IndexOperationQueue
 from models.orm import Dataset, Document, Tenant
@@ -76,8 +75,12 @@ class _Catalog:
 
 @pytest.fixture()
 def active_document(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    url = f"sqlite:///{(tmp_path / 'catalog.db').as_posix()}"
-    upgrade_catalog(url)
+    # 目录库用 session 级模板库（tests/_catalog_template.py）：建一次已迁移到
+    # head 的 SQLite、各用例拷文件，实测 4.0ms/次 vs 重跑迁移 13.9s（3432x）。
+    # 本文件不需要 BASELINE（不验证「从 baseline 升到 head」的过程本身），
+    # 所以拷模板与重跑迁移等价。
+    from _catalog_template import head_db_url
+    url = head_db_url(tmp_path / "catalog.db")
     engine = create_engine(url)
     with Session(engine) as session:
         session.add(Tenant(id="tenant-1", name="T"))
