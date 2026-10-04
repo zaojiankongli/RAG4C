@@ -47,6 +47,10 @@ _SLOTS = (
 
 #: 这些槽位要的是结构化 JSON 或短输出，思考链对它们毫无帮助，只增加延迟与
 #: 成本。generation 也关掉：它要的是带引用的直答，思考链挤占的是 max_tokens。
+#: 产出 JSON 的槽位。它们才是「解析失败 -> 静默降级为少一道闸」的槽位——
+#: generation 不产出 JSON（流式文本），给它调重试只会白花时间。
+_JSON_SLOTS = ("judge", "router_llm", "metadata_filter")
+
 _THINKING_OFF = _SLOTS
 
 
@@ -57,7 +61,7 @@ def _key_from_env_file(name: str) -> str:
     return ""
 
 
-def apply_overrides(model: str, timeout: float) -> list[str]:
+def apply_overrides(model: str, timeout: float, json_retries: int = 0) -> list[str]:
     """把上游覆盖写进本进程环境；返回实际覆盖项供打印核对。"""
     api_key = _key_from_env_file("RAG4C_EMBEDDING_API_KEY")
     if not api_key:
@@ -75,6 +79,13 @@ def apply_overrides(model: str, timeout: float) -> list[str]:
     for slot in _THINKING_OFF:
         os.environ[f"RAG4C_LLM_{slot}_ENABLE_THINKING"] = "false"
     applied.append("RAG4C_LLM_*_ENABLE_THINKING=false（8 槽位）")
+    if json_retries:
+        # 只覆盖 JSON 槽位（judge / router_llm / metadata_filter）——它们才是
+        # 解析失败会「静默降级为少一道闸」的那几个；generation 不产出 JSON，
+        # 给它调重试只会白花时间。
+        for slot in _JSON_SLOTS:
+            os.environ[f"RAG4C_LLM_{slot}_JSON_PARSE_RETRIES"] = str(json_retries)
+        applied.append(f"RAG4C_LLM_{{judge,router_llm,metadata_filter}}_JSON_PARSE_RETRIES={json_retries}")
     return applied
 
 
@@ -82,6 +93,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="F1.2 答案层基线运行器")
     parser.add_argument("--model", default="Qwen/Qwen3.5-9B", help="上游模型名")
     parser.add_argument("--timeout", type=float, default=300.0, help="槽位超时秒数")
+    parser.add_argument(
+        "--json-retries", type=int, default=0,
+        help="JSON 槽位的解析失败重试次数（0 = 用配置默认值）。F1.2 的 v2 基线"
+             "里 13 条 entailment_unavailable 全部是 judge_parse_failed，"
+             "调高它验证降级率能否压到 0.05 以下。",
+    )
     parser.add_argument("--workers", type=int, default=2, help="并发线程数")
     parser.add_argument("--sleep-ms", type=float, default=1500.0, help="用例间隔毫秒（429 限流）")
     parser.add_argument("--limit", type=int, default=0, help="只跑前 N 条（0 = 全量）")
@@ -96,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     print("[baseline] 施加上游覆盖：")
-    for line in apply_overrides(args.model, args.timeout):
+    for line in apply_overrides(args.model, args.timeout, args.json_retries):
         print(f"  - {line}")
 
     if args.limit:
