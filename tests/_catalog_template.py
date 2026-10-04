@@ -90,3 +90,36 @@ def head_db_url(dest: Path) -> str:
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(src, dest)
     return f"sqlite:///{dest.as_posix()}"
+
+
+def upgrade_existing_sqlite_url(url: str) -> str:
+    """把「尚未创建」的 ``sqlite:///path`` URL 指向拷好的模板库，返回同一 URL。
+
+    存在的理由：47 个候选测试文件里，建库形态**不完全一致**——``url`` 那一行
+    各有各的算法（``f"sqlite:///{(tmp_path / 'catalog.db').as_posix()}"``、
+    ``"sqlite:///" + str(path)``、自定义 helper……）。若改写要求「自己算出目标
+    路径再调 :func:`head_db_url`」，就要碰各文件差异最大的那部分代码。
+
+    所以改成**只替换那一行调用**：``upgrade_catalog(url)`` →
+    ``url = upgrade_existing_sqlite_url(url)``。调用方算 url 的逻辑一行不动，
+    改动面小到能逐个 review。
+
+    Args:
+        url: 调用方刚算出的、指向**尚未创建**的 SQLite 文件的 URL。
+
+    Returns:
+        同一个 URL，但那个文件现在是已迁移到 head 的模板库副本。
+
+    Raises:
+        ValueError: url 不是 sqlite:/// 形式。静默放过会变成「拷贝没发生、
+            后面 create_engine 建出一个空库」——那种失败会出现在断言里，
+            离病因很远。这里直接拒绝。
+    """
+    prefix = "sqlite:///"
+    if not url.startswith(prefix):
+        raise ValueError(
+            f"upgrade_existing_sqlite_url 只支持 {prefix}<path>，收到 {url!r}。"
+            "其他方言不该用模板库——拷贝的是 SQLite 文件。"
+        )
+    dest = Path(url[len(prefix):])
+    return head_db_url(dest)
