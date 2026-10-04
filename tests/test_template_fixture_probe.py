@@ -34,7 +34,8 @@ def test_copies_are_isolated_from_each_other(catalog_head_template_db, tmp_path:
             n = c.execute(text("SELECT count(*) FROM accounts")).scalar()
         assert n == 0, "写进 a 的数据不该出现在 b"
     finally:
-        ea.dispose(); eb.dispose()
+        ea.dispose()
+        eb.dispose()
 
 
 def test_second_copy_is_fast(catalog_head_template_db, tmp_path: Path) -> None:

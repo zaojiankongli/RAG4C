@@ -95,10 +95,13 @@ class FakeGraphBuilder:
 
 
 def create_state(tmp_path: Path, *, include_graph: bool = True, claim_direct: bool = True):
-    from core.catalog_schema import upgrade_catalog
+    # 目录库用 session 级模板库（tests/conftest.py 的 catalog_head_template_db）：
+    # 建一次已迁移到 head 的库、各用例拷文件，实测 4.0ms/次 vs 重跑迁移 13.9s。
+    # 本文件不需要 BASELINE（不验证「从 baseline 升级到 head」的过程本身），
+    # 所以拷贝模板与重跑迁移等价。RAG4C_TEST_NO_CATALOG_TEMPLATE=1 可退回旧行为。
+    from _catalog_template import head_db_url
 
-    url = f"sqlite:///{(tmp_path / 'catalog.db').as_posix()}"
-    upgrade_catalog(url)
+    url = head_db_url(tmp_path / "catalog.db")
     engine = create_engine(url)
     with Session(engine) as session:
         session.add(Tenant(id="tenant-1", name="Tenant"))

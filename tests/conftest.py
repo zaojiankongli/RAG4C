@@ -20,8 +20,6 @@ MySQL 就该失败），只是不再把整条套件拖住。想让它们真的�
 from __future__ import annotations
 
 import os
-import shutil
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -66,41 +64,12 @@ if not os.environ.get("RAG4C_CATALOG_CONNECT_TIMEOUT_S"):
 # 开关 RAG4C_TEST_NO_CATALOG_TEMPLATE=1 可关掉这个优化（回到「每个用例重跑
 # 迁移」的旧行为），用于对照——保留它是因为「优化本身有没有引入回归」是个
 # 该能被回答的问题。
-_TEMPLATE_DIR = tempfile.mkdtemp(prefix="rag4c-catalog-template-")
-_TEMPLATE_DB = Path(_TEMPLATE_DIR) / "head.db"
-_template_ready = False
-
-
-def _build_template() -> Path:
-    """建（并缓存）已迁移到 head 的 SQLite 模板库。
-
-    刻意**不**复用 ``tests/`` 下任何 helper：那些 helper 各文件都有副本
-    （``test_catalog_schema.py`` 与 ``test_catalog_integrity.py`` 各有一份
-    ``sqlite_url``），它们随各自文件演化、语义可能已经漂移。模板库要的是
-    「一个确定的、与其他测试无关的迁移结果」，所以自己调生产 API。
-    """
-    global _template_ready
-    if _template_ready and _TEMPLATE_DB.exists():
-        return _TEMPLATE_DB
-    from core.catalog_schema import upgrade_catalog
-
-    upgrade_catalog(f"sqlite:///{_TEMPLATE_DB.as_posix()}")
-    _template_ready = True
-    return _TEMPLATE_DB
-
-
 @pytest.fixture(scope="session")
 def catalog_template_db() -> Path:
     """session 级模板库路径（只建一次）。"""
-    return _build_template()
+    from _catalog_template import template_db_path
 
-
-def _pytest_catalog_head_template_db(dest: Path) -> str:
-    """把模板库拷到 ``dest`` 并返回它的 URL。"""
-    src = _build_template()
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(src, dest)
-    return f"sqlite:///{dest.as_posix()}"
+    return template_db_path()
 
 
 @pytest.fixture
@@ -115,9 +84,14 @@ def catalog_head_template_db(tmp_path: Path):
 
     与 ``tmp_path`` 配套：拷出来的文件落在用例自己的临时目录里，用例结束即随
     ``tmp_path`` 一起清理，不会跨用例泄漏。
-    """
-    import os
 
-    if os.environ.get("RAG4C_TEST_NO_CATALOG_TEMPLATE") == "1":
-        pytest.skip("RAG4C_TEST_NO_CATALOG_TEMPLATE=1：不使用模板库优化")
-    return lambda dest: _pytest_catalog_head_template_db(dest)
+    这只是 :mod:`tests._catalog_template` 的 fixture 包装——两共用同一份模板库，
+    混用两种写法不会各建一次模板。测试文件若有自己的 ``create_state(tmp_path)``
+    之类共享 helper（拿不到 fixture），直接 import ``head_db_url`` 即可。
+    """
+    from _catalog_template import head_db_url
+
+    def _make(dest: Path) -> str:
+        return head_db_url(dest)
+
+    return _make
