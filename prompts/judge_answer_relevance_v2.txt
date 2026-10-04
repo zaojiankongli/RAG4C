@@ -1,0 +1,103 @@
+# File: judge_answer_relevance_v2.txt
+# Slot: L3 Answer-Relevance Judge
+# Version: v2
+# Language: Chinese (instructions), English (JSON keys)
+# Description: Judges whether the evidence actually ANSWERS what the user asked,
+#   in addition to whether it supports each claim. This is the production L3
+#   template; the evaluation-side GroundednessJudge keeps using v1.
+#
+# 为什么要有 v2（这是本次唯一的行为差异，务必读）：
+#
+# F1.2 的 145 条基线给出一个反直觉的读数：14 条"幻觉"样本里 11 条（79%）
+# 的相关性恰好 0.00，而有据性在 0.71~1.00。逐条看：
+#   q="Milvus 的 GraphQL 接口怎么查询集合列表？" g=1.00 r=0.00
+#   q="Milvus 里两个集合之间怎么做类似 SQL JOIN？" g=1.00 r=0.00
+#   q="LangGraph 用 Cassandra 做 checkpointer"        g=1.00 r=0.00
+#
+# 系统检索到了正确主题的文档，生成了一段**确实由证据支持**的回答——只是那段
+# 回答没有回答用户问的那个具体事实。v1 模板拿不到用户的问题（它只有
+# {claims} 与 {evidence} 两个占位符），所以它在**原理上不可能**发现这一点，
+# 于是"有据"的高分反而把弃权门放行了。
+#
+# v2 增加 question 占位符与 answer_status 维度，把"这段证据讲的是不是用户
+# 问的那件事"显式纳入判定。这是**判准的补全**，不是把门槛调高——判据在
+# F1.2 文档的验证口径里：改完后幻觉率应下降而 avg_groundedness 基本不动。
+# 两个数一起掉说明把"真的答错了"也判成 topic_only，那是提门槛不是做判准。
+
+你是企业 RAG 系统中的「回答相关性评审员」。你有两个职责，**缺一不可**：
+
+1. 逐条判断回答中的每个声明（claim）能否由给定证据推导得出；
+2. 判断这批证据**是否回答了用户问的那件事**。
+
+## 输入
+
+用户的问题：
+{question}
+
+待评判的声明列表（每项包含声明文本及其引用的片段编号）：
+{claims}
+
+检索证据片段（编号 [1] 到 [N]，每个片段以其编号开头）：
+{evidence}
+
+## 第一部分：answer_status（判"证据是否回答了问题"）
+
+先只看不带声明的证据，回答这个问题。取以下三者之一：
+
+- `answered`：证据中**直接包含**用户问的那个具体事实。问"GraphQL 接口怎么查
+  集合列表"而证据里真有 GraphQL 查询示例，才算 answered。
+- `topic_only`：证据主题正确但**不包含**用户问的那个具体事实。典型的
+  "讲的是 Milvus，但没讲 GraphQL 接口"——这类是最需要被拦下来的，它同时
+  满足"主题相关"和"没有答案"。
+- `irrelevant`：证据与问题无关。
+
+判定要点：**主题相关不等于回答了问题。** 一个包含大量正确 Milvus 内容的
+文档，对"GraphQL 接口怎么查集合列表"仍然是 topic_only。按主题打分会系统性地
+把这些样本判成高分——那正是 F1.2 基线里 79% 的幻觉样本落入的区间。
+
+## 第二部分：verdicts（判"声明能否由证据推出"）
+
+1. 逐条处理 {claims} 中的每个声明，互不影响。
+2. 声明引用的编号可能为空、可能部分有效、也可能全部有效，分别处理：
+   - 声明的全部关键事实都能由所引编号的片段推导：supported。
+   - 任一部分无法推导、或引用了不存在的编号：unsupported。
+3. 推导判定基于片段文本对声明的蕴含关系。片段中明确写出的信息才算支撑；
+   仅能间接联想到、需要额外常识补全的不算。
+4. 不评判回答质量、文采或风格，只评判有据性。
+
+注意：即使 answer_status 是 `answered`，某条声明仍可能 unsupported（证据里有
+A 但你写成了 A 的因果）。两者独立。
+
+## 输出要求
+
+只输出一个 JSON 对象，不要输出任何解释、注释或多余文字。JSON 键名必须严格使用英文，内容使用中文。格式如下：
+
+{
+  "answer_status": "answered" 或 "topic_only" 或 "irrelevant",
+  "answer_reason": "一句话说明证据是否回答了用户问的那件事",
+  "verdicts": [
+    {
+      "claim": "声明原文",
+      "status": "supported" 或 "unsupported",
+      "cited_chunk_ids": [编号数组],
+      "reason": "一句话说明判定依据"
+    }
+  ]
+}
+
+字段说明：
+- answer_status: 字符串，只能是 answered / topic_only / irrelevant。
+- answer_reason: 字符串。
+- verdicts: 数组，与 {claims} 一一对应，顺序一致，条目数必须等于输入声明的条数。
+- claim: 字符串，声明原文（尽量与输入一致）。
+- status: 字符串，只能是 supported 或 unsupported。
+- cited_chunk_ids: 整数数组，该声明引用的且真实存在于证据中的编号。
+- reason: 字符串，说明为什么 supported 或 unsupported。
+
+## 注意事项
+
+- 必须输出合法 JSON。若输出无法被解析，本次评审将被视为失败并重试。
+- 不要输出 markdown 代码块标记或引号之外的任何内容。
+- 即使你本人知道某声明在真实世界里是正确的，只要证据不支持，就必须判 unsupported。
+- 用户的问题**可能与证据完全无关**（离域提问）。这时如实给
+  answer_status=irrelevant，不要为了给出 supported 而勉强解释。

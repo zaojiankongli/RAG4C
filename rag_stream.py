@@ -556,7 +556,11 @@ def _stream_generate_verify(
     _notify_observer(observer, "start_node", "verify", attempt=attempt, repeatable=True)
     try:
         yield {"type": "phase", "phase": "verifying"}
-        verification = comp["verifier"].verify(generated.answer, chunks)
+        # question 传给 L3：v2 模板据此判「证据是否回答了用户问的那件事」
+        # （v1 模板不含该占位符，传入无害）。见 F1.2 基线的 79% 幻觉样本。
+        verification = comp["verifier"].verify(
+            generated.answer, chunks, question=query
+        )
     except GeneratorExit:
         _notify_observer(
             observer,

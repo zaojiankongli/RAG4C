@@ -52,7 +52,9 @@ def generate_and_verify(
     verifier: CitationVerifier = comp["verifier"]
     try:
         generated = generator.generate(query, chunks)
-        verification = verifier.verify(generated.answer, chunks)
+        # question 传给 L3：v2 模板据此判「证据是否回答了用户问的那件事」
+        # （v1 模板不含该占位符，传入无害）。见 F1.2 基线的 79% 幻觉样本。
+        verification = verifier.verify(generated.answer, chunks, question=query)
         return generated, verification
     except Exception as exc:  # noqa: BLE001 - 编排层兜底：失败按弃权处理
         return None, VerificationResult(notes=[f"生成或验证失败: {exc}"])

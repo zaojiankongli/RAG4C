@@ -49,8 +49,17 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 _logger = get_logger(__name__)
 
-# 默认 groundedness 评审模板（相对项目根）
-_DEFAULT_TEMPLATE = "prompts/judge_groundedness_v1.txt"
+#: L3 蕴含判定的默认模板（相对项目根）。
+#:
+#: **为什么生产侧用 v2 而评测侧仍用 v1**：v1 拿不到用户的问题（只有 {claims}
+#: 与 {evidence}），因此它在原理上判不出"证据主题相关但不回答问题"——F1.2
+#: 基线里 79% 的幻觉样本正是这一类，v1 给它们 groundedness 0.71~1.00，
+#: 反而把弃权门放行了。v2 加了 {question} 与 answer_status 维度。
+#:
+#: 评测侧（``eval/judges.py``）**刻意不跟着换**：F1.2 的基线数字是按 v1 口径
+#: 测的，换了模板基线就失去可比性。两边分开正是为了让"生产行为"与"评测口径"
+#: 各自可独立演进——计划要求"提示词行为性修改必须升版本"也是这个意思。
+_DEFAULT_TEMPLATE = "prompts/judge_answer_relevance_v2.txt"
 
 # 事后指派的最低余弦相似度（任务书 6.3）
 _POSTHOC_MIN_SIMILARITY = 0.5
@@ -63,6 +72,31 @@ _VERDICT_SCORES: dict[str, float] = {
     "supported": 1.0,
     "unsupported": 0.0,
     "neutral": 0.5,
+}
+
+#: v2 模板给出的"证据是否回答了用户问的那件事"。
+_ANSWER_STATUSES: tuple[str, ...] = ("answered", "topic_only", "irrelevant")
+
+#: answer_status -> 蕴含分数。设计口径（这是本次改动的关键取舍）：
+#:
+#: ``topic_only`` 给 0.3 而不是 0.0，是刻意的——**它要和
+#: ``unsupported``(0.0) 区分开**。两者都低于默认阈值 0.6、都会导致弃权，
+#: 但语义不同：unsupported 是"答案里写了证据不支持的话"（危险，引用要标红），
+#: topic_only 是"答案的每句话都有据，但整段没回答问题"（安全，只是没用）。
+#: 分数上留出 0.3 的差距，是为了让引用状态与 entailment_scores 保留可区分的
+#: 信息——若都给 0.0，事后分析时分不出"说错了"和"答非所问"这两类失败。
+#:
+#: ``irrelevant`` 给 0.0：证据和问题完全无关（离域），这时作答本身就是错的。
+_ANSWER_STATUS_SCORES: dict[str, float] = {
+    "answered": 1.0,
+    "topic_only": 0.3,
+    "irrelevant": 0.0,
+}
+
+#: answer_status -> 人类可读的标签（写进 notes / 引用原因，便于事后读日志）。
+_ANSWER_STATUS_LABELS: dict[str, str] = {
+    "topic_only": "主题相关但不包含用户问的那个事实",
+    "irrelevant": "与问题无关",
 }
 
 # 允许的蕴含判定模式
@@ -169,7 +203,8 @@ class CitationVerifier:
         judge_llm: judge 槽位 LLM 客户端（``chat_json`` 契约）。
         embedder: 嵌入服务（提供时才启用事后引用指派，任务书 6.3）。
         groundedness_template: L3 模板路径；None 使用默认模板
-            ``prompts/judge_groundedness_v1.txt``（懒加载）。
+            ``prompts/judge_answer_relevance_v2.txt``（懒加载，含 answer_status
+            维度）。要退回旧口径显式传 ``judge_groundedness_v1.txt``。
         entailment_mode: "llm"（judge_llm 评审）| "nli"（预留，抛出
             :class:`NliNotImplemented`）| "skip"（跳过 L3）。
         strict: True 全量评审；False 按 ``sample_ratio`` 确定性抽样。
@@ -209,6 +244,7 @@ class CitationVerifier:
         answer: str,
         evidence_chunks: list[RetrievedChunk],
         strict: bool | None = None,
+        question: str = "",
     ) -> VerificationResult:
         """执行三层引用验证。
 
@@ -216,6 +252,10 @@ class CitationVerifier:
             answer: 模型生成的答案文本（可含 [N] 引用标记）。
             evidence_chunks: 本次检索证据（按 chunk_id 去重后作为编号基准）。
             strict: 覆盖实例级 strict 设置（None 用实例默认）。
+            question: 用户原始问题。**v2 模板用它判"证据是否回答了问题"**——
+                这是 F1.2 基线里 79% 幻觉样本漏网的那一维（详见
+                ``prompts/judge_answer_relevance_v2.txt`` 头部注释）。
+                v1 模板不含 ``{question}`` 占位符，传入无害（旧行为不变）。
 
         Returns:
             :class:`VerificationResult`。任何外部服务异常都被捕获降级，
@@ -268,6 +308,7 @@ class CitationVerifier:
                 effective_strict,
                 entailment_scores,
                 notes,
+                question,
             )
 
         missing_evidence = any(not claim_citations.get(c) for c in claims)
@@ -466,6 +507,7 @@ class CitationVerifier:
         strict: bool,
         entailment_scores: dict[str, float],
         notes: list[str],
+        question: str = "",
     ) -> bool:
         """L3 蕴含判定入口：按模式分发（llm / nli / skip），分层控成本。
 
@@ -499,8 +541,9 @@ class CitationVerifier:
                 self._index_of_chunk(cit.chunk_id, evidence)
             )
         claims_to_judge = list(claim_to_ids.items())
+        capped_evidence = evidence[:MAX_EVIDENCE_CHUNKS]
         try:
-            verdicts = self._judge_claims(claims_to_judge, evidence)
+            verdicts, answer_status = self._judge_claims(claims_to_judge, evidence, question)
         except Exception as exc:  # noqa: BLE001 - 见下方说明
             # 这里刻意捕获 Exception 而非只捕 LLMError/ParseFallbackError。
             # _judge_claims 的输入是模型自由文本，失败面远不止"调用出错"：
@@ -508,7 +551,16 @@ class CitationVerifier:
             # KeyError。这些从前会穿透验证层，把**已经生成好的答案整个丢弃**并
             # 触发二轮重算——双倍计费，零输出。验证层的职责是给答案打标，
             # 它自己坏掉不该成为拒答的理由。
-            notes.append(f"L3 判定失败（降级：蕴含不可用，本轮不参与弃权判定）: {exc}")
+            #
+            # 诊断信息（异常类型 / 声明数 / 证据数）必须进 notes：F1.2 基线里 9 条
+            # entailment_unavailable 只能看到"失败了"这个分类、看不到原因，
+            # 排查时只能靠猜。这里把形状记下来，下一轮基线就能直接读出是
+            # "返回体对不上"还是"模板读不到"还是"JSON 解析失败"。
+            notes.append(
+                f"L3 判定失败（降级：蕴含不可用，本轮不参与弃权判定）: {exc}"
+                f" [声明 {len(claims_to_judge)} 条 / 证据 {len(capped_evidence)} 条]"
+                f" [异常 {type(exc).__name__}]"
+            )
             for cit in candidates:
                 if cit.status == "ok":
                     # 引用状态照常降级——"没能确认"确实弱于"已确认"。
@@ -526,6 +578,29 @@ class CitationVerifier:
                 if cit.claim == claim and cit.status == "ok":
                     cit.status = "unsupported"
                     cit.reason = "L3 蕴含校验不支撑"
+        # answer_status（v2）：把"证据讲的不是用户问的那件事"这一维压到
+        # 逐条声明的分数之下。取**最小值**而不是覆盖——answered 时不改分，
+        # topic_only/irrelevant 时无论逐条声明多 supported 都拉到对应档。
+        #
+        # 用 min 而不是"整体覆盖成 0.3"的原因：entailment_scores 是按声明
+        # 存进 VerificationResult 的，调用方（弃权门）按 min 聚合。逐条保留
+        # supported 的高分、只在整体上压低，事后分析时仍能看出"每条声明本来
+        # 都被判为有据，是主题相关性把它们拦下的"。
+        if answer_status and answer_status != "answered":
+            cap = _ANSWER_STATUS_SCORES.get(answer_status, 0.0)
+            for claim in entailment_scores:
+                entailment_scores[claim] = min(entailment_scores[claim], cap)
+            notes.append(
+                f"L3 判定：证据{_ANSWER_STATUS_LABELS.get(answer_status, answer_status)}"
+                f"，逐条声明分数已压到 <= {cap}"
+            )
+            # 引用状态同步降级但**不标 unsupported**：这不是"说错了"，
+            # 是"没用"。理由见 _ANSWER_STATUS_SCORES 的注释。
+            label = _ANSWER_STATUS_LABELS.get(answer_status, answer_status)
+            for cit in candidates:
+                if cit.status == "ok":
+                    cit.status = "exists_only"
+                    cit.reason = f"L3：{label}"
         trace = current_trace()
         if trace is not None:
             trace.add_span("verify_l3", (time.perf_counter() - t0) * 1000.0)
@@ -535,12 +610,21 @@ class CitationVerifier:
         self,
         claims_to_judge: list[tuple[str, list[int]]],
         evidence: list[RetrievedChunk],
-    ) -> dict[str, str]:
-        """调 judge_llm 对声明逐条评审，返回 {声明: verdict}。
+        question: str = "",
+    ) -> tuple[dict[str, str], str]:
+        """调 judge_llm 对声明逐条评审，返回 ``({声明: verdict}, answer_status)``。
 
         verdict 取 ``supported`` / ``unsupported`` / ``neutral``。
         按模板约定 verdicts 与输入声明一一对应（索引兜底），
         再按声明文本精确匹配优先。
+
+        ``answer_status`` 是 v2 模板新增的字段（``answered`` / ``topic_only`` /
+        ``irrelevant``），用来表达"证据是否回答了用户问的那件事"。v1 模板没有它，
+        此时返回 ``""``（调用方据此跳过该维度，不当成 answered）。
+
+        Args:
+            question: 用户原始问题。v2 模板用它判 answer_status；v1 模板不含
+                ``{question}`` 占位符，替换是无害的（找不到就原样保留）。
         """
         template = self._load_template()
         claims_block = "\n".join(
@@ -556,12 +640,20 @@ class CitationVerifier:
             f"[{i}] {_truncate(rc.chunk.text, _MAX_EVIDENCE_CHARS)}"
             for i, rc in enumerate(capped, 1)
         )
+        # 问题里的花括号不能破坏 replace：str.replace 不会递归展开，所以直接
+        # 用它替换是安全的；但要把空问题显式写成一行提示——v2 模板要求裁判在
+        # 问题为空时按"无从判断"处理，而不是拿证据凑一个 answer_status。
+        question_block = question.strip() or "（调用方未提供用户问题）"
         prompt = (
-            template.replace("{claims}", claims_block).replace("{evidence}", evidence_block)
+            template.replace("{claims}", claims_block)
+            .replace("{evidence}", evidence_block)
+            .replace("{question}", question_block)
         )
         messages = [{"role": "user", "content": prompt}]
         schema_hint = (
-            '{"verdicts":[{"claim":"string","status":"supported|unsupported",'
+            '{"answer_status":"answered|topic_only|irrelevant",'
+            '"answer_reason":"string",'
+            '"verdicts":[{"claim":"string","status":"supported|unsupported",'
             '"cited_chunk_ids":[],"reason":"string"}]}'
         )
         data = self.judge_llm.chat_json(messages, schema_hint=schema_hint)
@@ -595,7 +687,13 @@ class CitationVerifier:
             raise ValueError(
                 f"judge 返回体不含任何可用判定（{len(raw_verdicts)} 条原始条目）"
             )
-        return out
+        # answer_status 缺失或非法一律当 ""（= 不启用该维度），**绝不当 answered**。
+        # 理由与上面那段 fail-open 注释同源：把"没给"读成"通过"是同一类错误。
+        raw_status = (data or {}).get("answer_status")
+        answer_status = (
+            str(raw_status) if raw_status in _ANSWER_STATUSES else ""
+        )
+        return out, answer_status
 
     # ------------------------------------------------------------------ #
     # 内部工具
