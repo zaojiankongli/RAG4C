@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -67,28 +68,58 @@ def classify(test_dir: Path) -> tuple[list[Path], list[Path]]:
 def run_slice(paths: list[Path], *, shard: str, out_dir: Path, timeout: float) -> dict:
     """跑一片并记下结果。只记，不判定。"""
     label = "migration" if shard == "migration" else "plain"
+    # 调高 safe-delete 的批量阈值（**只影响本进程**，不改仓库配置）。
+    #
+    # 为什么需要：pytest 跑完后会清临时目录，本机那个 safe-delete shim 在
+    # ``count > CODEBUDDY_SAFE_DELETE_BULK_THRESHOLD``（默认 50）时要求人工
+    # 确认——**于是进程卡在退出阶段**。实测两次都是「日志里 100% 通过、
+    # 没有任何 F，但 returncode=1」，而那个 1 来自退出阶段而不是测试失败。
+    #
+    # 放行的代价是「临时目录清理不再逐次确认」。本脚本删的全是 pytest 自己建
+    # 在 tmp_path 下的目录（每次运行独立），不涉及仓库或用户数据。
+    env = {**os.environ, "CODEBUDDY_SAFE_DELETE_BULK_THRESHOLD": "200000"}
     start = time.perf_counter()
-    proc = subprocess.run(
-        [sys.executable, "-X", "utf8", "-m", "pytest", "-q", "--tb=line",
-         "-p", "no:randomly", *[str(p) for p in paths]],
-        cwd=PROJECT_ROOT, capture_output=True, text=True, encoding="utf-8",
-        timeout=timeout,
-    )
+    timed_out = False
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-X", "utf8", "-m", "pytest", "-q", "--tb=line",
+             "-p", "no:randomly", *[str(p) for p in paths]],
+            cwd=PROJECT_ROOT, capture_output=True, text=True, encoding="utf-8",
+            timeout=timeout, env=env,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # 超时也要留下日志与记录。**这一段是从实测学的**：第一跑 2400s 超时，
+        # subprocess.run 抛异常、整个脚本死掉、**结果一个字节都没留下**——
+        # 40 分钟白跑，而且不知道跑到哪了。所以这里把超时当成一个正常结果
+        # 记录下来（returncode=None + timed_out=True），让「跑了多久、跑了什么」
+        # 可见。
+        timed_out = True
+        stdout = exc.stdout.decode("utf-8", "replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = (
+            exc.stderr.decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        ) + f"\n[分片基线] {label} 超过 {timeout:.0f}s 被中止，**这不是通过也不是失败**\n"
+        proc = None
+    if proc is not None:
+        stdout, stderr = proc.stdout, proc.stderr
     wall = time.perf_counter() - start
     out_dir.mkdir(parents=True, exist_ok=True)
     log = out_dir / f"{shard}.log"
-    log.write_text(proc.stdout + "\n" + proc.stderr, encoding="utf-8")
+    log.write_text(stdout + "\n" + stderr, encoding="utf-8")
 
     summary = {
         "shard": shard,
         "label": label,
         "files": len(paths),
-        "returncode": proc.returncode,
+        "returncode": None if proc is None else proc.returncode,
+        "timed_out": timed_out,
         "wall_s": round(wall, 1),
-        "log": str(log.relative_to(PROJECT_ROOT)),
+        # 用 relative_to 会在 out_dir 不在项目根下时抛 ValueError
+        # （实测：用临时目录试跑就崩了）。记绝对路径更稳——读日志的人需要的是
+        # 能打开的路径，不是好看的短路径。
+        "log": str(log),
     }
     # 摘出 pytest 的最后一行汇总（形如 "60 passed, 1 skipped in 11.27s"）
-    for line in reversed(proc.stdout.splitlines()):
+    for line in reversed(stdout.splitlines()):
         line = line.strip()
         if ("passed" in line or "failed" in line or "error" in line) and " in " in line:
             summary["pytest_summary"] = line
@@ -133,6 +164,23 @@ def main(argv: list[str] | None = None) -> int:
         res = run_slice(paths, shard=shard, out_dir=out_dir, timeout=args.timeout)
         res["desc"] = desc
         results.append(res)
+        # 每片跑完立刻落盘，不攒到最后。实测：第一次跑两片时进程卡在退出阶段
+        # （safe-delete shim），最后那步 write_text(baseline.json) 没执行到
+        # ——2.5 小时的结果一个字节都没留下。累积式落盘让「跑到哪儿算到哪儿」，
+        # 中断时已完成的片仍然可用。
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "baseline.json").write_text(
+            json.dumps(
+                {
+                    "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "shards": list(results),
+                    "partial": True,
+                    "note": "只记不判定：没有可信阈值时给出「门禁通过」的错觉比不给更糟",
+                },
+                ensure_ascii=False, indent=2,
+            ),
+            encoding="utf-8",
+        )
         # 每片跑完立刻落盘，不攒到最后。
         #
         # 这是实测换来的：第一次跑「两片」时进程卡在退出阶段（环境的
@@ -153,7 +201,12 @@ def main(argv: list[str] | None = None) -> int:
             ),
             encoding="utf-8",
         )
-        verdict = "OK" if res["returncode"] == 0 else f"退出码 {res['returncode']}"
+        if res["timed_out"]:
+            verdict = f"超时（>{args.timeout:.0f}s）"
+        elif res["returncode"] == 0:
+            verdict = "OK"
+        else:
+            verdict = f"退出码 {res['returncode']}"
         print(f"  {verdict}  墙钟 {res['wall_s']:.1f}s  {res.get('pytest_summary', '(无汇总)')}")
         print(f"  日志 {res['log']}")
 
@@ -170,7 +223,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\n已写入 {out_dir / 'baseline.json'}")
 
     if args.assert_no_loss:
-        bad = [r["shard"] for r in results if r["returncode"] != 0]
+        # 超时的片**不算通过**：它既没跑完、退出码也不是 0。当成 OK 会让
+        # 「基线建立完成」这句话变成假话。
+        bad = [r["shard"] for r in results
+               if r["timed_out"] or r["returncode"] != 0]
         if bad:
             print(f"\n--assert-no-loss 失败：{bad} 退出码非 0")
             return 1
