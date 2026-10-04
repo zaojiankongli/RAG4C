@@ -873,7 +873,17 @@ def list_report_history(
     history_dir: str | Path = "eval/reports",
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """列出历史报告（按修改时间倒序），含关键指标摘要。
+    """列出历史报告（按时间倒序），含关键指标摘要。
+
+    排序用**文件名**而不是 ``st_mtime``：``save_report_history`` 的文件名是
+    ``report-<generated_at>-<毫秒>.json``，本就带毫秒后缀，字典序即时间序；
+    而 ``st_mtime`` 在文件系统精度不足时（同秒写两份）会**相同**，此时
+    ``sorted`` 退化成保持 glob 的字典序，于是"最新在前"的承诺不成立
+    ——``test_list_is_newest_first`` 在同秒写两份时就会偶发失败（实测
+    235 passed / 1 failed，可复现）。
+
+    文件名的毫秒后缀本来就是为"同秒多份不覆盖"加的，用它排序比用 mtime 更
+    可靠，也不额外依赖文件系统的 mtime 精度。
 
     Returns:
         ``[{"path", "generated_at", "dataset_spec", "metrics": {...}}, ...]``
@@ -882,7 +892,7 @@ def list_report_history(
     if not directory.is_dir():
         return []
     entries: list[dict[str, Any]] = []
-    for p in sorted(directory.glob("report-*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
+    for p in sorted(directory.glob("report-*.json"), reverse=True):
         try:
             report = load_report(p)
             entries.append(
