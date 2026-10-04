@@ -2582,11 +2582,14 @@ STAGE22_TARGET_REVISION = "0032_enterprise_notification_center"
 def test_stage22_notification_center_preflight_is_read_only_and_reports_five_tables(
     tool, tmp_path: Path
 ) -> None:
-    from core.catalog_schema import upgrade_catalog
     from sqlalchemy import create_engine, inspect
+    # 目录库用 session 级模板库（tests/_catalog_template.py）：建一次已迁移到
+    # head 的 SQLite、各用例拷文件，实测 4.0ms/次 vs 重跑迁移 13.9s（3432x）。
+    # 本文件不需要某个特定 revision（不验证「从某 revision 升到 head」的
+    # 过程本身），所以拷模板与重跑迁移等价。
+    from _catalog_template import head_db_url
 
-    url = f"sqlite:///{(tmp_path / 'stage22-notification-preflight.db').as_posix()}"
-    upgrade_catalog(url)
+    url = head_db_url(tmp_path / "stage22-notification-preflight.db")
     engine = create_engine(url)
     try:
         tables = set(inspect(engine).get_table_names())

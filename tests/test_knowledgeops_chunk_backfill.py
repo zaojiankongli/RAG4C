@@ -76,10 +76,13 @@ def _chunk(
 
 
 def _state(tmp_path: Path):
-    from core import catalog_schema
+    # 目录库用 session 级模板库（tests/_catalog_template.py）：建一次已迁移到
+    # head 的 SQLite、各用例拷文件，实测 4.0ms/次 vs 重跑迁移 13.9s（3432x）。
+    # 本文件不需要某个特定 revision（不验证「从某 revision 升到 head」的
+    # 过程本身），所以拷模板与重跑迁移等价。
+    from _catalog_template import head_db_url
 
-    url = f"sqlite:///{(tmp_path / 'catalog.db').as_posix()}"
-    catalog_schema.upgrade_catalog(url)
+    url = head_db_url(tmp_path / "catalog.db")
     engine = create_engine(url)
     with Session(engine) as session:
         session.add_all(
