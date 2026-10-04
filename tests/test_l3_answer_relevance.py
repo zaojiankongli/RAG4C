@@ -343,13 +343,6 @@ def test_default_template_is_v2_and_eval_side_keeps_v1() -> None:
 
 
 def test_eval_harness_uses_its_own_judges_not_the_production_verifier() -> None:
-    """评测器必须走 :class:`GroundednessJudge`，不能被生产侧的 v2 顺带改掉。
-
-    这条比上一条更靠后一层：上一条只保证 ``GroundednessJudge`` 的默认模板没变，
-    但评测器万一哪天改成直接复用生产的 ``CitationVerifier``，v2 就会从
-    另一条路渗进评测口径——而 F1.2 的六个数正是按 v1 测的，渗进来就失去
-    可比性且没人会察觉（数字只是"变得好看了一点"）。
-    """
     import inspect
 
     import eval.run_eval as run_eval
@@ -360,3 +353,26 @@ def test_eval_harness_uses_its_own_judges_not_the_production_verifier() -> None:
         "评测器不应直接复用生产的 CitationVerifier——它现在用 v2 模板，"
         "会让 F1.2 基线口径被悄悄改掉"
     )
+
+
+def test_verify_signature_accepts_question_without_breaking_old_callers() -> None:
+    """``CitationVerifier.verify`` 新增 ``question`` 形参，但必须**可选**。
+
+    这一条是被真实回归教出来的：加上 ``question`` 之后，7 条
+    ``test_stream_observability`` 用例当场红了——它们��桩是
+    ``def verify(self, answer, chunks)``，收到 ``question=`` 关键字就抛
+    ``TypeError``，而那个 TypeError 被编排层当成"验证失败"吞掉，于是症状
+    变成"事件序列不对"，与真正的病因隔了三层。
+
+    所以契约是：``question`` 有默认值、位置在 ``strict`` 之后，旧的
+    ``verify(answer, chunks)`` 与 ``verify(answer, chunks, strict)`` 两种
+    调法都必须还能工作。
+    """
+    import inspect
+
+    sig = inspect.signature(CitationVerifier.verify)
+    assert "question" in sig.parameters, "verify 必须接受 question"
+    assert sig.parameters["question"].default == "", (
+        "question 必须可选——测试桩与外部调用方都按旧签名实现"
+    )
+    assert sig.parameters["strict"].default is None

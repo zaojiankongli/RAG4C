@@ -668,8 +668,9 @@ class _StreamVerifier:
         self.outcomes = list(outcomes)
         self.attempt = 0
 
-    def verify(self, answer, chunks):
-        del answer, chunks
+    def verify(self, answer, chunks, strict=None, question=""):
+        # question/strict 是 CitationVerifier 的既有契约参数，桩必须一并接受
+        del answer, chunks, strict, question
         outcome = self.outcomes[min(self.attempt, len(self.outcomes) - 1)]
         self.attempt += 1
         if isinstance(outcome, BaseException):
