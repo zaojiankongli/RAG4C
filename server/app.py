@@ -650,7 +650,6 @@ def _prewarm_router() -> None:
         _logger.debug("意图路由预热失败（不影响启动）：%s", exc)
 
 
-@asynccontextmanager
 def _preflight_catalog(settings) -> None:
     """启动前探活目录库，让连接失败在**这里**说清楚。
 
@@ -696,6 +695,7 @@ def _preflight_catalog(settings) -> None:
         sock.close()
 
 
+@asynccontextmanager
 async def lifespan(application: FastAPI):
     """启动：代次预热 + 指标持久化线程；关闭：停止线程并落盘最后一份快照。"""
     global _query_slots

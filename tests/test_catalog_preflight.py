@@ -116,3 +116,30 @@ def test_default_port_is_used_when_url_omits_it() -> None:
     finally:
         _socket.socket = orig
     assert seen["addr"] == ("db.internal", 3306)
+
+
+def test_lifespan_keeps_its_asynccontextmanager_decorator() -> None:
+    """``lifespan`` 必须仍是 async context manager。
+
+    这个测试的存在是因为真出过这个 bug：把 ``_preflight_catalog`` 插进
+    ``server/app.py`` 时，``@asynccontextmanager`` 被留在了**新函数**上面，
+    于是 ``lifespan`` 变成裸 async generator、FastAPI 拿不到 context
+    manager。表现是 ``'async_generator' object does not support the
+    asynchronous context manager protocol``——只在真正启动服务时炸，
+    而探活自己静默失效（它当时根本不会被调用）。
+
+    顺带钉住 ``_preflight_catalog`` **不能**有那个装饰器：它返回 None，
+    被 ``@asynccontextmanager`` 包成 async generator 之后调用方不会执行它。
+    """
+    import inspect
+
+    from server import app as server_app
+
+    assert hasattr(server_app.lifespan, "__wrapped__"), (
+        "lifespan 必须带 @asynccontextmanager（async context manager 才有 __wrapped__）"
+    )
+    assert inspect.isasyncgenfunction(server_app._preflight_catalog) is False, (
+        "_preflight_catalog 是普通函数，被 @asynccontextmanager 包成 async generator "
+        "之后调用方不会执行它——探活会静默失效"
+    )
+    assert inspect.iscoroutinefunction(server_app._preflight_catalog) is False
