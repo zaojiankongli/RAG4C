@@ -133,6 +133,26 @@ def main(argv: list[str] | None = None) -> int:
         res = run_slice(paths, shard=shard, out_dir=out_dir, timeout=args.timeout)
         res["desc"] = desc
         results.append(res)
+        # 每片跑完立刻落盘，不攒到最后。
+        #
+        # 这是实测换来的：第一次跑「两片」时进程卡在退出阶段（环境的
+        # safe-delete shim 拦下 pytest 清理临时目录），最后那一步
+        # ``write_text(baseline.json)`` 没执行到——**2.5 小时的结果一个字节
+        # 都没留下**。日志是有的（run_slice 里写了），只是汇总没写。
+        # 累积式落盘让「跑到哪儿算到哪儿」，也让中断时已完成的片仍然可用。
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "baseline.json").write_text(
+            json.dumps(
+                {
+                    "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "shards": list(results),
+                    "partial": True,   # 标记「可能还有片没跑完」
+                    "note": "只记不判定：没有可信阈值时给出「门禁通过」的错觉比不给更糟",
+                },
+                ensure_ascii=False, indent=2,
+            ),
+            encoding="utf-8",
+        )
         verdict = "OK" if res["returncode"] == 0 else f"退出码 {res['returncode']}"
         print(f"  {verdict}  墙钟 {res['wall_s']:.1f}s  {res.get('pytest_summary', '(无汇总)')}")
         print(f"  日志 {res['log']}")
@@ -141,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
     payload = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "shards": results,
+        "partial": False,   # 全部跑完
         "note": "只记不判定：没有可信阈值时给出「门禁通过」的错觉比不给更糟",
     }
     (out_dir / "baseline.json").write_text(
