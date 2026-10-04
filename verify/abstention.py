@@ -62,6 +62,7 @@ class AbstentionGate:
         *,
         retrieval_scores_comparable: bool = True,
         dense_cosines: list[float] | None = None,
+        answer_status: str = "",
     ) -> tuple[bool, str]:
         """做出弃权决策。
 
@@ -69,9 +70,10 @@ class AbstentionGate:
         1. 无检索结果 -> 弃权（"无检索结果"）；
         2. 最高检索分数低于阈值 -> 弃权（"知识库无相关内容"）；
            分数不可比时改看稠密余弦（若有），低于余弦阈值同样弃权；
-        3. 提供了蕴含分数且（为空或最高分低于阈值）-> 弃权
+        3. ``answer_status`` 判为 ``topic_only`` / ``irrelevant`` -> 弃权；
+        4. 提供了蕴含分数且（为空或最高分低于阈值）-> 弃权
            （"证据不足以支撑可靠声明"）；
-        4. 其余情况 -> 不弃权（(False, "")）。
+        5. 其余情况 -> 不弃权（(False, "")）。
 
         Args:
             retrieval_scores: 本次检索的分数列表（可为空）。
@@ -85,6 +87,11 @@ class AbstentionGate:
                 ``retrieval_scores_comparable=False`` 时参与判定——它存在的
                 意义就是补上那种情况下缺失的那把尺子。为 None 表示这一路
                 信号本次也没有（调用方没索取，或索取了但库里没回传）。
+            answer_status: L3 v2 给出的整段判定（见
+                :attr:`VerificationResult.answer_status`）。**它必须独立成一路**：
+                第 4 步对逐条分数取 ``max``，而 F1.2 那批幻觉样本的形态是
+                "5 条声明里 4 条 supported + 整段答非所问"——把主题相关性混进
+                逐条分数里，``max`` 仍是 1.0，门照样放行（实测确认）。
 
         Returns:
             (是否弃权, 弃权原因)；不弃权时原因为空串。
@@ -135,6 +142,12 @@ class AbstentionGate:
             # 也不能拿 RRF 分去比 dense_cosine_threshold。
             if max(dense_cosines) < self.dense_cosine_threshold:
                 return True, "知识库无相关内容"
+        if answer_status in ("topic_only", "irrelevant"):
+            return True, (
+                "证据主题相关但不包含所问事实"
+                if answer_status == "topic_only"
+                else "证据与问题无关"
+            )
         if entailment_scores is not None:
             if not entailment_scores or max(entailment_scores) < self.entailment_threshold:
                 return True, "证据不足以支撑可靠声明"

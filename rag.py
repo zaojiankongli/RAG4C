@@ -434,6 +434,10 @@ def _answer_sequential(
                 entailment_scores,
                 retrieval_scores_comparable=scores_comparable,
                 dense_cosines=dense_cosines,
+                # L3 v2 的整段判定必须单独一路传：门对逐条分数取 max，而
+                # "5 条声明 4 条 supported + 整段答非所问"那种形态混不进去
+                # （实测 max 仍是 1.0、照样放行）。见 F1.2 基线的 79% 幻觉样本。
+                answer_status=verification.answer_status,
             )
         if abstain:
             traces.append(f"弃权: {reason}")

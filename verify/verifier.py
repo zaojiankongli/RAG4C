@@ -157,6 +157,15 @@ class VerificationResult:
     notes: list[str] = field(default_factory=list)
     entailment_scores: dict[str, float] = field(default_factory=dict)
     entailment_evaluated: bool = False
+    #: L3 v2 给出的"证据是否回答了用户问的那件事"：``answered`` /
+    #: ``topic_only`` / ``irrelevant``；``""`` = v1 模板或模型没给（不参与判定）。
+    #:
+    #: **为什么它必须独立于 entailment_scores，而不是混进去当一条声明的分数**：
+    #: 弃权门对逐条分数取 ``max``（见 :meth:`AbstentionGate.decide`），而 F1.2
+    #: 那批样本的形态是"5 条声明里 4 条 supported(1.0) + 整段答非所问"。把
+    #: topic_only 压成某一条的 0.3，``max`` 仍是 1.0，门照样放行——实测确认过。
+    #: 主题相关性是**整段**的属性，不该参与逐条聚合；它得自己一路进门的判定。
+    answer_status: str = ""
 
     def gate_entailment_scores(self) -> list[float] | None:
         """按弃权门的契约给出蕴含分数：L3 没跑就是 ``None``（不参与判定）。
@@ -265,6 +274,9 @@ class CitationVerifier:
         effective_strict = self.strict if strict is None else strict
         notes: list[str] = []
         entailment_scores: dict[str, float] = {}
+        # answer_status 用单元素 list 当出参：_l3_entailment 的返回类型是 bool
+        # （True = "L3 真做了判定"，语义不能改），多返回一个值就得改签名。
+        answer_status_box: list[str] = []
 
         # 证据按 chunk_id 去重（保持出现顺序），作为 1 基编号基准
         evidence = self._dedupe_evidence(evidence_chunks)
@@ -309,6 +321,7 @@ class CitationVerifier:
                 entailment_scores,
                 notes,
                 question,
+                answer_status_box,
             )
 
         missing_evidence = any(not claim_citations.get(c) for c in claims)
@@ -352,6 +365,7 @@ class CitationVerifier:
             notes=notes,
             entailment_scores=entailment_scores,
             entailment_evaluated=entailment_evaluated,
+            answer_status=answer_status_box[0] if answer_status_box else "",
         )
 
     # ------------------------------------------------------------------ #
@@ -508,6 +522,7 @@ class CitationVerifier:
         entailment_scores: dict[str, float],
         notes: list[str],
         question: str = "",
+        answer_status_out: list[str] | None = None,
     ) -> bool:
         """L3 蕴含判定入口：按模式分发（llm / nli / skip），分层控成本。
 
@@ -586,6 +601,8 @@ class CitationVerifier:
         # 存进 VerificationResult 的，调用方（弃权门）按 min 聚合。逐条保留
         # supported 的高分、只在整体上压低，事后分析时仍能看出"每条声明本来
         # 都被判为有据，是主题相关性把它们拦下的"。
+        if answer_status_out is not None and answer_status:
+            answer_status_out.append(answer_status)
         if answer_status and answer_status != "answered":
             cap = _ANSWER_STATUS_SCORES.get(answer_status, 0.0)
             for claim in entailment_scores:

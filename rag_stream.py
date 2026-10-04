@@ -441,6 +441,9 @@ def _answer_stream_inner(
                 entailment_scores,
                 retrieval_scores_comparable=scores_comparable,
                 dense_cosines=dense_cosines,
+                # 同 rag.py：answer_status 必须单独一路传，门对逐条分数取 max，
+                # 混不进去。见 F1.2 基线的 79% 幻觉样本。
+                answer_status=verification.answer_status,
             )
         _notify_observer(
             observer,
