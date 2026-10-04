@@ -206,6 +206,48 @@ def test_healthy_case_records_no_judge_failures() -> None:
     assert report.cases[0].judge_failures == []
 
 
+def test_notes_carry_pipeline_diagnostics_not_just_gold_notes() -> None:
+    """报告的 notes 必须包含**管线自己的**失败诊断。
+
+    评测集里 ``case["notes"]`` 是标注者写的证据摘要（"原文：移除含非中文字符
+    的 token"），而管线失败原因在 ``qr.traces`` 里。不并进 notes 就等于
+    写了没人看——F1.2 基线里 9 条 entailment_unavailable 就是这么查不出
+    原因的：notes 里只有证据摘要，看不到"L3 判定失败"那几个字。
+    """
+    dataset = [{"id": "x", "question": "问题", "notes": "原文：某个证据"}]
+
+    def pipeline(question: str) -> QueryResult:
+        return _qr(
+            "答案",
+            citations=1,
+            traces=[
+                "L3 判定失败（降级：蕴含不可用，本轮不参与弃权判定）: boom [声明 3 条] [异常 ValueError]",
+                "弃权: 知识库无相关内容",
+                "一段无关的普通 trace",
+            ],
+        )
+
+    case = Evaluator(pipeline, *_judges()).evaluate(dataset).cases[0]
+    assert "L3 判定失败" in case.notes
+    assert "ValueError" in case.notes
+    assert "弃权:" in case.notes
+    # 标注者的原始 notes 也要保留
+    assert "原文：某个证据" in case.notes
+    # 无关 trace 不必进 notes（否则 notes 会变成 trace 的副本）
+    assert "一段无关的普通 trace" not in case.notes
+
+
+def test_healthy_case_notes_stay_clean() -> None:
+    """健康样本的 notes 不该被无关 trace 撑长。"""
+    dataset = [{"id": "x", "question": "问题"}]
+
+    def pipeline(question: str) -> QueryResult:
+        return _qr("答案", citations=1, traces=["route:full", "search:6.7ms"])
+
+    case = Evaluator(pipeline, *_judges()).evaluate(dataset).cases[0]
+    assert "search:6.7ms" not in case.notes
+
+
 # ---------------------------------------------------------------------------
 # 4 / 5：并发与节流不改变结论
 # ---------------------------------------------------------------------------

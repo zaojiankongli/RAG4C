@@ -448,7 +448,23 @@ class Evaluator:
         citations = qr.citations or []
         failed_citations = sum(1 for c in citations if c.status != "ok")
 
+        # notes 必须带上 qr.traces 里的降级/失败诊断。
+        #
+        # 为什么不只取 case["notes"]：评测集里那一条是**标注者写的证据摘要**
+        # （"原文：移除含非中文字符的 token"），而管线自己的失败原因在 traces
+        # 里——F1.2 基线里 9 条 entailment_unavailable 的 traces 含
+        # "L3 判定失败…[异常 ValueError]" 这样的诊断，不并进 notes 就等于
+        # 写了没人看。detect_degradation 已经在扫 traces，所以这里只是把它
+        # 显式落到报告里，不引入新的判定口径。
         notes = str(case.get("notes") or "")
+        diagnostics = [
+            t for t in (qr.traces or [])
+            if any(k in t for k in ("L3 判定失败", "弃权:", "检索失败", "生成失败",
+                                    "二轮检索失败", "熔断", "降级"))
+        ]
+        if diagnostics:
+            joined = " | ".join(diagnostics)
+            notes = f"{notes}；{joined}" if notes else joined
         if answered:
             judge_failures = []
             if g_score is None:
