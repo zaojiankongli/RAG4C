@@ -132,3 +132,21 @@ def test_unknown_status_value_is_ignored_not_abstained() -> None:
     """模型跑飞吐出未知值时按"没给"处理，不能凭它拒答。"""
     gate = _gate()
     assert gate.decide([0.9], [1.0], answer_status="maybe") == (False, "")
+
+
+def test_l3_degradation_loses_this_gate_without_turning_into_refusal() -> None:
+    """L3 降级时两个信号都没了（status=""/entailment=None）——**不得因此拒答**。
+
+    这条容易被"补上"：L3 没跑时看起来"没有证据支撑"，直觉上该弃权。但那会让
+    ``degraded_rate`` 直接变成 ``refusal_rate``——上游一挂，系统就 100% 拒答，
+    而降级率这个指标的意义恰恰是"区分质量差和上游挂了"。
+
+    正确行为：L3 降级 = 少一道闸，不是强制弃权。弃权与否交给另外两路信号
+    （检索分数 / 稠密余弦）决定。
+    """
+    gate = _gate()
+    # 检索分高（过第 2 步）、L3 没跑（entailment=None、status=""）-> 不弃权
+    assert gate.decide([0.9], None, answer_status="") == (False, "")
+    # 但检索分本来就低时，另一路信号仍然会拒
+    abstain, reason = gate.decide([0.10], None, answer_status="")
+    assert abstain is True and reason == "知识库无相关内容"
