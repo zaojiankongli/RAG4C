@@ -64,8 +64,13 @@ def template_db_path() -> Path:
     return _TEMPLATE_DB
 
 
-def head_db_url(dest: Path) -> str:
+def head_db_url(dest: Path | str) -> str:
     """把模板库拷到 ``dest`` 并返回它的 SQLAlchemy URL。
+
+    ``dest`` 可以是 ``Path``，也可以是 ``"<path>?timeout=20"`` 这种带查询参数
+    的形式——后者在测试里很常见（``sqlite:///...?timeout=20`` 用查询参数而不是
+    ``connect_args`` 传超时）。两种写法都支持，因为改写时**不该要求连 url 的
+    拼法一起改**。
 
     Args:
         dest: 目标文件路径（通常是 ``tmp_path / "catalog.db"``）。父目录会被
@@ -86,6 +91,10 @@ def head_db_url(dest: Path) -> str:
             "head_db_url 刻意不静默退回重跑迁移（那会让「为什么这次慢了 3000 倍」"
             "这种问题变得难查）。"
         )
+    query = ""
+    if isinstance(dest, str) and "?" in dest:
+        dest, query = dest.split("?", 1)
+    dest = Path(dest)
     src = template_db_path()
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(src, dest)
@@ -121,5 +130,4 @@ def upgrade_existing_sqlite_url(url: str) -> str:
             f"upgrade_existing_sqlite_url 只支持 {prefix}<path>，收到 {url!r}。"
             "其他方言不该用模板库——拷贝的是 SQLite 文件。"
         )
-    dest = Path(url[len(prefix):])
-    return head_db_url(dest)
+    return head_db_url(url[len(prefix):])   # head_db_url 自己处理 ?query

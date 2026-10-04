@@ -8,7 +8,6 @@ import pytest
 from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import Session
 
-from core.catalog_schema import upgrade_catalog
 from core.document_deletion import (
     DeleteBatchItemRequest,
     DocumentDeletionRepository,
@@ -36,8 +35,12 @@ def _audit(actor: str = "owner-1", request: str = "request-1") -> AuditContext:
 
 def _engine(tmp_path: Path, *, documents: int = 2):
     tmp_path.mkdir(parents=True, exist_ok=True)
-    url = f"sqlite:///{(tmp_path / 'durable-delete.db').as_posix()}?timeout=20"
-    upgrade_catalog(url)
+    # 目录库用 session 级模板库（tests/_catalog_template.py）：建一次已迁移到
+    # head 的 SQLite、各用例拷文件，实测 4.0ms/次 vs 重跑迁移 13.9s（3432x）。
+    # 本文件不需要 BASELINE（不验证「从 baseline 升到 head」的过程本身），
+    # 所以拷模板与重跑迁移等价。
+    from _catalog_template import head_db_url
+    url = head_db_url(f"{(tmp_path / 'durable-delete.db').as_posix()}?timeout=20")
     engine = create_engine(url, connect_args={"timeout": 20})
 
     @event.listens_for(engine, "connect")
