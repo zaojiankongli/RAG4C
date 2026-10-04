@@ -115,3 +115,45 @@ with e.connect() as c:
 ts.sort(); print('p50', round(ts[10], 2), 'ms  p95', round(ts[18], 2), 'ms')
 "
 ```
+
+## 追记：本文的建议已在本地实施并验证（同日下午）
+
+「建议采纳 PG」不是纸面建议——`.env` 与 `config/.env.bench` 都已经切到
+PG 17.8（`postgresql+psycopg2://root:root1234@192.168.100.128:5433/rag4c`），
+本地服务在 PG 下能正常启动（`/livez` 与 `/readyz` 都 200）。
+
+### 实际执行与本文的差别
+
+本文第五节写的切换步骤里有一条「首次部署在空库上跑 `upgrade`」——实测正是
+这么做的，而且**这是唯一可行的路径**：
+
+那个 PG 库原本是「混合状态」（117 张表在、PG 特有对象全缺）。两条路：
+- `stamp-existing`：报 `cannot repair partial catalog`，列了 60+ 个缺失对象。
+  它的 `_head_schema_issues` 只覆盖 baseline 时代的对象，补不了 0039 那一批；
+- 逐个补 60+ 个触发器/约束/索引：可行但慢且易漏；
+- **drop + create 空库 + `upgrade` 跑 0001→0039**：20 秒，全绿。
+
+**动手前必须先确认库是空的**（`pg_stat_user_tables` 查 `n_live_tup`）——
+「不误删有数据的库」是前提，不是事后补的检查。
+
+### 一个此前没注意到的收益
+
+切到 PG 之后，`_preflight_catalog`（今天上午加的启动探活）**立刻发挥了作用**：
+跑 mock 门禁时它报
+
+    RuntimeError: 目录库不可达：192.168.100.128:3307（RAG4C_CATALOG_DB_URL 里的
+    地址/端口）。连接失败：TimeoutError: timed out。本机常见错因是端口写错
+
+原因是 mock 模式读 `config/.env.bench`、真实上游模式读 `.env`——**两个文件
+各有一份目录库配置**，我只改了一个。若没有探活，服务会在十几层 SQLAlchemy
+之后炸掉、报错看不出是哪个配置项。
+
+**教训**：同一个配置项存在于多个 env 文件时，改一处不够，而报错不会告诉你
+漏了哪一处。这类问题应该由启动探活兜住，而不是靠人记得。
+
+### 本文「未验证的部分」现在补上一条
+
+原文说「没有做 PG vs MySQL 同条件 A/B」。这一条依然成立——MySQL 未启动，
+无法对照。但补一个**间接证据**：PG 17.8 上 `migrate_catalog.py upgrade`
+全量跑通，且建出了全部企业级触发器；MySQL 8.4 上这套迁移是否同样全绿，
+本次无法验证（3307 不通）。**「PG 迁移链全绿」是事实，「PG 优于 MySQL」不是。**
