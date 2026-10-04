@@ -238,11 +238,40 @@ def _render_table(rows: list[dict[str, Any]]) -> str:
         lines.append(f"- 引用：{row.get('citations_total')} 条，失败 {row.get('citations_failed')} 条")
         if row.get("unsupported_claims"):
             lines.append(f"- 裁判判为无支撑的声明：{row['unsupported_claims']}")
+        # 显示管线的弃权原因——它是**第三个独立信号**，人工标注时可以拿它
+        # 交叉参考：若裁判说「有据 0.75 / 相关 0.21」而管线已因「主题相关但
+        # 不包含所问事实」弃权，那这条正是 F1.2 里 79% 幻觉样本的形态，
+        # 人工的判断应当与弃权原因对得上。
+        if row.get("abstained") or row.get("answered") is False:
+            reason = _abstain_reason(row.get("notes"))
+            lines.append(f"- 已弃权：True｜原因：{reason or '(未记录)'}")
         lines.append("- 人工有据性（待填）：")
         lines.append("- 人工相关性（待填）：")
         lines.append("- 备注（待填）：")
         lines.append("")
     return "\n".join(lines)
+
+
+def _abstain_reason(notes: str | None) -> str:
+    """从 notes 里取出管线的弃权原因。
+
+    notes 现在并入了管线诊断 trace（见 ``eval/run_eval.py`` 的
+    ``_run_case``），弃权以 ``弃权: <原因>`` 出现在其中，但它前面可能还挂着
+    标注者写的证据摘要（``原文：xxx；弃权: ...``），所以不能用前缀匹配——
+    那样会在最常见的形态下失配。直接搜关键字位置更稳。
+    """
+    text = notes or ""
+    marker = "弃权:"
+    idx = text.find(marker)
+    if idx < 0:
+        return ""
+    reason = text[idx + len(marker) :]
+    # 原因只到下一个分隔符为止（notes 用 | 与；串起多条诊断）
+    for stop in ("|", "；", "\n"):
+        cut = reason.find(stop)
+        if cut >= 0:
+            reason = reason[:cut]
+    return reason.strip()
 
 
 def main(argv: list[str] | None = None) -> int:

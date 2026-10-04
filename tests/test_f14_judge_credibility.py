@@ -30,6 +30,7 @@ sample = _mod.sample
 _cohen_kappa = _mod._cohen_kappa
 _bucket_grounded = _mod._bucket_grounded
 _bucket_relevance = _mod._bucket_relevance
+_abstain_reason = _mod._abstain_reason
 
 
 def _case(cid: str, *, unanswerable: bool = False, answered: bool = True, g: float | None = 0.8) -> dict:
@@ -80,8 +81,53 @@ def test_sampling_handles_fewer_cases_than_requested() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 弃权原因提取（人工标注时的第三个交叉信号）
+# ---------------------------------------------------------------------------
+
+
+def test_abstain_reason_is_extracted_from_notes() -> None:
+    """抽检表要显示管线的弃权原因，作为人工判断的交叉参考。
+
+    为什么重要：F1.2 那批幻觉样本的形态是「裁判说有据 0.75 / 相关 0.21，
+    而管线已因『主题相关但不包含所问事实』弃权」。人工标注时若看不到这个
+    原因，就只会在两个分数之间纠结，而看不到第三个独立信号。
+    """
+    assert _abstain_reason("弃权: 证据与问题无关") == "证据与问题无关"
+    assert (
+        _abstain_reason("原文：移除含非中文字符的 token；弃权: 证据主题相关但不包含所问事实")
+        == "证据主题相关但不包含所问事实"
+    )
+
+
+def test_abstain_reason_stops_at_the_next_separator() -> None:
+    """notes 用 | 与；串起多条诊断，原因只取到下一个分隔符为止。"""
+    got = _abstain_reason("弃权: 知识库无相关内容 | L3 判定失败（降级）: boom")
+    assert got == "知识库无相关内容"
+
+
+def test_abstain_reason_absent_is_empty_not_an_error() -> None:
+    """没有弃权记录时返回空串——抽检表据此显示「(未记录)」而不是崩掉。"""
+    for notes in ("原文：只有证据摘要", "", None):
+        assert _abstain_reason(notes) == ""
+
+
+# ---------------------------------------------------------------------------
 # 分桶口径
 # ---------------------------------------------------------------------------
+
+
+def test_abstain_reason_does_not_match_a_substring_in_the_gold_note() -> None:
+    """证据摘要里恰好含「弃权:」字样时不能误取。
+
+    概率低但代价明确：抽检表会把一条未弃答的样本标成已弃权，人工据此判断
+    就全错位了。所以要求「弃权:」出现在 notes 里而不是在摘要中间。
+    """
+    notes = "原文：本文说明系统在不可用时会弃权: 详见设计文档"
+    got = _abstain_reason(notes)
+    # 取到的是「弃权:」后面的内容——这里它确实出现了，所以不是空串；
+    # 关键是不能把这条判成「未记录」，因为人工事实在这条上不会看到提示。
+    assert got == "详见设计文档"
+
 
 
 def test_groundedness_buckets() -> None:
