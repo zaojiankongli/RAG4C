@@ -145,7 +145,7 @@ PY
 | 七 | 7 | 106 | 129.0s | 脚本批量改写 + 逐个验证 |
 | **合计** | **21** | **约 200** | — | — |
 
-### 筛选判据（三条，缺一个就会误改）
+### 筛选判据（四条，缺一个就会误改）
 
 1. **调用里没有 revision 参数**——`upgrade_catalog(url, DOWN_REVISION)` 这类是在
    测迁移路径本身，模板库会把被测行为整段跳过去。这一条是第六批才发现的：
@@ -154,6 +154,22 @@ PY
    **名字带 migration 只是线索，真正的判据是调用有没有第二个参数。**
 2. 文件不含 `BASELINE_REVISION`。
 3. 还没被改造过。
+4. **不测库的元状态**。这一条是实施中才发现的：`test_knowledge_governance_migration.py`
+   里有一个用例是
+
+   ```python
+   url = head_db_url(...)                     # 模板库：已到 head
+   engine = ...; engine.execute("DROP TABLE alembic_version")   # 手工拆掉戳
+   catalog_schema.stamp_existing_catalog(url)  # 测「给无戳的库补戳」
+   ```
+
+   模板库给的库**已经有戳**，整个被测行为被跳过。判据是：出现
+   `stamp_existing` / 手工 `DROP alembic_version` / 对 `inspect_catalog_schema`
+   的状态断言，就不能用模板库——那是在测「库的元状态」而不是「表结构」。
+
+   发现方式也值得记：改到它时 ruff 报 F821（``catalog_schema`` 未定义），
+   因为我把那个 import 删掉了。**ruff 的 F821 在这里是意外收获**——
+   若那个 import 恰好只被 upgrade_catalog 用，它会静静通过，误改就过去了。
 
 ### 「模板库能加速」的边界
 
