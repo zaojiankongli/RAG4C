@@ -17,12 +17,15 @@ def _audit(number: int = 1) -> AuditContext:
 
 
 def _repository(tmp_path: Path):
-    from core.catalog_schema import upgrade_catalog
     from core.knowledge_content import KnowledgeContentRepository
     from models.orm import Dataset, Tenant
 
-    url = f"sqlite:///{(tmp_path / 'qa-faq-ops.db').as_posix()}"
-    upgrade_catalog(url)
+    # 目录库用 session 级模板库（tests/_catalog_template.py）：建一次已迁移到
+    # head 的 SQLite、各用例拷文件，实测 4.0ms/次 vs 重跑迁移 13.9s（3432x）。
+    # 本文件不需要某个特定 revision（不验证「从某 revision 升到 head」的
+    # 过程本身），所以拷模板与重跑迁移等价。
+    from _catalog_template import head_db_url
+    url = head_db_url(tmp_path / "qa-faq-ops.db")
     engine = create_engine(url)
 
     @event.listens_for(engine, "connect")
