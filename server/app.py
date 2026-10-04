@@ -651,12 +651,58 @@ def _prewarm_router() -> None:
 
 
 @asynccontextmanager
+def _preflight_catalog(settings) -> None:
+    """启动前探活目录库，让连接失败在**这里**说清楚。
+
+    为什么需要：目录库连不上时，启动会在十几层 SQLAlchemy/PyMySQL 之后炸掉，
+    运维看到的是 ``pymysql.err.OperationalError (2003, ... timed out)`` 加一屏
+    调用栈——看不出「是哪个配置项错了」。而 ``RAG4C_CATALOG_DB_URL`` 里的端口
+    是最常见的错因（本机实测：配置写 3307、实际服务在 3306，两者都能让
+    ``socket`` 连通与否产生完全不同的结论）。
+
+    只在配置了远程库（``db_url`` 非空）时才探活：SQLite 本地库不存在是
+    正常的（首次启动会 ``create_all``），不该在这里拦。
+    """
+    url = getattr(getattr(settings, "catalog", None), "db_url", "") or ""
+    if not url:
+        return
+    # 解析出 host:port：SQLAlchemy URL 形如
+    # mysql+pymysql://user:pw@host:port/db?charset=...
+    try:
+        from sqlalchemy.engine import make_url
+
+        parsed = make_url(url)
+        host = parsed.host or "localhost"
+        port = parsed.port or 3306
+    except Exception as exc:  # noqa: BLE001 - URL 本身坏了交给后续流程报错
+        raise RuntimeError(
+            f"目录库 URL 无法解析（检查 RAG4C_CATALOG_DB_URL）: {url!r} -> {exc}"
+        ) from exc
+
+    import socket
+
+    sock = socket.socket()
+    sock.settimeout(5)
+    try:
+        sock.connect((host, port))
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"目录库不可达：{host}:{port}（RAG4C_CATALOG_DB_URL 里的地址/端口）。"
+            f"连接失败：{type(exc).__name__}: {exc}。"
+            "本机常见错因是端口写错——用 netstat -ano 或 telnet 确认实际端口，"
+            "再用 RAG4C_CATALOG_DB_URL 覆盖 .env 里的值。"
+        ) from exc
+    finally:
+        sock.close()
+
+
 async def lifespan(application: FastAPI):
     """启动：代次预热 + 指标持久化线程；关闭：停止线程并落盘最后一份快照。"""
     global _query_slots
     _metrics_persist_stop.clear()
     _query_slots = asyncio.Semaphore(QUERY_MAX_CONCURRENT)
     settings = get_settings()
+    _preflight_catalog(settings)
     if hasattr(application.state, "retrieval_experiment_retrieval"):
         delattr(application.state, "retrieval_experiment_retrieval")
     try:
