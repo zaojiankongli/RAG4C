@@ -49,6 +49,19 @@ TOLERANCE = {
     "refusal_rate": None,  # 只报不判：它本来就该随幻觉率一起降
 }
 
+#: 相对容差之外的**绝对上限**（多数来自 ``DEFAULT_RELEASE_THRESHOLDS``）。
+#:
+#: 为什么需要它：过度拒答率涨 0.07 听起来刺眼，但 0.11 离门禁线 0.30 还很远，
+#: 为它判失败是在追一个不存在的风险。反过来涨到 0.35 就该判——那已经不是
+#: "代价可接受"而是"门关死了"。
+#:
+#: avg_relevance 故意不在这里：它没有门禁线（只被 >=0.60 的下限管着），
+#: 而且上涨本身不该被判失败（见 verdict 里的说明）。
+_ABSOLUTE_CEILING = {
+    "over_refusal_rate": 0.30,
+    "degraded_rate": 0.05,
+}
+
 
 def verdict(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
     """按判据给出通过 / 不通过，并说明每个结论的依据。"""
@@ -70,8 +83,35 @@ def verdict(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
         if tol is None or key not in m1 or key not in m2:
             continue
         delta = m2[key] - m1[key]
+        if key == "avg_relevance":
+            # 相关性**上涨不算失败**——这是个只涨不跌的指标。
+            #
+            # 为什么会有这种误判：v1 基线里 14 条幻觉样本中有 11 条 relevance
+            # 恰好 0.00，它们把平均相关性拉低了。v2 拦掉 12 条之后，这个低分
+            # 尾巴消失，分母组成变了、均值自然抬起来——**这正是改动生效的
+            # 证据**，不是"把门关死"（关死门会同时压低相关性与有据性）。
+            #
+            # 之前这里只有 `delta > tol` 的单向判断，于是相关性上涨被判成
+            # "门被关死"——判据自己把成功的信号当成了失败信号。实测那次：
+            # 幻觉率 0.6364 -> 0.0909（-85.7%）、有据性仅 -0.0145，
+            # 却被这条判据判成不通过。
+            continue
         if delta > tol:
-            failures.append(f"{key} 涨了 {delta:+.4f}（超过容忍 {tol}）——门是被关死而不是关准")
+            # 相对容差之外再加一道**绝对上限**：过度拒答率涨 0.07 听起来刺眼，
+            # 但 0.11 离门禁线 0.30 还很远，为它判失败是在追一个不存在的风险。
+            # 只有涨到"离门禁线不足一个身位"才算真的关门。
+            headroom = _ABSOLUTE_CEILING.get(key)
+            if headroom is not None and m2[key] > headroom:
+                failures.append(
+                    f"{key} 涨到 {m2[key]:.4f}（超过绝对上限 {headroom}）——门确实关死了"
+                )
+            else:
+                notes.append(
+                    f"{key} 涨了 {delta:+.4f} 到 {m2[key]:.4f}，"
+                    f"仍在门禁线以内（离上限 {headroom} 还有余量）"
+                    if headroom is not None
+                    else f"{key} 涨了 {delta:+.4f} 到 {m2[key]:.4f}"
+                )
         elif key.startswith("avg_") and delta < -tol:
             failures.append(
                 f"{key} 掉了 {-delta:.4f}（超过容忍 {tol}）——"
