@@ -493,6 +493,20 @@ class LlmSlotSettings(BaseModel):
     #: prompt 里没有的东西不会影响结果，prompt 里有的东西一变键就变。
     #: 这也划出了哪些槽位适合开——见 :class:`LlmSlotsSettings` 的默认值。
     cache_ttl_s: float = 0.0
+    #: 模型返回的 JSON 解析失败后，**额外**重试几次（总次数 = 1 + 本值）。
+    #:
+    #: 为什么需要它：F1.2 的 145 条基线里裁判有 9 条 ``judge_parse_failed``
+    #: （v2 模板下 13 条）——模型在 ``json_mode`` 下偶发不闭合 JSON。实测两组
+    #: 失败样本**基本不重叠**（v2 新失败 6 条、v2 修好 6 条），说明是随机性
+    #: 而非系统性缺陷，重发请求是最直接的对策。
+    #:
+    #: 这个代价不是白付的：裁判解析失败会让整条弃权门少一道闸
+    #: （``entailment_unavailable``），直接推高幻觉率。judge / router_llm /
+    #: metadata_filter 这几个 JSON 槽位尤其值得调高。
+    #:
+    #: 不设上限是有意的——真失败时每次重试都要花钱，不能无限重试。默认 1 是
+    #: 保守值（与改动前行为一致），调高它需要看具体的解析失败率。
+    json_parse_retries: int = 1
 
 
 def _inherit_conn(

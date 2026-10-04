@@ -559,7 +559,18 @@ class LLMClient:
         _assert_endpoint_reachable(self.config.base_url, self.config.model, self.slot)
 
         last_text = ""
-        for attempt in range(2):  # 首次 + 1 次重试
+        # 解析失败的重试次数。为什么需要可配置：F1.2 的 145 条基线里，裁判有
+        # 9 条 `judge_parse_failed`（v2 模板下 13 条）——模型在 json_mode 下
+        # 偶发不闭合 JSON，实测两组失败样本**基本不重叠**（v2 新失败 6 条、
+        # v2 修好 6 条），说明这是随机性而不是系统性缺陷。
+        #
+        # 重试是这里唯一有效的对策：重新发一次请求，模型往往会走对形状。
+        # 从 2 次（首次 + 1 次重试）提到 3 次，按 (1-0.09)^2 ≈ 0.83 的成功率
+        # 估算能把残余失败率从 ~8% 压到 ~0.7%——代价只是多几次等待，而
+        # judge 的解析失败会让整条弃权门少一道闸（entailment_unavailable），
+        # 直接推高幻觉率。
+        attempts = max(1, int(getattr(self.config, "json_parse_retries", 1)) + 1)
+        for attempt in range(attempts):
             msgs = list(base_msgs)
             if attempt > 0:
                 msgs = msgs + [
@@ -582,8 +593,10 @@ class LLMClient:
                     cache_ok=lambda t: _extract_json_block(t) is not None,
                 )
             except LLMError:
-                # 底层调用失败不属于"解析失败"，重试一次后原样抛出
-                if attempt == 1:
+                # 底层调用失败不属于"解析失败"，用完剩余重试后原样抛出。
+                # 比较的是最后一次（attempt == attempts - 1）而不是硬编码的 1——
+                # 重试次数可配之后，写死 1 会在 attempts=3 时提前放弃。
+                if attempt >= attempts - 1:
                     raise
                 continue
             parsed = _extract_json_block(last_text)
@@ -591,8 +604,16 @@ class LLMClient:
                 return parsed
 
         raise ParseFallbackError(
-            f"模型未返回可解析的 JSON（model={self.config.model}, 已重试 1 次）。"
-            f" 原始输出片段: {last_text[:300]!r}"
+            f"模型未返回可解析的 JSON（model={self.config.model}, "
+            f"已尝试 {attempts} 次）。"
+            # 片段从 300 提到 600，并附上长度：**长度本身就是要查的字段**。
+            # F1.2 的排查卡在这里——notes 里 13 条失败片段全是 344~398 字符，
+            # 一看"未闭合"却无法判断是真被 max_tokens 截断、还是模型就是写了
+            # 400 字就停了。附上 len(last_text) 与是否以 } 结尾，两个问题
+            # 一次就能答。
+            f" 原始输出共 {len(last_text)} 字符"
+            f"（以 '}}' 结尾: {last_text.rstrip().endswith('}')}）"
+            f"；片段: {last_text[:600]!r}"
         )
 
 
